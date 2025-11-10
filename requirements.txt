@@ -1,15 +1,23 @@
-streamlit
-patool
-gunicorn
+# Backend API dependencies
 fastapi
 uvicorn
-loguru
+gunicorn
 python-multipart
-psycopg2-binary
-requests
 pydantic
-librosa
 aiofiles
-python-dotenv
 httpx
+
+# Frontend Django dependencies
+django>=4.2,<5.0
+whitenoise
+psycopg2-binary
+
+# Shared dependencies
+loguru
+requests
+python-dotenv
+
+# Content processing
+librosa
+patool
 rarfile

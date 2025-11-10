@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Clone Hero Manager{% endblock %}</title>
+    {% load static %}
+    <link rel="stylesheet" href="{% static 'css/style.css' %}">
+    <link rel="icon" href="{% static 'assets/ch_icon.png' %}" type="image/png">
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    <!-- Sidebar Navigation -->
+    <div class="sidebar">
+        <div class="sidebar-header">
+            <img src="{% static 'assets/ch_icon.png' %}" alt="Clone Hero" class="sidebar-logo">
+            <h2>Clone Hero Manager</h2>
+        </div>
+        
+        <nav class="sidebar-nav">
+            <h3>📂 Navigation</h3>
+            <ul>
+                <li><a href="{% url 'content:database_explorer' %}" class="{% if request.resolver_match.url_name == 'database_explorer' %}active{% endif %}">
+                    📁 Database Explorer
+                </a></li>
+                <li><a href="{% url 'content:songs_upload' %}" class="{% if request.resolver_match.url_name == 'songs_upload' %}active{% endif %}">
+                    📤 Upload Songs
+                </a></li>
+                <li><a href="{% url 'content:song_generator' %}" class="{% if request.resolver_match.url_name == 'song_generator' %}active{% endif %}">
+                    🎵 Generate Songs
+                </a></li>
+                <li><a href="{% url 'content:colors' %}" class="{% if request.resolver_match.url_name == 'colors' %}active{% endif %}">
+                    🎨 Colors
+                </a></li>
+                <li><a href="{% url 'content:backgrounds' %}" class="{% if request.resolver_match.url_name == 'backgrounds' %}active{% endif %}">
+                    🌆 Backgrounds
+                </a></li>
+                <li><a href="{% url 'content:highways' %}" class="{% if request.resolver_match.url_name == 'highways' %}active{% endif %}">
+                    🛣️ Highways
+                </a></li>
+            </ul>
+        </nav>
+        
+        <div class="sidebar-footer">
+            <hr>
+            <p>🛠️ <strong>Clone Hero Manager</strong> - v1.0.0</p>
+            <p>🚀 Developed with ❤️ using Django</p>
+        </div>
+    </div>
+
+    <!-- Main Content Area -->
+    <div class="main-content">
+        <!-- Messages -->
+        {% if messages %}
+        <div class="messages">
+            {% for message in messages %}
+            <div class="alert alert-{{ message.tags }}">
+                {{ message }}
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <!-- Page Content -->
+        {% block content %}{% endblock %}
+    </div>
+
+    <!-- Scripts -->
+    <script src="{% static 'js/main.js' %}"></script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>

@@ -46,14 +46,14 @@ COPY --from=builder /opt/venv /opt/venv
 #COPY --from=builder /app /app
 
 # Ensure the necessary directory structure exists
-RUN mkdir -p /app/logs && \
+RUN mkdir -p /app/logs /app/staticfiles && \
     chown -R appuser:appuser /app && \
     chmod -R 755 /app
 
-# Expose Streamlit's default port
+# Expose Django's port (8501 for compatibility with existing config)
 EXPOSE 8501
 
-# Health Check: Ensure the Streamlit service is responsive on port 8501
+# Health Check: Ensure the Django service is responsive
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8501/ || exit 1
 
@@ -61,7 +61,15 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
 USER appuser
 
 # Set the working directory for running the application
-WORKDIR /app
+WORKDIR /app/src/frontend_django
 
-# Ensure the frontend starts correctly
-CMD ["/opt/venv/bin/streamlit", "run", "src/frontend/app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+# Run Django with Gunicorn
+# Collect static files on startup, then run server
+CMD /opt/venv/bin/python manage.py collectstatic --noinput && \
+    /opt/venv/bin/gunicorn clonehero_frontend.wsgi:application \
+    --bind 0.0.0.0:8501 \
+    --workers 2 \
+    --timeout 300 \
+    --access-logfile /var/log/frontend/access.log \
+    --error-logfile /var/log/frontend/error.log \
+    --log-level info

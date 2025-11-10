@@ -1,0 +1,95 @@
+name: Docker Build and Push
+
+on:
+  push:
+    branches: [main, develop]
+    tags:
+      - "v*"
+  pull_request:
+    branches: [main]
+
+env:
+  SERVICE_NAME: monitor
+  DOCKER_USERNAME: nuniesmith
+  DOCKER_REPO: nuniesmith/fks
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          if [ -f requirements.dev.txt ]; then pip install -r requirements.dev.txt; fi
+
+      - name: Run linting
+        run: |
+          pip install ruff mypy || true
+          ruff check src/ || true
+          mypy src/ || true
+
+      - name: Run tests
+        run: |
+          pip install pytest pytest-cov || true
+          if [ -d "tests" ] && [ "$(ls -A tests)" ]; then
+            pytest tests/ -v --cov=src --cov-report=xml || true
+          fi
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.xml
+          fail_ci_if_error: false
+
+  build-and-push:
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to DockerHub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.DOCKER_REPO }}
+          tags: |
+            type=raw,value=${{ env.SERVICE_NAME }}-latest,enable={{is_default_branch}}
+            type=sha,prefix=${{ env.SERVICE_NAME }}-,format=short
+            type=ref,event=branch,prefix=${{ env.SERVICE_NAME }}-
+            type=semver,pattern={{version}},prefix=${{ env.SERVICE_NAME }}-
+            type=semver,pattern={{major}}.{{minor}},prefix=${{ env.SERVICE_NAME }}-
+            type=semver,pattern={{major}},prefix=${{ env.SERVICE_NAME }}-
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Image digest
+        run: echo ${{ steps.meta.outputs.digest }}

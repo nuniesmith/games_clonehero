@@ -1,0 +1,137 @@
+{% extends 'base.html' %}
+{% load custom_filters %}
+
+{% block title %}Database Explorer - Clone Hero Manager{% endblock %}
+
+{% block content %}
+<div class="container">
+    <h1>📁 Song Database Explorer</h1>
+    <p>Manage and explore the Clone Hero song database</p>
+    
+    <!-- Search Form -->
+    <div class="search-section">
+        <form method="get" action="{% url 'content:database_explorer' %}" class="search-form">
+            <input type="text" name="search" placeholder="🔍 Search for a song (title, artist, album)" 
+                   value="{{ search_query }}" class="search-input">
+            <button type="submit" class="btn btn-primary">Search</button>
+            {% if search_query %}
+            <a href="{% url 'content:database_explorer' %}" class="btn btn-secondary">Clear</a>
+            {% endif %}
+        </form>
+        {% if search_query %}
+        <p class="search-results">Found {{ total_results }} result{{ total_results|pluralize }} for "{{ search_query }}"</p>
+        {% endif %}
+    </div>
+    
+    <!-- Songs List -->
+    <div class="songs-list">
+        {% if page_obj %}
+            {% for song in page_obj %}
+            <div class="song-card">
+                <div class="song-header">
+                    <h3>🎵 {{ song.title }}</h3>
+                    <button class="btn btn-danger btn-sm delete-song" data-song-id="{{ song.id }}">
+                        🗑️ Delete
+                    </button>
+                </div>
+                <div class="song-details">
+                    <p><strong>Artist:</strong> {{ song.artist }}</p>
+                    <p><strong>Album:</strong> {{ song.album|default:"Unknown" }}</p>
+                    <p><strong>File Path:</strong> <code>{{ song.file_path }}</code></p>
+                    {% if song.get_metadata_display %}
+                    <details class="metadata-details">
+                        <summary>🔍 Show Metadata</summary>
+                        <pre>{{ song.get_metadata_display|pprint }}</pre>
+                    </details>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+            
+            <!-- Pagination -->
+            <div class="pagination">
+                {% if page_obj.has_previous %}
+                <a href="?page={{ page_obj.previous_page_number }}{% if search_query %}&search={{ search_query }}{% endif %}" 
+                   class="btn btn-secondary">⬅️ Previous</a>
+                {% endif %}
+                
+                <span class="page-info">
+                    Page {{ page_obj.number }} of {{ page_obj.paginator.num_pages }}
+                </span>
+                
+                {% if page_obj.has_next %}
+                <a href="?page={{ page_obj.next_page_number }}{% if search_query %}&search={{ search_query }}{% endif %}" 
+                   class="btn btn-secondary">Next ➡️</a>
+                {% endif %}
+            </div>
+        {% else %}
+            <div class="alert alert-warning">
+                ⚠️ No songs found in the database.
+            </div>
+        {% endif %}
+    </div>
+    
+    <!-- How It Works -->
+    <div class="info-section">
+        <h2>📖 How It Works</h2>
+        <h3>Step-by-Step Guide</h3>
+        <ol>
+            <li><strong>Search for a Song</strong> - Use the search bar to find songs by title, artist, or album</li>
+            <li><strong>View Song Details</strong> - Click on a song to expand its metadata</li>
+            <li><strong>Delete a Song (Admin Only)</strong> - Click 🗑️ Delete to remove a song from the database</li>
+        </ol>
+        
+        <h3>Features</h3>
+        <ul>
+            <li>✅ Search and Filter Songs</li>
+            <li>✅ Pagination Support</li>
+            <li>✅ View Full Metadata</li>
+            <li>✅ Admin Controls</li>
+        </ul>
+        
+        <div class="alert alert-info">
+            💡 <strong>Need help?</strong> Try searching by artist name, album, or song title.
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Delete song functionality
+document.querySelectorAll('.delete-song').forEach(button => {
+    button.addEventListener('click', async function() {
+        if (!confirm('Are you sure you want to delete this song?')) {
+            return;
+        }
+        
+        const songId = this.getAttribute('data-song-id');
+        const card = this.closest('.song-card');
+        
+        try {
+            const response = await fetch(`/songs/${songId}/delete/`, {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': '{{ csrf_token }}',
+                    'Content-Type': 'application/json',
+                },
+            });
+            
+            const result = await response.json();
+            
+            if (response.ok && result.success) {
+                card.style.opacity = '0.5';
+                card.innerHTML = '<div class="alert alert-success">✅ Song deleted successfully!</div>';
+                setTimeout(() => {
+                    card.remove();
+                }, 1500);
+            } else {
+                alert(`Error deleting song: ${result.error || 'Unknown error'}`);
+            }
+        } catch (error) {
+            alert(`Error: ${error.message}`);
+        }
+    });
+});
+</script>
+{% endblock %}

@@ -1,4 +1,4 @@
-"""
+r"""
 Clone Hero Song Organizer
 =========================
 Scans a directory of Clone Hero songs, extracts any .7z archives,
@@ -17,21 +17,25 @@ Standard structure:
 Usage:
   python organize_clonehero.py --source "C:\path\to\messy\songs" --dest "C:\path\to\organized\songs"
 
+  On WSL, use /mnt/ paths instead:
+  python3 organize_clonehero.py --source "/mnt/c/path/to/messy/songs" --dest "/mnt/c/path/to/organized/songs"
+
 Optional:
   --dry-run       Preview changes without moving anything
   --winrar-path   Path to WinRAR.exe (default: C:\Program Files\WinRAR\WinRAR.exe)
 """
 
-import os
-import sys
-import shutil
 import argparse
-import subprocess
 import configparser
-import re
 import logging
-from pathlib import Path
+import os
+import platform
+import re
+import shutil
+import subprocess
+import sys
 from datetime import datetime
+from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Config
@@ -39,14 +43,14 @@ from datetime import datetime
 STANDARD_FILES = {
     "album.png",
     "background.png",
-    "Lyrics.txt",       # not present in every song — that's fine
+    "Lyrics.txt",  # not present in every song — that's fine
     "notes.chart",
-    "notes.mid",        # some songs use MIDI instead of .chart
+    "notes.mid",  # some songs use MIDI instead of .chart
     "song.ini",
     "song.ogg",
-    "song.mp3",         # alternate audio format
-    "song.opus",        # alternate audio format
-    "video.mp4",        # some songs have background video
+    "song.mp3",  # alternate audio format
+    "song.opus",  # alternate audio format
+    "video.mp4",  # some songs have background video
     "video.avi",
     "video.webm",
 }
@@ -104,6 +108,9 @@ def setup_logging(dest: Path):
 # ---------------------------------------------------------------------------
 # Archive extraction
 # ---------------------------------------------------------------------------
+IS_WINDOWS = platform.system() == "Windows"
+
+
 def find_archives(source: Path) -> list[Path]:
     """Recursively find all .7z, .zip, .rar archives."""
     exts = {".7z", ".zip", ".rar"}
@@ -114,9 +121,64 @@ def find_archives(source: Path) -> list[Path]:
     return archives
 
 
-def extract_archive(archive: Path, winrar: str, dry_run: bool) -> Path | None:
+def _check_linux_tools() -> dict[str, str | None]:
+    """Check which extraction tools are available on Linux/WSL."""
+    tools = {}
+    for name in ("7z", "unrar", "unzip"):
+        result = shutil.which(name)
+        tools[name] = result
+    return tools
+
+
+def _build_extract_cmd_linux(
+    archive: Path, extract_dir: Path, tools: dict[str, str | None]
+) -> list[str] | None:
+    """Build the extraction command for Linux/WSL based on archive type and available tools."""
+    ext = archive.suffix.lower()
+
+    if ext == ".7z":
+        if tools.get("7z"):
+            # 7z x = extract with full paths, -o = output dir, -y = yes to all
+            return ["7z", "x", f"-o{extract_dir}", "-y", str(archive)]
+        log.error("  7z not found. Install with: sudo apt install p7zip-full")
+        return None
+
+    elif ext == ".rar":
+        if tools.get("unrar"):
+            # unrar x = extract with paths, -o+ = overwrite, -y = yes to all
+            return ["unrar", "x", "-o+", "-y", str(archive), str(extract_dir) + "/"]
+        if tools.get("7z"):
+            return ["7z", "x", f"-o{extract_dir}", "-y", str(archive)]
+        log.error("  No RAR extractor found. Install with: sudo apt install unrar")
+        log.error(
+            "  Or install p7zip-full as an alternative: sudo apt install p7zip-full"
+        )
+        return None
+
+    elif ext == ".zip":
+        if tools.get("unzip"):
+            # unzip -o = overwrite, -d = destination directory
+            return ["unzip", "-o", str(archive), "-d", str(extract_dir)]
+        if tools.get("7z"):
+            return ["7z", "x", f"-o{extract_dir}", "-y", str(archive)]
+        log.error("  No ZIP extractor found. Install with: sudo apt install unzip")
+        return None
+
+    log.error(f"  Unsupported archive format: {ext}")
+    return None
+
+
+def _build_extract_cmd_windows(
+    archive: Path, extract_dir: Path, winrar: str
+) -> list[str]:
+    """Build the extraction command for Windows using WinRAR."""
+    return [winrar, "x", "-o+", "-y", str(archive), str(extract_dir) + "\\"]
+
+
+def extract_archive(
+    archive: Path, extract_dir: Path, cmd: list[str], dry_run: bool
+) -> Path | None:
     """Extract archive into a folder next to it, return the extraction dir."""
-    extract_dir = archive.parent / archive.stem
     if extract_dir.exists():
         log.info(f"  Already extracted: {extract_dir}")
         return extract_dir
@@ -129,18 +191,26 @@ def extract_archive(archive: Path, winrar: str, dry_run: bool) -> Path | None:
     log.info(f"  Extracting: {archive.name} -> {extract_dir}")
 
     try:
-        # WinRAR command-line: x = extract with paths, -o+ = overwrite, -y = yes to all
         result = subprocess.run(
-            [winrar, "x", "-o+", "-y", str(archive), str(extract_dir) + "\\"],
-            capture_output=True, text=True, timeout=120
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=120,
         )
         if result.returncode != 0:
-            log.warning(f"  WinRAR returned code {result.returncode} for {archive.name}")
+            log.warning(
+                f"  Extractor returned code {result.returncode} for {archive.name}"
+            )
             log.debug(f"  stderr: {result.stderr}")
         return extract_dir
     except FileNotFoundError:
-        log.error(f"  WinRAR not found at: {winrar}")
-        log.error("  Use --winrar-path to specify the correct location.")
+        log.error(f"  Extraction tool not found: {cmd[0]}")
+        if IS_WINDOWS:
+            log.error("  Use --winrar-path to specify the correct WinRAR location.")
+        else:
+            log.error(
+                "  Install required tools: sudo apt install p7zip-full unrar unzip"
+            )
         sys.exit(1)
     except subprocess.TimeoutExpired:
         log.error(f"  Extraction timed out for: {archive.name}")
@@ -155,8 +225,31 @@ def extract_all(source: Path, winrar: str, dry_run: bool):
         return
 
     log.info(f"Found {len(archives)} archive(s) to extract.")
+
+    # On Linux/WSL, check which tools are available once up front
+    linux_tools: dict[str, str | None] = {}
+    if not IS_WINDOWS:
+        linux_tools = _check_linux_tools()
+        available = [name for name, path in linux_tools.items() if path]
+        if available:
+            log.info(f"  Available extraction tools: {', '.join(available)}")
+        else:
+            log.error("  No extraction tools found!")
+            log.error("  Install with: sudo apt install p7zip-full unrar unzip")
+            sys.exit(1)
+
     for a in archives:
-        extract_archive(a, winrar, dry_run)
+        extract_dir = a.parent / a.stem
+
+        if IS_WINDOWS:
+            cmd = _build_extract_cmd_windows(a, extract_dir, winrar)
+        else:
+            cmd = _build_extract_cmd_linux(a, extract_dir, linux_tools)
+            if cmd is None:
+                log.warning(f"  Skipping {a.name} — no suitable extractor found.")
+                continue
+
+        extract_archive(a, extract_dir, cmd, dry_run)
 
 
 # ---------------------------------------------------------------------------
@@ -224,8 +317,8 @@ def parse_song_ini(song_dir: Path) -> dict:
 def sanitize_filename(name: str) -> str:
     """Remove characters that are invalid in Windows filenames."""
     # Replace invalid chars with underscore
-    sanitized = re.sub(r'[<>:"/\\|?*]', '_', name)
-    sanitized = sanitized.strip('. ')
+    sanitized = re.sub(r'[<>:"/\\|?*]', "_", name)
+    sanitized = sanitized.strip(". ")
     return sanitized or "_"
 
 
@@ -247,7 +340,11 @@ def get_dest_path(meta: dict, dest: Path, song_dir: Path) -> Path:
                 song_name = parts[1].strip()
 
     artist = sanitize_filename(artist) if artist else UNKNOWN_ARTIST
-    song_name = sanitize_filename(song_name) if song_name else sanitize_filename(song_dir.name) or UNKNOWN_SONG
+    song_name = (
+        sanitize_filename(song_name)
+        if song_name
+        else sanitize_filename(song_dir.name) or UNKNOWN_SONG
+    )
 
     return dest / artist / song_name
 
@@ -332,7 +429,7 @@ def validate_song(dest_dir: Path) -> list[str]:
 def print_summary(total: int, success: int, issues: dict[str, list[str]]):
     """Print a final summary of the organization run."""
     print("\n" + "=" * 60)
-    print(f"  Clone Hero Song Organizer — Summary")
+    print("  Clone Hero Song Organizer — Summary")
     print("=" * 60)
     print(f"  Songs found:      {total}")
     print(f"  Songs organized:  {success}")
@@ -356,25 +453,25 @@ def main():
         description="Organize Clone Hero songs into Artist/Song/ structure."
     )
     parser.add_argument(
-        "--source", required=True,
-        help="Source directory containing messy Clone Hero songs"
+        "--source",
+        required=True,
+        help="Source directory containing messy Clone Hero songs",
     )
     parser.add_argument(
-        "--dest", required=True,
-        help="Destination directory for organized songs"
+        "--dest", required=True, help="Destination directory for organized songs"
     )
     parser.add_argument(
-        "--dry-run", action="store_true",
-        help="Preview changes without actually moving/copying files"
+        "--dry-run",
+        action="store_true",
+        help="Preview changes without actually moving/copying files",
     )
     parser.add_argument(
         "--winrar-path",
         default=r"C:\Program Files\WinRAR\WinRAR.exe",
-        help="Path to WinRAR.exe"
+        help="Path to WinRAR.exe (Windows only; ignored on Linux/WSL)",
     )
     parser.add_argument(
-        "--skip-extract", action="store_true",
-        help="Skip archive extraction step"
+        "--skip-extract", action="store_true", help="Skip archive extraction step"
     )
 
     args = parser.parse_args()
@@ -418,8 +515,8 @@ def main():
 
         # Parse metadata
         meta = parse_song_ini(sd)
-        artist_display = meta['artist'] or '(unknown)'
-        name_display = meta['name'] or sd.name
+        artist_display = meta["artist"] or "(unknown)"
+        name_display = meta["name"] or sd.name
         log.info(f"  Artist: {artist_display}  |  Song: {name_display}")
 
         # Determine destination

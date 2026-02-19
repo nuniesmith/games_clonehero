@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from loguru import logger
 
-from src.app.config import (
+from src.config import (
     APP_ENV,
     APP_HOST,
     APP_PORT,
@@ -34,9 +34,9 @@ from src.app.config import (
     TEMPLATES_DIR,
     ensure_directories,
 )
-from src.app.database import init_db
-from src.app.routes.api import router as api_router
-from src.app.routes.pages import router as pages_router
+from src.database import init_db
+from src.routes.api import router as api_router
+from src.routes.pages import router as pages_router
 
 # ---------------------------------------------------------------------------
 # Logging setup

@@ -18,7 +18,7 @@ from urllib.parse import quote, unquote, urlparse
 import httpx
 from loguru import logger
 
-from src.app.config import (
+from src.config import (
     NEXTCLOUD_PASSWORD,
     NEXTCLOUD_URL,
     NEXTCLOUD_USERNAME,

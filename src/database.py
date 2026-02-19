@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 import aiosqlite
 from loguru import logger
 
-from src.app.config import DB_PATH
+from src.config import DB_PATH
 
 # ---------------------------------------------------------------------------
 # Schema

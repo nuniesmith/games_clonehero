@@ -20,8 +20,8 @@ from typing import Any, Dict, List, Optional
 import rarfile
 from loguru import logger
 
-from src.app.config import CONTENT_DIR, CONTENT_FOLDERS, OPTIONAL_SONG_FIELDS
-from src.app.database import insert_song_sync
+from src.config import CONTENT_DIR, CONTENT_FOLDERS, OPTIONAL_SONG_FIELDS
+from src.database import insert_song_sync
 
 
 # ---------------------------------------------------------------------------

@@ -13,9 +13,9 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import HTMLResponse
 from loguru import logger
 
-from src.app.config import APP_VERSION, CONTENT_FOLDERS
-from src.app.database import count_songs, get_song_by_id, get_songs
-from src.app.webdav import check_connection, is_configured, list_directory
+from src.config import APP_VERSION, CONTENT_FOLDERS
+from src.database import count_songs, get_song_by_id, get_songs
+from src.webdav import check_connection, is_configured, list_directory
 
 router = APIRouter(tags=["Pages"])
 

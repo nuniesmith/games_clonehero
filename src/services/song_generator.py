@@ -17,9 +17,9 @@ import librosa
 import numpy as np
 from loguru import logger
 
-from src.app.config import CONTENT_DIR
-from src.app.database import insert_song_sync
-from src.app.services.content_manager import get_content_directory, write_song_ini
+from src.config import CONTENT_DIR
+from src.database import insert_song_sync
+from src.services.content_manager import get_content_directory, write_song_ini
 
 # Output directory for generated charts
 GENERATOR_DIR = CONTENT_DIR / "generator"

@@ -22,7 +22,7 @@ from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from loguru import logger
 from pydantic import BaseModel
 
-from src.app.config import (
+from src.config import (
     ALLOWED_AUDIO_EXTENSIONS,
     ALLOWED_UPLOAD_EXTENSIONS,
     APP_VERSION,
@@ -30,22 +30,22 @@ from src.app.config import (
     MAX_FILE_SIZE_BYTES,
     MAX_FILE_SIZE_GB,
 )
-from src.app.database import (
+from src.database import (
     count_songs,
     delete_song,
     get_song_by_id,
     get_songs,
     update_song,
 )
-from src.app.services.content_manager import (
+from src.services.content_manager import (
     delete_song_files,
     parse_song_ini,
     process_upload,
     scan_local_songs,
     write_song_ini,
 )
-from src.app.services.song_generator import process_song_file
-from src.app.webdav import (
+from src.services.song_generator import process_song_file
+from src.webdav import (
     check_connection,
     delete_remote,
     download_file,
@@ -676,7 +676,7 @@ async def api_sync_from_nextcloud(remote_path: str = Form(...)):
             if parsed:
                 import shutil
 
-                from src.app.services.content_manager import get_content_directory
+                from src.services.content_manager import get_content_directory
 
                 songs_dir = get_content_directory("songs")
                 safe_name = parsed["artist"].replace("/", "_")
@@ -694,7 +694,7 @@ async def api_sync_from_nextcloud(remote_path: str = Form(...)):
                 # Register in database
                 import asyncio
 
-                from src.app.database import insert_song_sync
+                from src.database import insert_song_sync
 
                 metadata_json = json.dumps(parsed.get("metadata", {}))
                 song_id = await asyncio.to_thread(

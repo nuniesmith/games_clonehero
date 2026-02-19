@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>{% block title %}Clone Hero Manager{% endblock %}</title>
+        <link
+            rel="stylesheet"
+            href="{{ url_for('static', path='css/style.css') }}"
+        />
+        <link
+            rel="icon"
+            href="{{ url_for('static', path='assets/ch_icon.png') }}"
+            type="image/png"
+        />
+        {% block extra_css %}{% endblock %}
+    </head>
+    <body>
+        <!-- Sidebar Navigation -->
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <img
+                    src="{{ url_for('static', path='assets/ch_icon.png') }}"
+                    alt="Clone Hero"
+                    class="sidebar-logo"
+                />
+                <h2>Clone Hero Manager</h2>
+            </div>
+
+            <nav class="sidebar-nav">
+                <h3>📂 Navigation</h3>
+                <ul>
+                    <li>
+                        <a
+                            href="/"
+                            class="{% if page_title == 'Home' %}active{% endif %}"
+                        >
+                            🏠 Home
+                        </a>
+                    </li>
+                    <li>
+                        <a
+                            href="/songs"
+                            class="{% if page_title == 'Songs' %}active{% endif %}"
+                        >
+                            📁 Song Library
+                        </a>
+                    </li>
+                    <li>
+                        <a
+                            href="/upload"
+                            class="{% if page_title == 'Upload Content' %}active{% endif %}"
+                        >
+                            📤 Upload Content
+                        </a>
+                    </li>
+                    <li>
+                        <a
+                            href="/generator"
+                            class="{% if page_title == 'Song Generator' %}active{% endif %}"
+                        >
+                            🎵 Song Generator
+                        </a>
+                    </li>
+                    <li>
+                        <a
+                            href="/browser"
+                            class="{% if page_title == 'Nextcloud Browser' %}active{% endif %}"
+                        >
+                            ☁️ Nextcloud Browser
+                        </a>
+                    </li>
+                </ul>
+            </nav>
+
+            <div class="sidebar-footer">
+                <hr />
+                <p>🛠️ <strong>Clone Hero Manager</strong></p>
+                <p>v{{ version | default('2.0.0') }}</p>
+            </div>
+        </div>
+
+        <!-- Main Content Area -->
+        <div class="main-content">
+            <!-- Flash Messages -->
+            {% if error %}
+            <div class="alert alert-danger">❌ {{ error }}</div>
+            {% endif %} {% if success %}
+            <div class="alert alert-success">✅ {{ success }}</div>
+            {% endif %}
+
+            <!-- Page Content -->
+            {% block content %}{% endblock %}
+        </div>
+
+        <!-- Scripts -->
+        <script src="{{ url_for('static', path='js/main.js') }}"></script>
+        {% block extra_js %}{% endblock %}
+    </body>
+</html>

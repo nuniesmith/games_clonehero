@@ -1,0 +1,989 @@
+{% extends 'base.html' %}
+
+{% block title %}Nextcloud Browser - Clone Hero Manager{% endblock %}
+
+{% block content %}
+<div class="container">
+    <h1>☁️ Nextcloud Browser</h1>
+    <p>Browse and sync files with your Nextcloud instance via WebDAV.</p>
+
+    {% if not webdav_configured %}
+    <!-- Not Configured -->
+    <div class="alert alert-warning">
+        <h3>⚠️ Nextcloud Web</h3>DAV Not Configured</h3>
+        <p>To use the Nextcloud browser, add the following settings to your <code>.env</code> file:</p>
+        <div class="config-example">
+            <code></code>
+                NEXTCLOUD_URL=https://your-nextcloud-instance.com<br>
+                NEXTCLOUD_USERNAME=your_username<br>
+                NEXTCLOUD_PASSWORD=your_app_password<br>
+                NEXTCLOUD_REMOTE_PATH=/remote.php/dav/files/{username}/CloneHero
+            </code>
+        </div>
+        <p style="margin-top: 15px;">
+            💡 <strong>Tip:</strong> Use an
+            <a href="https://docs.nextcloud.com/server/latest/user_manual/en/session_management.html#managing-devices" target="_blank" rel="noopener">
+                App Password
+            </a>
+            instead of your main Nextcloud password for better security.
+        </p>
+    </div>
+
+    {% elif not connected %}
+    <!-- Connection Error -->
+    <div class="alert alert-danger">
+        <h3>❌ Connection Failed</h3>
+        <p>Could not connect to your Nextcloud instance.</p>
+        {% if connection_error %}
+        <p><strong>Error:</strong> {{ connection_error }}</p>
+        {% endif %}
+        <p style="margin-top: 10px;">Please verify your <code>.env</code> settings and ensure your Nextcloud server is reachable.</p>
+        <button type="button" class="btn btn-primary" onclick="window.location.reload()">🔄 Retry Connection</button>
+    </div>
+
+    {% else %}
+    <!-- Connected — File Browser -->
+    <div class="browser-toolbar">
+        <div class="browser-status">
+            <span class="status-badge status-connected">✅ Connected</span>
+        </div>
+        <div class="browser-actions">
+            <button type="button" class="btn btn-secondary btn-sm" onclick="window.location.reload()" title="Refresh listing">
+                🔄 Refresh
+            </button>
+            <button type="button" class="btn btn-primary btn-sm" id="newFolderBtn" onclick="showNewFolderDialog()">
+                📁 New Folder
+            </button>
+            <button type="button" class="btn btn-success btn-sm" id="uploadToCloudBtn" onclick="showUploadDialog()">
+                ⬆️ Upload to Nextcloud
+            </button>
+        </div>
+    </div>
+
+    <!-- Breadcrumb Navigation -->
+    <nav class="breadcrumb-nav" aria-label="File path">
+        {% for crumb in breadcrumbs %}
+        {% if loop.last %}
+        <span class="breadcrumb-item breadcrumb-current">{{ crumb.name }}</span>
+        {% else %}
+        <a href="/browser?path={{ crumb.path }}" class="breadcrumb-item">{{ crumb.name }}</a>
+        <span class="breadcrumb-separator">/</span>
+        {% endif %}
+        {% endfor %}
+    </nav>
+
+    <!-- Up Navigation -->
+    {% if current_path != '/' %}
+    <div class="up-nav">
+        <a href="/browser?path={{ parent_path }}" class="btn btn-secondary btn-sm">
+            ⬆️ Up to parent directory
+        </a>
+        <span class="current-path-label">Current: <code>{{ current_path }}</code></span>
+    </div>
+    {% endif %}
+
+    <!-- File Listing -->
+    <div class="file-browser">
+        {% if items %}
+        <table class="file-table">
+            <thead>
+                <tr>
+                    <th class="col-icon"></th>
+                    <th class="col-name">Name</th>
+                    <th class="col-size">Size</th>
+                    <th class="col-modified">Last Modified</th>
+                    <th class="col-actions">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in items %}
+                <tr class="file-row {% if item.is_directory %}file-row-dir{% else %}file-row-file{% endif %}" data-path="{{ item.path }}">
+                    <td class="col-icon">
+                        {% if item.is_directory %}
+                        📁
+                        {% elif item.name.endswith('.zip') or item.name.endswith('.rar') %}
+                        📦
+                        {% elif item.name.endswith('.mp3') or item.name.endswith('.ogg') or item.name.endswith('.wav') or item.name.endswith('.flac') or item.name.endswith('.opus') %}
+                        🎵
+                        {% elif item.name.endswith('.png') or item.name.endswith('.jpg') or item.name.endswith('.jpeg') or item.name.endswith('.gif') or item.name.endswith('.webp') %}
+                        🖼️
+                        {% elif item.name == 'song.ini' %}
+                        📋
+                        {% elif item.name == 'notes.chart' or item.name == 'notes.mid' %}
+                        🎸
+                        {% else %}
+                        📄
+                        {% endif %}
+                    </td>
+                    <td class="col-name">
+                        {% if item.is_directory %}
+                        <a href="/browser?path={{ item.path }}" class="file-link dir-link">{{ item.name }}/</a>
+                        {% else %}
+                        <span class="file-link file-name-text">{{ item.name }}</span>
+                        {% endif %}
+                    </td>
+                    <td class="col-size">
+                        {% if item.is_directory %}
+                        —
+                        {% else %}
+                        <span class="file-size" data-bytes="{{ item.size }}">{{ item.size }}</span>
+                        {% endif %}
+                    </td>
+                    <td class="col-modified">
+                        <span class="file-date">{{ item.last_modified or '—' }}</span>
+                    </td>
+                    <td class="col-actions">
+                        {% if item.is_directory %}
+                        <button type="button" class="btn btn-primary btn-sm" onclick="importFolder('{{ item.path }}')" title="Import this folder as a song">
+                            ⬇️ Import
+                        </button>
+                        <button type="button" class="btn btn-danger btn-sm" onclick="deleteRemote('{{ item.path }}', '{{ item.name }}', true)" title="Delete folder">
+                            🗑️
+                        </button>
+                        {% else %}
+                        <button type="button" class="btn btn-primary btn-sm" onclick="downloadAndImport('{{ item.path }}')" title="Download and import this file">
+                            ⬇️ Import
+                        </button>
+                        <button type="button" class="btn btn-danger btn-sm" onclick="deleteRemote('{{ item.path }}', '{{ item.name }}', false)" title="Delete file">
+                            🗑️
+                        </button>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <div class="file-count">
+            {{ items | length }} item{{ 's' if items | length != 1 else '' }} in this directory
+        </div>
+
+        {% else %}
+        <div class="empty-directory">
+            <div class="empty-icon">📂</div>
+            <h3>Empty Directory</h3>
+            <p>This directory is empty. Upload files or create a subfolder to get started.</p>
+            <div class="empty-actions">
+                <button type="button" class="btn btn-primary" onclick="showUploadDialog()">⬆️ Upload Files</button>
+                <button type="button" class="btn btn-secondary" onclick="showNewFolderDialog()">📁 New Folder</button>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- New Folder Modal -->
+    <div class="modal-overlay" id="newFolderModal" style="display:none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>📁 Create New Folder</h3>
+                <button type="button" class="modal-close" onclick="hideModal('newFolderModal')">✕</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="newFolderName">Folder Name</label>
+                    <input type="text" id="newFolderName" placeholder="Enter folder name" autofocus>
+                </div>
+                <p class="help-text">The folder will be created inside: <code>{{ current_path }}</code></p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="hideModal('newFolderModal')">Cancel</button>
+                <button type="button" class="btn btn-primary" id="createFolderBtn" onclick="createFolder()">📁 Create</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Upload Modal -->
+    <div class="modal-overlay" id="uploadModal" style="display:none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>⬆️ Upload to Nextcloud</h3>
+                <button type="button" class="modal-close" onclick="hideModal('uploadModal')">✕</button>
+            </div>
+            <div class="modal-body">
+                <form id="cloudUploadForm" enctype="multipart/form-data">
+                    <div class="form-group">
+                        <label for="cloudUploadFile">Select File</label>
+                        <input type="file" id="cloudUploadFile" name="file" required>
+                    </div>
+                    <p class="help-text">File will be uploaded to: <code>{{ current_path }}</code></p>
+                </form>
+                <div id="cloudUploadStatus" class="status-message" style="display:none;"></div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="hideModal('uploadModal')">Cancel</button>
+                <button type="button" class="btn btn-success" id="doCloudUploadBtn" onclick="doCloudUpload()">⬆️ Upload</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Status Area -->
+    <div id="browserStatus" class="status-message" style="display:none; margin-top: 20px;"></div>
+
+    {% endif %}
+
+    <!-- Info Section -->
+    <div class="info-section">
+        <h2>📖 How It Works</h2>
+
+        <h3>☁️ Nextcloud WebDAV Integration</h3>
+        <ol>
+            <li><strong>Browse:</strong> Navigate your Nextcloud file tree directly from this interface. Click folders to drill down, use the breadcrumb trail to go back.</li>
+            <li><strong>Import Songs:</strong> Click <strong>⬇️ Import</strong> on a folder containing a <code>song.ini</code> file to download it and add it to your local library.</li>
+            <li><strong>Import Archives:</strong> Click <strong>⬇️ Import</strong> on <code>.zip</code> or <code>.rar</code> files to download, extract, and import them.</li>
+            <li><strong>Upload:</strong> Push files from your computer up to Nextcloud for centralized storage.</li>
+            <li><strong>Sync Songs:</strong> From the <a href="/songs">Song Library</a>, use the <strong>☁️ Sync</strong> button to upload a local song to Nextcloud.</li>
+        </ol>
+
+        <h3>📂 Recommended Next</h3>cloud Folder Structure</h3>
+        <div class="folder-structure">
+            <code>
+                CloneHero/<br>
+                ├── songs/</code><br>
+                │&nbsp;&nbsp; ├── Artist Name/<br>
+                │&nbsp;&nbsp; │&nbsp;&nbsp; ├── Song Title/<br>
+                │&nbsp;&nbsp; │&nbsp;&nbsp; │&nbsp;&nbsp; ├── song.ini<br>
+                │&nbsp;&nbsp; │&nbsp;&nbsp; │&nbsp;&nbsp; ├── notes.chart<br>
+                │&nbsp;&nbsp; │&nbsp;&nbsp; │&nbsp;&nbsp; └── song.ogg<br>
+                │&nbsp;&nbsp; │&nbsp;&nbsp; └── ...<br>
+                │&nbsp;&nbsp; └── ...<br>
+                ├── backgrounds/<br>
+                ├── highways/<br>
+                └── colors/
+            </code>
+        </div>
+
+        <div class="alert alert-info">
+            💡 <strong>Tip:</strong> Set <code>NEXTCLOUD_REMOTE_PATH</code> in your <code>.env</code> to point at your root Clone Hero folder on Nextcloud so browsing starts in the right place.
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* Toolbar */
+    .browser-toolbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        background: #f8f9fa;
+        border: 1px solid #dee2e6;
+        border-radius: 8px;
+        padding: 12px 18px;
+        margin-bottom: 15px;
+        flex-wrap: wrap;
+        gap: 10px;
+    }
+
+    .browser-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+
+    .status-badge {
+        display: inline-block;
+        padding: 4px 12px;
+        border-radius: 12px;
+        font-size: 0.85em;
+        font-weight: bold;
+    }
+
+    .status-connected {
+        background: #d4edda;
+        color: #155724;
+        border: 1px solid #c3e6cb;
+    }
+
+    /* Breadcrumb */
+    .breadcrumb-nav {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 4px;
+        padding: 10px 16px;
+        background: #f0f2f5;
+        border-radius: 6px;
+        margin-bottom: 12px;
+        font-size: 0.95em;
+    }
+
+    .breadcrumb-item {
+        color: #3498db;
+        text-decoration: none;
+        padding: 2px 6px;
+        border-radius: 3px;
+        transition: background 0.2s;
+    }
+
+    .breadcrumb-item:hover {
+        background: #dbeafe;
+        text-decoration: none;
+    }
+
+    .breadcrumb-current {
+        font-weight: bold;
+        color: #2c3e50;
+        padding: 2px 6px;
+    }
+
+    .breadcrumb-separator {
+        color: #95a5a6;
+        margin: 0 2px;
+    }
+
+    /* Up Navigation */
+    .up-nav {
+        display: flex;
+        align-items: center;
+        gap: 15px;
+        margin-bottom: 15px;
+    }
+
+    .current-path-label {
+        color: #7f8c8d;
+        font-size: 0.9em;
+    }
+
+    .current-path-label code {
+        background: #e9ecef;
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-size: 0.9em;
+    }
+
+    /* File Table */
+    .file-browser {
+        margin-bottom: 30px;
+    }
+
+    .file-table {
+        width: 100%;
+        border-collapse: collapse;
+        background: white;
+        border: 1px solid #dee2e6;
+        border-radius: 8px;
+        overflow: hidden;
+    }
+
+    .file-table thead {
+        background: #f8f9fa;
+        border-bottom: 2px solid #dee2e6;
+    }
+
+    .file-table th {
+        padding: 12px 16px;
+        text-align: left;
+        font-size: 0.85em;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: #7f8c8d;
+        font-weight: 600;
+    }
+
+    .file-table td {
+        padding: 10px 16px;
+        border-bottom: 1px solid #f0f2f5;
+        vertical-align: middle;
+    }
+
+    .file-table tbody tr:last-child td {
+        border-bottom: none;
+    }
+
+    .file-row {
+        transition: background 0.15s;
+    }
+
+    .file-row:hover {
+        background: #f8f9fa;
+    }
+
+    .file-row-dir:hover {
+        background: #f0f7ff;
+    }
+
+    .col-icon {
+        width: 40px;
+        text-align: center;
+        font-size: 1.3em;
+    }
+
+    .col-name {
+        min-width: 200px;
+    }
+
+    .col-size {
+        width: 100px;
+        text-align: right;
+        white-space: nowrap;
+    }
+
+    .col-modified {
+        width: 200px;
+        white-space: nowrap;
+    }
+
+    .col-actions {
+        width: 160px;
+        text-align: right;
+        white-space: nowrap;
+    }
+
+    .col-actions .btn {
+        margin-left: 4px;
+    }
+
+    .file-link {
+        text-decoration: none;
+        color: #2c3e50;
+    }
+
+    .dir-link {
+        color: #3498db;
+        font-weight: 600;
+    }
+
+    .dir-link:hover {
+        text-decoration: underline;
+    }
+
+    .file-name-text {
+        color: #495057;
+    }
+
+    .file-size {
+        color: #7f8c8d;
+        font-size: 0.9em;
+    }
+
+    .file-date {
+        color: #7f8c8d;
+        font-size: 0.88em;
+    }
+
+    .file-count {
+        text-align: center;
+        padding: 12px;
+        color: #7f8c8d;
+        font-size: 0.9em;
+        border-top: 1px solid #dee2e6;
+        background: #f8f9fa;
+        border-radius: 0 0 8px 8px;
+    }
+
+    /* Empty State */
+    .empty-directory {
+        text-align: center;
+        padding: 60px 20px;
+        background: #f8f9fa;
+        border: 2px dashed #dee2e6;
+        border-radius: 12px;
+    }
+
+    .empty-icon {
+        font-size: 4em;
+        margin-bottom: 15px;
+    }
+
+    .empty-directory h3 {
+        color: #7f8c8d;
+        margin-bottom: 10px;
+    }
+
+    .empty-directory p {
+        color: #95a5a6;
+        margin-bottom: 20px;
+    }
+
+    .empty-actions {
+        display: flex;
+        justify-content: center;
+        gap: 12px;
+    }
+
+    /* Modals */
+    .modal-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.5);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1000;
+        backdrop-filter: blur(2px);
+    }
+
+    .modal-content {
+        background: white;
+        border-radius: 12px;
+        width: 90%;
+        max-width: 500px;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        overflow: hidden;
+    }
+
+    .modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 18px 24px;
+        background: #f8f9fa;
+        border-bottom: 1px solid #dee2e6;
+    }
+
+    .modal-header h3 {
+        margin: 0;
+        color: #2c3e50;
+        font-size: 1.2em;
+    }
+
+    .modal-close {
+        background: none;
+        border: none;
+        font-size: 1.3em;
+        cursor: pointer;
+        color: #7f8c8d;
+        padding: 4px 8px;
+        border-radius: 4px;
+        transition: background 0.2s;
+    }
+
+    .modal-close:hover {
+        background: #e9ecef;
+        color: #2c3e50;
+    }
+
+    .modal-body {
+        padding: 24px;
+    }
+
+    .modal-body .form-group {
+        margin-bottom: 15px;
+    }
+
+    .modal-body .form-group label {
+        display: block;
+        margin-bottom: 6px;
+        font-weight: bold;
+        color: #2c3e50;
+    }
+
+    .modal-body .form-group input[type="text"],
+    .modal-body .form-group input[type="file"] {
+        width: 100%;
+        padding: 10px 12px;
+        border: 2px solid #bdc3c7;
+        border-radius: 5px;
+        font-size: 1em;
+    }
+
+    .modal-body .form-group input:focus {
+        outline: none;
+        border-color: #3498db;
+        box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.15);
+    }
+
+    .modal-body .help-text {
+        color: #7f8c8d;
+        font-size: 0.9em;
+        margin-top: 8px;
+    }
+
+    .modal-body .help-text code {
+        background: #e9ecef;
+        padding: 2px 6px;
+        border-radius: 3px;
+    }
+
+    .modal-footer {
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+        padding: 16px 24px;
+        background: #f8f9fa;
+        border-top: 1px solid #dee2e6;
+    }
+
+    /* Config Example */
+    .config-example {
+        background: #2c3e50;
+        color: #2ecc71;
+        padding: 18px 22px;
+        border-radius: 8px;
+        margin: 15px 0;
+        font-family: 'Consolas', 'Monaco', monospace;
+        line-height: 1.8;
+        overflow-x: auto;
+    }
+
+    .config-example code {
+        background: none;
+        color: inherit;
+        padding: 0;
+    }
+
+    /* Folder Structure */
+    .folder-structure {
+        background: #2c3e50;
+        color: #ecf0f1;
+        padding: 18px 22px;
+        border-radius: 8px;
+        margin: 15px 0;
+        font-family: 'Consolas', 'Monaco', monospace;
+        font-size: 0.9em;
+        line-height: 1.6;
+        overflow-x: auto;
+    }
+
+    .folder-structure code {
+        background: none;
+        color: inherit;
+        padding: 0;
+    }
+
+    /* Status Messages */
+    .status-message {
+        margin-top: 15px;
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+        .browser-toolbar {
+            flex-direction: column;
+            align-items: flex-start;
+        }
+
+        .browser-actions {
+            width: 100%;
+        }
+
+        .browser-actions .btn {
+            flex: 1;
+            text-align: center;
+        }
+
+        .up-nav {
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 8px;
+        }
+
+        .file-table {
+            display: block;
+            overflow-x: auto;
+        }
+
+        .col-modified {
+            display: none;
+        }
+
+        .col-size {
+            display: none;
+        }
+
+        .col-actions {
+            width: auto;
+        }
+
+        .modal-content {
+            width: 95%;
+            margin: 0 10px;
+        }
+
+        .empty-actions {
+            flex-direction: column;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const currentPath = '{{ current_path }}';
+
+// Format file sizes on load
+document.addEventListener('DOMContentLoaded', function() {
+    document.querySelectorAll('.file-size[data-bytes]').forEach(el => {
+        const bytes = parseInt(el.getAttribute('data-bytes'), 10);
+        el.textContent = formatFileSize(bytes);
+    });
+});
+
+function formatFileSize(bytes) {
+    if (!bytes || bytes === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
+}
+
+// Modal helpers
+function showModal(id) {
+    document.getElementById(id).style.display = 'flex';
+    const firstInput = document.querySelector('#' + id + ' input');
+    if (firstInput) setTimeout(() => firstInput.focus(), 100);
+}
+
+function hideModal(id) {
+    document.getElementById(id).style.display = 'none';
+}
+
+function showNewFolderDialog() {
+    document.getElementById('newFolderName').value = '';
+    showModal('newFolderModal');
+}
+
+function showUploadDialog() {
+    document.getElementById('cloudUploadFile').value = '';
+    document.getElementById('cloudUploadStatus').style.display = 'none';
+    showModal('uploadModal');
+}
+
+// Close modals on overlay click
+document.querySelectorAll('.modal-overlay').forEach(overlay => {
+    overlay.addEventListener('click', function(e) {
+        if (e.target === this) {
+            this.style.display = 'none';
+        }
+    });
+});
+
+// Close modals on Escape key
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        document.querySelectorAll('.modal-overlay').forEach(m => {
+            m.style.display = 'none';
+        });
+    }
+});
+
+// Enter key in new folder input
+document.getElementById('newFolderName')?.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') {
+        e.preventDefault();
+        createFolder();
+    }
+});
+
+// Status helper
+function showBrowserStatus(message, type) {
+    const statusDiv = document.getElementById('browserStatus');
+    statusDiv.innerHTML = `<div class="alert alert-${type}">${message}</div>`;
+    statusDiv.style.display = 'block';
+    statusDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+// Create folder
+async function createFolder() {
+    const nameInput = document.getElementById('newFolderName');
+    const name = nameInput.value.trim();
+    const btn = document.getElementById('createFolderBtn');
+
+    if (!name) {
+        nameInput.focus();
+        return;
+    }
+
+    // Basic validation
+    if (/[\/\\:*?"<>|]/.test(name)) {
+        alert('Folder name contains invalid characters. Avoid: / \\ : * ? " < > |');
+        nameInput.focus();
+        return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = '⏳ Creating...';
+
+    const remotePath = currentPath.replace(/\/$/, '') + '/' + name;
+
+    try {
+        const formData = new FormData();
+        formData.append('remote_path', remotePath);
+
+        const response = await fetch('/api/webdav/mkdir', {
+            method: 'POST',
+            body: formData,
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+            hideModal('newFolderModal');
+            showNotification(`Folder "${name}" created!`, 'success');
+            // Reload to show the new folder
+            window.location.reload();
+        } else {
+            alert('Error creating folder: ' + (result.detail || result.error || 'Unknown error'));
+        }
+    } catch (error) {
+        alert('Error: ' + error.message);
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '📁 Create';
+    }
+}
+
+// Upload to Nextcloud
+async function doCloudUpload() {
+    const fileInput = document.getElementById('cloudUploadFile');
+    const statusDiv = document.getElementById('cloudUploadStatus');
+    const btn = document.getElementById('doCloudUploadBtn');
+
+    if (!fileInput.files || fileInput.files.length === 0) {
+        statusDiv.innerHTML = '<div class="alert alert-danger">❌ Please select a file.</div>';
+        statusDiv.style.display = 'block';
+        return;
+    }
+
+    btn.disabled = true;
+    btn.textContent = '⏳ Uploading...';
+    statusDiv.innerHTML = '<div class="alert alert-info">⬆️ Uploading to Nextcloud...</div>';
+    statusDiv.style.display = 'block';
+
+    const formData = new FormData();
+    formData.append('file', fileInput.files[0]);
+    formData.append('remote_path', currentPath);
+
+    try {
+        const response = await fetch('/api/webdav/upload', {
+            method: 'POST',
+            body: formData,
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+            statusDiv.innerHTML = '<div class="alert alert-success">✅ File uploaded successfully!</div>';
+            showNotification('File uploaded to Nextcloud!', 'success');
+            // Reload after a short delay
+            setTimeout(() => {
+                hideModal('uploadModal');
+                window.location.reload();
+            }, 1500);
+        } else {
+            statusDiv.innerHTML = `<div class="alert alert-danger">❌ Upload failed: ${result.detail || result.error || 'Unknown error'}</div>`;
+        }
+    } catch (error) {
+        statusDiv.innerHTML = `<div class="alert alert-danger">❌ Error: ${error.message}</div>`;
+    } finally {
+        btn.disabled = false;
+        btn.textContent = '⬆️ Upload';
+    }
+}
+
+// Download and import a file from Nextcloud
+async function downloadAndImport(remotePath) {
+    const filename = remotePath.split('/').pop();
+    if (!confirm(`Download and import "${filename}" from Nextcloud?\n\nThe file will be downloaded, processed, and added to your local library.`)) {
+        return;
+    }
+
+    showBrowserStatus('⬇️ Downloading and importing from Nextcloud...', 'info');
+
+    try {
+        const response = await fetch('/api/webdav/download', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                remote_path: remotePath,
+                content_type: 'songs'
+            }),
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+            let msg = '✅ Import successful!';
+            if (result.songs && result.songs.length > 0) {
+                msg += ` Imported ${result.songs.length} song(s).`;
+            } else if (result.message) {
+                msg += ' ' + result.message;
+            }
+            showBrowserStatus(msg, 'success');
+            showNotification('File imported successfully!', 'success');
+        } else {
+            showBrowserStatus('❌ Import failed: ' + (result.detail || result.error || 'Unknown error'), 'danger');
+        }
+    } catch (error) {
+        showBrowserStatus('❌ Error: ' + error.message, 'danger');
+    }
+}
+
+// Import a folder from Nextcloud (sync-from-nextcloud)
+async function importFolder(remotePath) {
+    const folderName = remotePath.split('/').filter(Boolean).pop() || remotePath;
+    if (!confirm(`Import folder "${folderName}" from Nextcloud?\n\nAll files in this folder will be downloaded. The folder must contain a song.ini file.`)) {
+        return;
+    }
+
+    showBrowserStatus('⬇️ Downloading folder from Nextcloud...', 'info');
+
+    try {
+        const formData = new FormData();
+        formData.append('remote_path', remotePath);
+
+        const response = await fetch('/api/webdav/sync-from-nextcloud', {
+            method: 'POST',
+            body: formData,
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+            let msg = `✅ Imported "${result.message || folderName}" successfully!`;
+            if (result.song_id) {
+                msg += ` <a href="/songs/${result.song_id}/edit" class="btn btn-primary btn-sm" style="margin-left: 10px;">✏️ Edit Song</a>`;
+            }
+            showBrowserStatus(msg, 'success');
+            showNotification('Folder imported from Nextcloud!', 'success');
+        } else {
+            showBrowserStatus('❌ Import failed: ' + (result.detail || result.error || 'Unknown error'), 'danger');
+        }
+    } catch (error) {
+        showBrowserStatus('❌ Error: ' + error.message, 'danger');
+    }
+}
+
+// Delete a remote file or folder
+async function deleteRemote(remotePath, name, isDir) {
+    const typeLabel = isDir ? 'folder' : 'file';
+    const warning = isDir
+        ? `Delete folder "${name}" and ALL its contents from Nextcloud?\n\n⚠️ This cannot be undone!`
+        : `Delete file "${name}" from Nextcloud?\n\n⚠️ This cannot be undone!`;
+
+    if (!confirm(warning)) return;
+
+    showBrowserStatus(`🗑️ Deleting ${typeLabel} "${name}"...`, 'info');
+
+    try {
+        const response = await fetch(`/api/webdav/delete?path=${encodeURIComponent(remotePath)}`, {
+            method: 'DELETE',
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+            showBrowserStatus(`✅ Deleted "${name}" from Nextcloud.`, 'success');
+            showNotification(`${name} deleted from Nextcloud`, 'success');
+
+            // Fade out the row
+            const row = document.querySelector(`tr[data-path="${remotePath}"]`);
+            if (row) {
+                row.style.transition = 'opacity 0.4s, transform 0.4s';
+                row.style.opacity = '0';
+                row.style.transform = 'translateX(-15px)';
+                setTimeout(() => row.remove(), 400);
+            }
+        } else {
+            showBrowserStatus('❌ Delete failed: ' + (result.detail || result.error || 'Unknown error'), 'danger');
+        }
+    } catch (error) {
+        showBrowserStatus('❌ Error: ' + error.message, 'danger');
+    }
+}
+</script>
+{% endblock %}

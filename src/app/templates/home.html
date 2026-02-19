@@ -1,0 +1,111 @@
+{% extends 'base.html' %} {% block title %}Home - Clone Hero Manager{% endblock
+%} {% block content %}
+<div class="container">
+    <h1>🎸 Welcome to Clone Hero Manager</h1>
+    <p>
+        Your single-container content management system for Clone Hero with
+        Nextcloud integration.
+    </p>
+
+    <!-- Stats Bar -->
+    <div class="stats-bar">
+        <div class="stat-item">
+            <span class="stat-number">{{ total_songs }}</span>
+            <span class="stat-label">Songs in Library</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-number"
+                >{% if webdav_configured %}✅{% else %}❌{% endif %}</span
+            >
+            <span class="stat-label">Nextcloud Connected</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-number">v{{ version }}</span>
+            <span class="stat-label">Version</span>
+        </div>
+    </div>
+
+    <!-- Feature Cards -->
+    <div class="feature-grid">
+        <div class="feature-card">
+            <h2>📁 Song Library</h2>
+            <p>
+                Browse, search, and manage your Clone Hero song collection. View
+                metadata, edit song.ini files, and organize your library.
+            </p>
+            <a href="/songs" class="btn btn-primary">Browse Songs</a>
+        </div>
+
+        <div class="feature-card">
+            <h2>📤 Upload Content</h2>
+            <p>
+                Upload .zip or .rar archives containing Clone Hero songs.
+                Archives are automatically extracted and cataloged.
+            </p>
+            <a href="/upload" class="btn btn-primary">Upload Songs</a>
+        </div>
+
+        <div class="feature-card">
+            <h2>🎵 Song Generator</h2>
+            <p>
+                Process audio files (MP3, WAV, OGG, FLAC) into Clone Hero format
+                with auto-detected tempo and generated note charts.
+            </p>
+            <a href="/generator" class="btn btn-primary">Generate Charts</a>
+        </div>
+
+        <div class="feature-card">
+            <h2>☁️ Nextcloud Browser</h2>
+            <p>
+                Browse and sync songs with your Nextcloud instance via WebDAV.
+                Centralize your content across devices.
+            </p>
+            <a href="/browser" class="btn btn-primary">Open Browser</a>
+        </div>
+    </div>
+
+    <!-- How It Works -->
+    <div class="info-section">
+        <h2>📖 How It Works</h2>
+        <ol>
+            <li>
+                <strong>Upload or Import:</strong> Add songs by uploading
+                archives, generating from audio files, or syncing from
+                Nextcloud.
+            </li>
+            <li>
+                <strong>Automatic Processing:</strong> Archives are extracted,
+                song.ini files are parsed, and metadata is indexed in the local
+                database.
+            </li>
+            <li>
+                <strong>Edit &amp; Review:</strong> Use the song editor to
+                update metadata, review generated charts, and manage your
+                library.
+            </li>
+            <li>
+                <strong>Sync with Nextcloud:</strong> Push songs to Nextcloud
+                for centralized storage and access from any device.
+            </li>
+            <li>
+                <strong>Play!</strong> Your content is organized and ready for
+                Clone Hero.
+            </li>
+        </ol>
+
+        {% if not webdav_configured %}
+        <div class="alert alert-warning">
+            ⚠️ <strong>Nextcloud not configured.</strong> To enable cloud sync,
+            set <code>NEXTCLOUD_URL</code>, <code>NEXTCLOUD_USERNAME</code>, and
+            <code>NEXTCLOUD_PASSWORD</code> in your <code>.env</code> file.
+        </div>
+        {% endif %}
+
+        <div class="alert alert-info">
+            💡 <strong>API Documentation:</strong> Interactive API docs are
+            available at <a href="/docs">/docs</a> when running in development
+            mode.
+        </div>
+    </div>
+</div>
+{% endblock %}

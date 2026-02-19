@@ -1,0 +1,606 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ page_title }} - Clone Hero Manager{% endblock %}
+
+{% block content %}
+<div class="container">
+    {% if error %}
+    <div class="alert alert-danger">
+        <h2></h2>⚠️ Song Not Found</h2>
+        <p>{{ error }}</p>
+        <a href="/songs" class="btn btn-primary">← Back to Song Library</a>
+    </div>
+    {% elif song %}
+    <div class="editor-header">
+        <h1></h1>✏️ Edit Song</h1>
+        <div class="editor-actions-top">
+            <a href="/songs" class="btn btn-secondary">← Back to Library</a>
+            <button type="button" class="btn btn-success" id="saveBtn" onclick="saveSong()">💾 Save Changes</button>
+        </div>
+    </div>
+
+    <div id="saveStatus" class="status-message" style="display:none;"></div>
+
+    <!-- Core Fields -->
+    <div class="editor-section">
+        <h2>🎵 Core Information</h2>
+        <form id="songForm">
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="title">Song Title <span class="required">*</span></label>
+                    <input type="text" id="title" name="title" value="{{ song.title }}" required
+                           placeholder="Enter song title">
+                </div>
+                <div class="form-group">
+                    <label for="artist">Artist <span class="required">*</span></label>
+                    <input type="text" id="artist" name="artist" value="{{ song.artist }}" required
+                           placeholder="Enter artist name">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="album">Album</label>
+                    <input type="text" id="album" name="album" value="{{ song.album or '' }}"
+                           placeholder="Enter album name">
+                </div>
+            </div>
+        </form>
+    </div>
+
+    <!-- Song Info Section -->
+    <div class="editor-section">
+        <h2>📋 Song Details</h2>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="meta-genre">Genre</label>
+                <input type="text" id="meta-genre" data-meta-key="genre"
+                       value="{{ song.metadata.genre if song.metadata and song.metadata.genre else '' }}"
+                       placeholder="e.g. Rock, Metal, Pop">
+            </div>
+            <div class="form-group">
+                <label for="meta-year">Year</label>
+                <input type="text" id="meta-year" data-meta-key="year"
+                       value="{{ song.metadata.year if song.metadata and song.metadata.year else '' }}"
+                       placeholder="e.g. 2024">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="meta-charter">Charter</label>
+                <input type="text" id="meta-charter" data-meta-key="charter"
+                       value="{{ song.metadata.charter if song.metadata and song.metadata.charter else '' }}"
+                       placeholder="Who charted this song">
+            </div>
+            <div class="form-group">
+                <label for="meta-icon">Icon</label>
+                <input type="text" id="meta-icon" data-meta-key="icon"
+                       value="{{ song.metadata.icon if song.metadata and song.metadata.icon else '' }}"
+                       placeholder="Icon identifier">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="meta-loading_phrase">Loading Phrase</label>
+                <input type="text" id="meta-loading_phrase" data-meta-key="loading_phrase"
+                       value="{{ song.metadata.loading_phrase if song.metadata and song.metadata.loading_phrase else '' }}"
+                       placeholder="Text shown on loading screen">
+            </div>
+            <div class="form-group">
+                <label for="meta-album_track">Album Track #</label>
+                <input type="text" id="meta-album_track" data-meta-key="album_track"
+                       value="{{ song.metadata.album_track if song.metadata and song.metadata.album_track else '' }}"
+                       placeholder="Track number">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="meta-playlist_track">Playlist Track #</label>
+                <input type="text" id="meta-playlist_track" data-meta-key="playlist_track"
+                       value="{{ song.metadata.playlist_track if song.metadata and song.metadata.playlist_track else '' }}"
+                       placeholder="Playlist position">
+            </div>
+            <div class="form-group">
+                <label for="meta-delay">Delay (ms)</label>
+                <input type="text" id="meta-delay" data-meta-key="delay"
+                       value="{{ song.metadata.delay if song.metadata and song.metadata.delay else '' }}"
+                       placeholder="Audio delay in milliseconds">
+            </div>
+        </div>
+    </div>
+
+    <!-- Timing Section -->
+    <div class="editor-section">
+        <h2>⏱️ Timing</h2>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="meta-song_length">Song Length (ms)</label>
+                <input type="text" id="meta-song_length" data-meta-key="song_length"
+                       value="{{ song.metadata.song_length if song.metadata and song.metadata.song_length else '' }}"
+                       placeholder="Duration in milliseconds">
+            </div>
+            <div class="form-group">
+                <label for="meta-preview_start_time">Preview Start (ms)</label>
+                <input type="text" id="meta-preview_start_time" data-meta-key="preview_start_time"
+                       value="{{ song.metadata.preview_start_time if song.metadata and song.metadata.preview_start_time else '' }}"
+                       placeholder="Preview start time">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label for="meta-video_start_time">Video Start (ms)</label>
+                <input type="text" id="meta-video_start_time" data-meta-key="video_start_time"
+                       value="{{ song.metadata.video_start_time if song.metadata and song.metadata.video_start_time else '' }}"
+                       placeholder="Video start time">
+            </div>
+            <div class="form-group">
+                <label for="meta-modchart">Modchart</label>
+                <select id="meta-modchart" data-meta-key="modchart">
+                    <option value="" {% if not song.metadata or not song.metadata.modchart %}selected{% endif %}>Not set</option>
+                    <option value="True" {% if song.metadata and song.metadata.modchart == 'True' %}selected{% endif %}>Yes</option>
+                    <option value="False" {% if song.metadata and song.metadata.modchart == 'False' %}selected{% endif %}>No</option>
+                </select>
+            </div>
+        </div>
+    </div>
+
+    <!-- Difficulty Section -->
+    <div class="editor-section">
+        <h2>🎯 Difficulty Ratings</h2>
+        <p class="help-text">Set difficulty ratings from -1 (not present) to 6 (maximum). Leave blank if not applicable.</p>
+
+        <div class="difficulty-grid">
+            {% set difficulties = [
+                ('diff_guitar', 'Guitar', '🎸'),
+                ('diff_rhythm', 'Rhythm', '🎸'),
+                ('diff_bass', 'Bass', '🎸'),
+                ('diff_guitar_coop', 'Guitar Co-op', '🎸'),
+                ('diff_drums', 'Drums', '🥁'),
+                ('diff_drums_real', 'Real Drums', '🥁'),
+                ('diff_keys', 'Keys', '🎹'),
+                ('diff_guitarghl', 'Guitar (GHL)', '🎸'),
+                ('diff_bassghl', 'Bass (GHL)', '🎸'),
+                ('diff_rhythm_ghl', 'Rhythm (GHL)', '🎸'),
+                ('diff_guitar_coop_ghl', 'Guitar Co-op (GHL)', '🎸')
+            ] %}
+
+            {% for key, label, icon in difficulties %}
+            <div class="difficulty-item">
+                <label for="meta-{{ key }}">{{ icon }} {{ label }}</label>
+                <input type="number" id="meta-{{ key }}" data-meta-key="{{ key }}"
+                       value="{{ song.metadata[key] if song.metadata and key in song.metadata else '' }}"
+                       min="-1" max="6" step="1"
+                       placeholder="-1">
+            </div>
+            {% endfor %}""
+        </div>
+    </div>
+
+    <!-- File Info (Read-only) -->
+    <div class="editor-section">
+        <h2>📂 File Information</h2>
+        <div class="file-info-grid">
+            <div class="file-info-item">
+                <span class="file-info-label">Song ID:</span>
+                <span class="file-info-value">{{ song.id }}</span>
+            </div>
+            <div class="file-info-item">
+                <span class="file-info-label">File Path:</span>
+                <span class="file-info-value"><code>{{ song.file_path }}</code></span>
+            </div>
+            {% if song.created_at %}
+            <div class="file-info-item">
+                <span class="file-info-label">Created:</span>
+                <span class="file-info-value">{{ song.created_at }}</span>
+            </div>
+            {% endif %}
+            {% if song.updated_at %}
+            <div class="file-info-item">
+                <span class="file-info-label">Last Updated:</span>
+                <span class="file-info-value">{{ song.updated_at }}</span>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Bottom Actions -->
+    <div class="editor-actions-bottom">
+        <a href="/songs" class="btn btn-secondary">← Cancel</a>
+        <div class="editor-actions-right">
+            <button type="button" class="btn btn-success sync-btn" onclick="syncToNextcloud({{ song.id }})">
+                ☁️ Sync to Nextcloud
+            </button>
+            <button type="button" class="btn btn-primary" onclick="saveSong()">💾 Save Changes</button>
+        </div>
+    </div>
+
+    {% endif %}
+</div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+    .editor-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 25px;
+        flex-wrap: wrap;
+        gap: 15px;
+    }
+
+    .editor-header h1 {
+        margin-bottom: 0;
+    }
+
+    .editor-actions-top {
+        display: flex;
+        gap: 10px;
+    }
+
+    .editor-section {
+        background: #f8f9fa;
+        border: 1px solid #dee2e6;
+        border-radius: 8px;
+        padding: 25px;
+        margin-bottom: 25px;
+    }
+
+    .editor-section h2 {
+        margin-top: 0;
+        margin-bottom: 20px;
+        padding-bottom: 10px;
+        border-bottom: 2px solid #dee2e6;
+        font-size: 1.4em;
+    }
+
+    .form-row {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 20px;
+        margin-bottom: 15px;
+    }
+
+    .form-group label {
+        display: block;
+        margin-bottom: 6px;
+        font-weight: bold;
+        color: #2c3e50;
+        font-size: 0.95em;
+    }
+
+    .required {
+        color: #e74c3c;
+    }
+
+    .form-group input,
+    .form-group select {
+        width: 100%;
+        padding: 10px 12px;
+        border: 2px solid #bdc3c7;
+        border-radius: 5px;
+        font-size: 1em;
+        transition: border-color 0.2s, box-shadow 0.2s;
+        background: white;
+    }
+
+    .form-group input:focus,
+    .form-group select:focus {
+        outline: none;
+        border-color: #3498db;
+        box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.15);
+    }
+
+    .form-group input.modified {
+        border-color: #f39c12;
+        background: #fffbf0;
+    }
+
+    .help-text {
+        color: #7f8c8d;
+        font-size: 0.9em;
+        margin-bottom: 15px;
+    }
+
+    .difficulty-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+        gap: 15px;
+    }
+
+    .difficulty-item {
+        display: flex;
+        flex-direction: column;
+    }
+
+    .difficulty-item label {
+        font-weight: bold;
+        font-size: 0.9em;
+        margin-bottom: 5px;
+        color: #2c3e50;
+    }
+
+    .difficulty-item input {
+        padding: 8px 10px;
+        border: 2px solid #bdc3c7;
+        border-radius: 5px;
+        font-size: 0.95em;
+        width: 100%;
+        transition: border-color 0.2s;
+        background: white;
+    }
+
+    .difficulty-item input:focus {
+        outline: none;
+        border-color: #3498db;
+        box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.15);
+    }
+
+    .file-info-grid {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .file-info-item {
+        display: flex;
+        gap: 12px;
+        align-items: baseline;
+        padding: 5px 0;
+    }
+
+    .file-info-label {
+        font-weight: bold;
+        color: #2c3e50;
+        min-width: 120px;
+    }
+
+    .file-info-value {
+        color: #495057;
+        word-break: break-all;
+    }
+
+    .file-info-value code {
+        background: #e9ecef;
+        padding: 3px 8px;
+        border-radius: 3px;
+        font-size: 0.9em;
+    }
+
+    .editor-actions-bottom {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 20px 0;
+        border-top: 2px solid #dee2e6;
+        margin-top: 10px;
+        flex-wrap: wrap;
+        gap: 15px;
+    }
+
+    .editor-actions-right {
+        display: flex;
+        gap: 10px;
+    }
+
+    .status-message {
+        margin-bottom: 20px;
+    }
+
+    @media (max-width: 768px) {
+        .editor-header {
+            flex-direction: column;
+            align-items: flex-start;
+        }
+
+        .form-row {
+            grid-template-columns: 1fr;
+        }
+
+        .difficulty-grid {
+            grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+        }
+
+        .editor-actions-bottom {
+            flex-direction: column;
+            align-items: stretch;
+        }
+
+        .editor-actions-right {
+            flex-direction: column;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const songId = {{ song.id if song else 'null' }};
+
+// Track original values for change detection
+const originalValues = {};
+
+function captureOriginalValues() {
+    const titleEl = document.getElementById('title');
+    const artistEl = document.getElementById('artist');
+    const albumEl = document.getElementById('album');
+
+    if (titleEl) originalValues['title'] = titleEl.value;
+    if (artistEl) originalValues['artist'] = artistEl.value;
+    if (albumEl) originalValues['album'] = albumEl.value;
+
+    document.querySelectorAll('[data-meta-key]').forEach(input => {
+        const key = input.getAttribute('data-meta-key');
+        originalValues['meta_' + key] = input.value;
+    });
+}
+
+function markModified(input) {
+    const key = input.id.startsWith('meta-')
+        ? 'meta_' + input.getAttribute('data-meta-key')
+        : input.id;
+
+    if (originalValues[key] !== undefined && input.value !== originalValues[key]) {
+        input.classList.add('modified');
+    } else {
+        input.classList.remove('modified');
+    }
+}
+
+// Attach change listeners
+document.addEventListener('DOMContentLoaded', function() {
+    captureOriginalValues();
+
+    const allInputs = document.querySelectorAll('#songForm input, #songForm select, [data-meta-key]');
+    allInputs.forEach(input => {
+        input.addEventListener('input', function() {
+            markModified(this);
+        });
+        input.addEventListener('change', function() {
+            markModified(this);
+        });
+    });
+});
+
+function collectMetadata() {
+    const metadata = {};
+    document.querySelectorAll('[data-meta-key]').forEach(input => {
+        const key = input.getAttribute('data-meta-key');
+        const value = input.value.trim();
+        if (value !== '') {
+            metadata[key] = value;
+        }
+    });
+    return metadata;
+}
+
+async function saveSong() {
+    if (!songId) return;
+
+    const titleEl = document.getElementById('title');
+    const artistEl = document.getElementById('artist');
+    const albumEl = document.getElementById('album');
+    const statusDiv = document.getElementById('saveStatus');
+    const saveBtn = document.getElementById('saveBtn');
+
+    // Validate required fields
+    if (!titleEl.value.trim()) {
+        titleEl.focus();
+        statusDiv.innerHTML = '<div class="alert alert-danger">❌ Song title is required.</div>';
+        statusDiv.style.display = 'block';
+        return;
+    }
+    if (!artistEl.value.trim()) {
+        artistEl.focus();
+        statusDiv.innerHTML = '<div class="alert alert-danger">❌ Artist name is required.</div>';
+        statusDiv.style.display = 'block';
+        return;
+    }
+
+    saveBtn.disabled = true;
+    saveBtn.textContent = '⏳ Saving...';
+    statusDiv.innerHTML = '<div class="alert alert-info">💾 Saving changes...</div>';
+    statusDiv.style.display = 'block';
+
+    const payload = {
+        title: titleEl.value.trim(),
+        artist: artistEl.value.trim(),
+        album: albumEl.value.trim() || null,
+        metadata: collectMetadata()
+    };
+
+    try {
+        const response = await fetch(`/api/songs/${songId}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(payload)
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+            statusDiv.innerHTML = '<div class="alert alert-success">✅ Song updated successfully! The song.ini file on disk has also been updated.</div>';
+
+            // Reset modification tracking
+            captureOriginalValues();
+            document.querySelectorAll('.modified').forEach(el => el.classList.remove('modified'));
+
+            showNotification('Song saved successfully!', 'success');
+        } else {
+            const errMsg = result.detail || result.error || 'Update failed';
+            statusDiv.innerHTML = `<div class="alert alert-danger">❌ Error: ${errMsg}</div>`;
+        }
+    } catch (error) {
+        statusDiv.innerHTML = `<div class="alert alert-danger">❌ Network error: ${error.message}</div>`;
+    } finally {
+        saveBtn.disabled = false;
+        saveBtn.textContent = '💾 Save Changes';
+    }
+
+    // Scroll to status message
+    statusDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+async function syncToNextcloud(id) {
+    if (!confirm('Sync this song to Nextcloud?\n\nAll files in the song folder will be uploaded.')) {
+        return;
+    }
+
+    const syncBtn = document.querySelector('.sync-btn');
+    syncBtn.disabled = true;
+    syncBtn.textContent = '⏳ Syncing...';
+
+    const statusDiv = document.getElementById('saveStatus');
+
+    try {
+        const formData = new FormData();
+        formData.append('song_id', id);
+
+        const response = await fetch('/api/webdav/sync-to-nextcloud', {
+            method: 'POST',
+            body: formData
+        });
+
+        const result = await response.json();
+
+        if (response.ok) {
+            const uploadCount = result.uploaded ? result.uploaded.length : 0;
+            statusDiv.innerHTML = `<div class="alert alert-success">☁️ Synced ${uploadCount} file(s) to Nextcloud at <code>${result.remote_path || '/'}</code></div>`;
+            statusDiv.style.display = 'block';
+            showNotification('Song synced to Nextcloud!', 'success');
+        } else {
+            const errMsg = result.detail || result.error || 'Sync failed';
+            statusDiv.innerHTML = `<div class="alert alert-danger">❌ Sync error: ${errMsg}</div>`;
+            statusDiv.style.display = 'block';
+        }
+    } catch (error) {
+        statusDiv.innerHTML = `<div class="alert alert-danger">❌ Sync error: ${error.message}</div>`;
+        statusDiv.style.display = 'block';
+    } finally {
+        syncBtn.disabled = false;
+        syncBtn.textContent = '☁️ Sync to Nextcloud';
+    }
+
+    statusDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+// Warn before leaving with unsaved changes
+window.addEventListener('beforeunload', function(e) {
+    const modified = document.querySelectorAll('.modified');
+    if (modified.length > 0) {
+        e.preventDefault();
+        e.returnValue = 'You have unsaved changes. Are you sure you want to leave?';
+        return e.returnValue;
+    }
+});
+
+// Keyboard shortcut: Ctrl+S to save
+document.addEventListener('keydown', function(e) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+        e.preventDefault();
+        saveSong();
+    }
+});
+</script>
+{% endblock %}

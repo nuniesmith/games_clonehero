@@ -2,11 +2,12 @@
 set -euo pipefail
 
 ###############################################################################
-# CONFIGURATION & GLOBAL VARIABLES
+# Clone Hero Content Manager - Utility Script
+# Single-container simplified version
 ###############################################################################
 
 # Debugging
-DEBUG=false  # Set to 'true' for verbose mode
+DEBUG=false
 [[ "$DEBUG" == "true" ]] && set -x
 
 # Default non-interactive mode to false
@@ -30,40 +31,23 @@ shift "$((OPTIND-1))"
 readonly LOG_DIR="/tmp/utils"
 readonly LOG_FILE="${LOG_DIR}/utils.log"
 
-# Sudo password, fallback from environment if provided
-password="${SUDO_PASS:-${password:-}}"
-
 # Docker Hub Settings
 DOCKERHUB_USERNAME="nuniesmith"
 DOCKERHUB_REPOSITORY="clonehero"
-PYTHONPATH="/app"
 
 # Docker Compose
 COMPOSE_FILE="docker-compose.yml"
 
-# Docker services (build & push)
-declare -A services=(
-  ["api"]="./docker/api/Dockerfile"
-  ["backend"]="./docker/backend/Dockerfile"
-  ["frontend"]="./docker/frontend/Dockerfile"
-  ["nginx"]="./docker/nginx/Dockerfile"
-  ["postgres"]="./docker/postgres/Dockerfile"
-  ["server"]="./docker/server/Dockerfile"
-  ["sync"]="./docker/sync/Dockerfile"
-)
-
-# Global distro detection
-DETECTED_DISTRO=""
+# Image name
+IMAGE_NAME="${DOCKERHUB_USERNAME}/${DOCKERHUB_REPOSITORY}:app"
 
 ###############################################################################
 # INITIAL SETUP
 ###############################################################################
 
-# Create logging directory
 mkdir -p "$LOG_DIR"
 chmod 700 "$LOG_DIR"
 
-# Trap signals
 trap 'log_info "Script interrupted."; exit 130' INT
 trap 'log_info "Script terminated."; exit 143' TERM
 
@@ -83,11 +67,9 @@ log_error() {
     echo "[ERROR] $(date '+%Y-%m-%d %H:%M:%S') - $*" >> "$LOG_FILE"
 }
 
-# Simple yes/no prompt
 confirm() {
     local prompt="$1"
     if [[ "$NON_INTERACTIVE" == true ]]; then
-        # Automatically confirm in non-interactive mode
         echo "$prompt [y/N]: y (auto-confirmed)"
         return 0
     else
@@ -97,346 +79,269 @@ confirm() {
 }
 
 ###############################################################################
-# SUDO PASSWORD HANDLING
+# ENVIRONMENT CHECK
 ###############################################################################
-validate_sudo_password() {
-    local pass="$1"
-    echo "$pass" | sudo -kS true 2>/dev/null
-}
-
-handle_sudo_password() {
-    # If password is provided, validate it
-    if [[ -n "${password:-}" ]]; then
-        if ! validate_sudo_password "$password"; then
-            log_error "Provided sudo password is invalid. Exiting."
-            exit 1
-        fi
-        log_info "Sudo password validated from environment variable."
-    else
-        # Non-interactive mode without a password → fail fast
-        if [[ "$NON_INTERACTIVE" == true ]]; then
-            log_error "Sudo password not provided in non-interactive mode. Exiting."
-            exit 1
-        fi
-        
-        # Otherwise, prompt for password interactively
-        while true; do
-            read -s -p "Sudo Password: " password
-            echo
-            if validate_sudo_password "$password"; then
-                log_info "Sudo password validated."
-                break
-            else
-                log_error "Invalid sudo password. Please try again."
-            fi
-        done
-    fi
-}
-
-###############################################################################
-# LINUX DISTRIBUTION DETECTION
-###############################################################################
-detect_linux_distribution() {
-    log_info "Detecting Linux distribution..."
-    if [[ -f /etc/os-release ]]; then
-        # shellcheck disable=SC1091
-        . /etc/os-release
-        DETECTED_DISTRO=$(echo "$ID" | tr '[:upper:]' '[:lower:]')
-    else
-        log_warn "Could not detect Linux distribution. Defaulting to fedora."
-        DETECTED_DISTRO="fedora"
-    fi
-    log_info "Detected distribution: $DETECTED_DISTRO"
-}
-
-###############################################################################
-# SYSTEM TOOLS
-###############################################################################
-install_docker_engine() {
-    log_info "Installing Docker Engine..."
-    case "$DETECTED_DISTRO" in
-        fedora)
-            echo "$password" | sudo -S dnf -y install dnf-plugins-core
-            cat << 'EOF' | sudo tee /etc/yum.repos.d/docker-ce.repo > /dev/null
-[docker-ce-stable]
-name=Docker CE Stable - $releasever
-baseurl=https://download.docker.com/linux/fedora/$releasever/$basearch/stable
-enabled=1
-gpgcheck=1
-gpgkey=https://download.docker.com/linux/fedora/gpg
-EOF
-            echo "$password" | sudo -S dnf -y install docker-ce docker-ce-cli docker-buildx-plugin docker-compose-plugin
-            echo "$password" | sudo -S systemctl enable docker
-            echo "$password" | sudo -S systemctl start docker
-            log_info "Docker installed successfully on Fedora."
-            ;;
-        *)
-            log_error "Docker installation not implemented for $DETECTED_DISTRO."
-            ;;
-    esac
-}
-
-update_system_packages() {
-    log_info "Updating system packages for $DETECTED_DISTRO..."
-    case "$DETECTED_DISTRO" in
-        ubuntu|debian)
-            echo "$password" | sudo -S apt update && echo "$password" | sudo -S apt upgrade -y
-            ;;
-        fedora|rhel|centos)
-            echo "$password" | sudo -S dnf -y upgrade
-            ;;
-        arch)
-            echo "$password" | sudo -S pacman -Syu --noconfirm
-            ;;
-        *)
-            log_warn "System update not implemented for $DETECTED_DISTRO."
-            ;;
-    esac
-    log_info "System packages updated."
-}
-
-check_for_updates() {
-    log_info "Checking for system updates..."
-    case "$DETECTED_DISTRO" in
-        fedora)
-            if echo "$password" | sudo -S dnf check-update --refresh &>/dev/null; then
-                set +e
-                echo "$password" | sudo -S dnf check-update --refresh
-                RETVAL=$?
-                set -e
-                if [[ $RETVAL -eq 100 ]]; then
-                    log_info "Updates available."
-                    if confirm "Apply system updates now?"; then
-                        update_system_packages
-                    else
-                        log_info "Skipping system updates."
-                    fi
-                else
-                    log_info "No updates available."
-                fi
-            else
-                log_warn "Update check failed or no updates found."
-            fi
-            ;;
-        *)
-            log_warn "Update checking not implemented for $DETECTED_DISTRO."
-            ;;
-    esac
-}
-
-ensure_dependencies() {
-    # This is a simplistic approach, just checking for 'docker'.
-    local dependencies=("docker")
-    local install_funcs=(install_docker_engine)
-    for i in "${!dependencies[@]}"; do
-        local dep="${dependencies[$i]}"
-        if ! command -v "$dep" &>/dev/null; then
-            log_warn "$dep is not installed."
-            if confirm "Install $dep?"; then
-                "${install_funcs[$i]}"
-            else
-                log_info "Skipping $dep installation."
-            fi
+check_env_file() {
+    if [[ ! -f ".env" ]]; then
+        if [[ -f ".env.example" ]]; then
+            log_warn ".env file not found. Copying from .env.example..."
+            cp .env.example .env
+            log_info "Created .env from .env.example — please review and update settings."
         else
-            log_info "$dep is already installed."
+            log_error "No .env or .env.example file found."
+            exit 1
         fi
-    done
+    fi
+}
+
+check_docker() {
+    if ! command -v docker &>/dev/null; then
+        log_error "Docker is not installed. Please install Docker first."
+        log_info "Visit: https://docs.docker.com/get-docker/"
+        exit 1
+    fi
+    log_info "Docker is available."
 }
 
 ###############################################################################
-# DOCKER PRUNE / CACHE CLEARS
+# SERVICE MANAGEMENT
 ###############################################################################
-docker_tools_mode() {
-    local choice="$1"
+start_service() {
+    log_info "Starting Clone Hero Content Manager..."
+    check_env_file
+
+    if [[ ! -f "$COMPOSE_FILE" ]]; then
+        log_error "Docker Compose file '$COMPOSE_FILE' not found."
+        exit 1
+    fi
+
+    # Create data directories if they don't exist
+    mkdir -p data/clonehero_content/{songs,backgrounds,colors,highways,generator,temp}
+    mkdir -p data/logs
+
+    docker compose -f "$COMPOSE_FILE" up -d --build
+    log_info "Service is starting up..."
+
+    # Wait for health check
+    log_info "Waiting for service to become healthy..."
+    local retries=15
+    local delay=2
+    for ((i=1; i<=retries; i++)); do
+        if curl -sf http://localhost:${APP_PORT:-8000}/api/health > /dev/null 2>&1; then
+            log_info "✅ Service is healthy and ready!"
+            log_info "🌐 Open http://localhost:${APP_PORT:-8000} in your browser."
+            return 0
+        fi
+        sleep "$delay"
+    done
+
+    log_warn "Service may still be starting. Check logs with: docker compose logs -f"
+}
+
+stop_service() {
+    log_info "Stopping Clone Hero Content Manager..."
+    docker compose -f "$COMPOSE_FILE" down --remove-orphans
+    log_info "Service stopped."
+}
+
+restart_service() {
+    log_info "Restarting Clone Hero Content Manager..."
+    stop_service
+    start_service
+}
+
+show_logs() {
+    log_info "Showing service logs (Ctrl+C to exit)..."
+    docker compose -f "$COMPOSE_FILE" logs -f
+}
+
+show_status() {
+    echo ""
+    echo "=== Service Status ==="
+    docker compose -f "$COMPOSE_FILE" ps
+    echo ""
+
+    # Check health endpoint
+    local port="${APP_PORT:-8000}"
+    if curl -sf "http://localhost:${port}/api/health" > /dev/null 2>&1; then
+        echo "Health: ✅ Healthy"
+        curl -sf "http://localhost:${port}/api/health" 2>/dev/null | python3 -m json.tool 2>/dev/null || true
+    else
+        echo "Health: ❌ Not responding"
+    fi
+    echo ""
+}
+
+###############################################################################
+# BUILD & PUSH
+###############################################################################
+build_image() {
+    log_info "Building Docker image: ${IMAGE_NAME}..."
+    docker build -f docker/Dockerfile -t "$IMAGE_NAME" .
+    log_info "✅ Image built successfully: ${IMAGE_NAME}"
+}
+
+push_image() {
+    log_info "Pushing Docker image: ${IMAGE_NAME}..."
+    docker push "$IMAGE_NAME"
+    log_info "✅ Image pushed to Docker Hub: ${IMAGE_NAME}"
+}
+
+build_and_push() {
+    build_image
+    if confirm "Push image to Docker Hub?"; then
+        push_image
+    fi
+}
+
+###############################################################################
+# DEVELOPMENT
+###############################################################################
+dev_run() {
+    log_info "Starting in development mode (with auto-reload)..."
+    check_env_file
+
+    mkdir -p data/clonehero_content/{songs,backgrounds,colors,highways,generator,temp}
+    mkdir -p data/logs
+
+    # Source .env for local development
+    set -a
+    # shellcheck disable=SC1091
+    source .env 2>/dev/null || true
+    set +a
+
+    export PYTHONPATH="${PYTHONPATH:-$(pwd)}"
+    export DATA_DIR="${DATA_DIR:-$(pwd)/data}"
+    export LOG_DIR="${LOG_DIR:-$(pwd)/data/logs}"
+
+    python -m uvicorn src.app.main:app \
+        --host "${APP_HOST:-0.0.0.0}" \
+        --port "${APP_PORT:-8000}" \
+        --reload \
+        --reload-dir src
+}
+
+###############################################################################
+# CLEANUP
+###############################################################################
+docker_prune() {
+    local choice="${1:-all}"
     case "$choice" in
-        0)
-            log_info "Clearing Docker caches and resources..."
-            echo "$password" | sudo -S docker system prune -af --volumes
+        all)
+            log_info "Pruning all unused Docker resources..."
+            docker system prune -af --volumes
             ;;
-        1)
-            log_info "Pruning unused Docker volumes..."
-            echo "$password" | sudo -S docker volume prune -f
-            ;;
-        2)
+        images)
             log_info "Pruning unused Docker images..."
-            echo "$password" | sudo -S docker image prune -af
+            docker image prune -af
             ;;
-        3)
-            log_info "Pruning unused Docker containers..."
-            echo "$password" | sudo -S docker container prune -f
+        volumes)
+            log_info "Pruning unused Docker volumes..."
+            docker volume prune -f
+            ;;
+        containers)
+            log_info "Pruning stopped Docker containers..."
+            docker container prune -f
             ;;
         *)
-            log_error "Invalid Docker tool option."
+            log_error "Invalid prune target: $choice"
             ;;
     esac
 }
 
-###############################################################################
-# PERMISSIONS FIX FUNCTION
-###############################################################################
-fix_dir_permissions() {
-    log_info "Applying chmod 755 to current directory ($(pwd)) recursively (verbose)..."
-    echo "$password" | sudo -S chmod 755 -Rfv .
-
-    log_info "Applying chown $USER:$USER to current directory recursively (verbose)..."
-    echo "$password" | sudo -S chown "$USER":"$USER" -Rfv .
-}
-
-###############################################################################
-# BUILD & PUSH DOCKER IMAGES
-###############################################################################
-build_and_push_images() {
-  log_info "Building and pushing Docker images..."
-
-  for service in "${!services[@]}"; do
-    local dockerfile=${services[$service]}
-    local service_sanitized
-    service_sanitized="$(echo "$service" | tr ' ' '_')"  # <-- Fixed here
-
-    log_info "----------------------------------------"
-    log_info "Building image for service: $service"
-    log_info "Using Dockerfile: $dockerfile"
-
-    if ! docker build \
-      --build-arg PYTHONPATH="$PYTHONPATH" \
-      -t "$DOCKERHUB_USERNAME/$DOCKERHUB_REPOSITORY:$service_sanitized" \
-      -f "$dockerfile" .; then
-      log_error "Failed to build $service image. Skipping push."
-      continue
-    fi
-
-    log_info "Successfully built $service image."
-    if docker push "$DOCKERHUB_USERNAME/$DOCKERHUB_REPOSITORY:$service_sanitized"; then
-      log_info "Successfully pushed $service image to Docker Hub."
+fix_permissions() {
+    log_info "Fixing data directory permissions..."
+    if [[ -d "data" ]]; then
+        chmod -R 755 data/
+        log_info "✅ Permissions fixed for data/"
     else
-      log_error "Failed to push $service image to Docker Hub."
+        log_warn "data/ directory not found."
     fi
-    log_info "----------------------------------------"
-  done
 }
 
 ###############################################################################
-# DOCKER COMPOSE FUNCTIONS
+# BACKUP / RESTORE
 ###############################################################################
-update_images() {
-  log_info "Checking for new images via docker compose pull..."
-  local updates_available=false
+backup_data() {
+    local timestamp
+    timestamp=$(date '+%Y%m%d_%H%M%S')
+    local backup_file="backup_clonehero_${timestamp}.tar.gz"
 
-  if docker compose -f "$COMPOSE_FILE" pull; then
-    updates_available=true
-    log_info "Successfully pulled the latest images."
-  else
-    log_warn "Pulling images failed. Attempting to build images locally."
-    if docker compose -f "$COMPOSE_FILE" build; then
-      updates_available=true
-      log_info "Successfully built all images locally."
-    else
-      log_error "Failed to pull or build images."
-      exit 1
+    if [[ ! -d "data" ]]; then
+        log_error "No data/ directory to back up."
+        return 1
     fi
-  fi
-  echo "$updates_available"
-}
 
-start_services() {
-  log_info "Stopping any running containers and starting services..."
-  docker compose -f "$COMPOSE_FILE" down --remove-orphans
-  docker compose -f "$COMPOSE_FILE" up -d --build
-  log_info "All services are up and running."
-}
-
-docker_compose_start() {
-  log_info "Starting the update and launch process for Docker services..."
-
-  if [[ ! -f "$COMPOSE_FILE" ]]; then
-    log_error "Docker Compose file '$COMPOSE_FILE' not found."
-    exit 1
-  fi
-
-  local updates_available
-  updates_available=$(update_images)
-  if [[ "$updates_available" == "true" ]]; then
-    log_info "New images detected. Rebuilding and restarting services."
-    start_services
-  else
-    log_info "No updates found. Restarting services normally."
-    start_services
-  fi
-  log_info "Docker services are running."
-}
-
-# NEW FUNCTION: Stop Docker Compose Services
-docker_compose_down() {
-  log_info "Stopping and removing Docker Compose services..."
-  docker compose -f "$COMPOSE_FILE" down --remove-orphans
-  log_info "Docker Compose services stopped and removed."
+    log_info "Creating backup: ${backup_file}..."
+    tar -czf "$backup_file" data/
+    log_info "✅ Backup created: ${backup_file} ($(du -h "$backup_file" | cut -f1))"
 }
 
 ###############################################################################
 # MAIN MENU
 ###############################################################################
 display_main_menu() {
-    echo "========================="
-    echo "        Main Menu        "
-    echo "========================="
-    echo "[0] Start Docker Compose Services"
-    echo "[1] Stop Docker Compose Services"
-    echo "-------------------------"
-    echo "[2] Build & Push Docker Images"
-    echo "-------------------------"
-    echo "[3] Update System Packages"
-    echo "-------------------------"
-    echo "[4] Fix Directory Permissions"
-    echo "-------------------------"
-    echo "[5] Install Docker Engine"
-    echo "[6] Clear Docker Caches"
-    echo "[7] Prune Docker Volumes"
-    echo "[8] Prune Docker Images"
-    echo "[9] Prune Docker Containers"
-    echo "-------------------------"
-    echo "[q] Quit"
-    echo "========================="
+    echo ""
+    echo "========================================"
+    echo "  Clone Hero Content Manager  v2.0"
+    echo "========================================"
+    echo ""
+    echo "  Service:"
+    echo "    [0] Start service"
+    echo "    [1] Stop service"
+    echo "    [2] Restart service"
+    echo "    [3] Show status"
+    echo "    [4] View logs"
+    echo ""
+    echo "  Development:"
+    echo "    [5] Run locally (dev mode)"
+    echo ""
+    echo "  Build:"
+    echo "    [6] Build & push Docker image"
+    echo ""
+    echo "  Maintenance:"
+    echo "    [7] Fix data permissions"
+    echo "    [8] Backup data"
+    echo "    [9] Docker cleanup (prune all)"
+    echo ""
+    echo "    [q] Quit"
+    echo ""
+    echo "========================================"
 }
 
 main() {
-    # Prompt for sudo password
-    handle_sudo_password
-    detect_linux_distribution
-    ensure_dependencies
-    check_for_updates
+    check_docker
+
+    # Non-interactive mode: just start the service
+    if [[ "$NON_INTERACTIVE" == true ]]; then
+        start_service
+        exit 0
+    fi
 
     while true; do
         display_main_menu
-        if [[ "$NON_INTERACTIVE" == true ]]; then
-            # In non-interactive mode, you might automatically pick an option or exit.
-            # Adjust this behavior as needed. For now, we'll just exit.
-            log_info "Non-interactive mode: skipping menu. Exiting."
-            exit 0
-        fi
-    
-
-        read -p "Select an option [0-9/q]: " choice
+        read -r -p "Select an option: " choice
+        echo ""
         case "$choice" in
-            0) docker_compose_start ;;
-            1) docker_compose_down ;;
-            2) build_and_push_images ;;
-            3) update_system_packages ;;
-            4) fix_dir_permissions ;;
-            5) install_docker_engine ;;
-            6) docker_tools_mode 0 ;;
-            7) docker_tools_mode 1 ;;
-            8) docker_tools_mode 2 ;;
-            9) docker_tools_mode 3 ;;
-            q)
-                log_info "Exiting script."
+            0) start_service ;;
+            1) stop_service ;;
+            2) restart_service ;;
+            3) show_status ;;
+            4) show_logs ;;
+            5) dev_run ;;
+            6) build_and_push ;;
+            7) fix_permissions ;;
+            8) backup_data ;;
+            9) docker_prune all ;;
+            q|Q)
+                log_info "Exiting."
                 exit 0
                 ;;
             *)
-                log_error "Invalid choice. Please select 0-9 or 'q' to quit."
+                log_error "Invalid choice: $choice"
                 ;;
         esac
     done
 }
 
-# Start the script
 main "$@"

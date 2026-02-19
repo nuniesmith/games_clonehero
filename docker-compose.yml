@@ -1,260 +1,30 @@
 services:
-  nginx:
-    container_name: clonehero_nginx
-    image: nuniesmith/clonehero:nginx
-    environment:
-      TZ: "${TZ}"
-    ports:
-      - "${NGINX_PORT}:80"
-      - "${NGINX_SSL_PORT}:443"
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:80 || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    restart: always
-    volumes:
-      - logs:/var/log/nginx
-
-  redis:
-    container_name: clonehero_redis
-    image: redis:latest
-    env_file: .env
-    environment:
-      TZ: "America/Toronto"
-    ports:
-      - "6379:6379"
-    volumes:
-      - ./config/redis/redis.conf:/usr/local/etc/redis/redis.conf
-    command: ["redis-server", "/usr/local/etc/redis/redis.conf", "--requirepass", "${REDIS_PASSWORD}"]
-    healthcheck:
-      test: ["CMD-SHELL", "redis-cli -a $REDIS_PASSWORD ping || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 60s
-    restart: always
-
-  db:
-    image: postgres:latest
-    container_name: clonehero_db
-    restart: always
-    env_file:
-      - .env
-    environment:
-      TZ: "${TZ}"
-      POSTGRES_USER: "${DB_USER}"
-      POSTGRES_PASSWORD: "${DB_PASSWORD}"
-      POSTGRES_DB: "${DB_NAME}"
-    ports:
-      - "${DB_PORT}:5432"
-    volumes:
-      - pg_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  sync:
-    container_name: clonehero_sync
-    image: nuniesmith/clonehero:sync
-    env_file:
-      - .env
-    volumes:
-      - ./data/clonehero_content:/var/syncthing/clonehero_content:rw
-    ports:
-      - "${SYNC_PORT}:8384"
-    restart: unless-stopped
-    command: ["-home", "/var/syncthing/config"]
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:${SYNC_PORT} || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  ch_server:
-    container_name: ch_server
-    image: nuniesmith/clonehero:server
-    ports:
-      - "${CH_SERVER_PORT}:14242"
-    restart: unless-stopped
-
-  backend:
-    container_name: clonehero_backend
-    image: nuniesmith/clonehero:backend
-    depends_on:
-      db:
-        condition: service_healthy
-      api:
-        condition: service_healthy
-      sync:
-        condition: service_healthy
-      ch_server:
-        condition: service_started
-    volumes:
-      - ./:/app
-      - logs:/var/log/backend
-    env_file:
-      - .env
-    expose:
-      - "${BACKEND_PORT}"
-    ports:
-      - "${BACKEND_PORT}:${BACKEND_PORT}"
-    command: ["sh", "-c", "python src/backend/worker.py"]
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "curl --fail http://localhost:${BACKEND_PORT}/health || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  api:
-    container_name: clonehero_api
-    image: nuniesmith/clonehero:api
-    depends_on:
-      db:
-        condition: service_healthy
-    volumes:
-      - ./:/app
-      - logs:/var/log/api
-    env_file:
-      - .env
-    command: >
-      gunicorn -w 4 -k uvicorn.workers.UvicornWorker src.api.main:app --bind 0.0.0.0:${API_PORT}
-    healthcheck:
-      test: ["CMD", "sh", "-c", "curl --fail http://localhost:${API_PORT}/health || exit 1"]
-      interval: 30s
-      start_period: 60s
-      retries: 3
-    restart: unless-stopped
-
-  frontend:
-    container_name: clonehero_frontend
-    image: nuniesmith/clonehero:frontend
-    depends_on:
-      api:
-        condition: service_healthy
-      db:
-        condition: service_healthy
-    volumes:
-      - ./:/app
-      - logs:/var/log/frontend
-    env_file:
-      - .env
-    ports:
-      - "${FRONTEND_PORT}:8501"
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "curl --fail http://localhost:8501 || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-
-  datadog:
-    container_name: clonehero_datadog_agent
-    image: datadog/agent:latest
-    env_file: .env
-    environment:
-      TZ: "America/Toronto"
-    ports:
-      - "8126:8126/tcp"
-    volumes:
-      - ./config/datadog/datadog.yaml:/etc/datadog-agent/datadog.yaml:ro
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8126/ || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    restart: always
-
-  prometheus:
-    container_name: clonehero_prometheus
-    image: prom/prometheus:latest
-    environment:
-      TZ: "America/Toronto"
-    volumes:
-      - ./config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-    ports:
-      - "9090:9090"
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:9090/-/healthy || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 120s
-    restart: always
-
-  grafana:
-    container_name: clonehero_grafana
-    image: grafana/grafana:latest
-    env_file: .env
-    environment:
-      TZ: "America/Toronto"
-    volumes:
-      - ./config/grafana/provisioning:/etc/grafana/provisioning
-    ports:
-      - "3000:3000"
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:3000/ || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    restart: always
-
-  redis_exporter:
-    container_name: clonehero_redis_exporter
-    image: oliver006/redis_exporter:latest
-    env_file: .env
-    environment:
-      TZ: "America/Toronto"
-    ports:
-      - "9121:9121"
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:9121/metrics || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    restart: always
-
-  postgres_exporter:
-    container_name: clonehero_postgres_exporter
-    image: wrouesnel/postgres_exporter:latest
-    environment:
-      TZ: "America/Toronto"
-    ports:
-      - "9187:9187"
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:9187/metrics || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    restart: always
-
-  nginx_exporter:
-    container_name: clonehero_nginx_exporter
-    image: nginx/nginx-prometheus-exporter:latest
-    environment:
-      NGINX_STATUS_URI: "http://localhost:80/nginx_status"
-      TZ: "America/Toronto"
-    ports:
-      - "9113:9113"
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:9113/metrics || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    restart: always
+    app:
+        container_name: clonehero_manager
+        build:
+            context: .
+            dockerfile: docker/Dockerfile
+        env_file:
+            - .env
+        environment:
+            TZ: "${TZ:-America/Toronto}"
+            PYTHONPATH: "/app"
+        ports:
+            - "${APP_PORT:-8000}:8000"
+        volumes:
+            - ./data:/app/data
+        healthcheck:
+            test:
+                [
+                    "CMD-SHELL",
+                    "curl --fail http://localhost:8000/api/health || exit 1",
+                ]
+            interval: 30s
+            timeout: 10s
+            retries: 3
+            start_period: 15s
+        restart: unless-stopped
 
 volumes:
-  pg_data:
-    driver: local
-  prometheus_data:
-    driver: local
-  grafana_data:
-    driver: local
-  alertmanager_data:
-    driver: local
-  logs:
-    driver: local
+    data:
+        driver: local

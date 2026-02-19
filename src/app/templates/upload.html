@@ -1,0 +1,602 @@
+{% extends 'base.html' %}
+
+{% block title %}Upload Content - Clone Hero Manager{% endblock %}
+
+{% block content %}
+<div class="container">
+    <h1>📤 Upload Content</h1>
+    <p>Upload Clone Hero content archives (.zip or .rar) or individual asset files.</p>
+
+    <!-- Upload Form -->
+    <div class="upload-section">
+        <h2>📦 Upload Files</h2>
+
+        <form id="uploadForm" enctype="multipart/form-data">
+            <div class="form-group">
+                <label for="contentType">Content Type</label>
+                <select id="contentType" name="content_type" required>
+                    {% for ct in content_types %}
+                    <option value="{{ ct }}" {% if ct == 'songs' %}selected{% endif %}>
+                        {% if ct == 'songs' %}🎵 Songs
+                        {% elif ct == 'backgrounds' %}🌆 Backgrounds
+                        {% elif ct == 'colors' %}🎨 Colors
+                        {% elif ct == 'highways' %}🛣️ Highways
+                        {% else %}{{ ct | capitalize }}
+                        {% endif %}
+                    </option>
+                    {% endfor %}
+                </select>
+                <small>Choose the type of content you're uploading.</small></small>
+            </div>
+
+            <!-- Drag and Drop Zone -->
+            <div class="drop-zone" id="dropZone">
+                <div class="drop-zone-content">
+                    <div class="drop-zone-icon">📁</div>
+                    <p class="drop-zone-text">Drag &amp; drop files here</p>
+                    <p class="drop-zone-hint">or click to browse</p>
+                    <input type="file" id="fileInput" name="file" class="drop-zone-input"
+                           accept=".zip,.rar,.png,.jpg,.jpeg,.gif,.webp,.mp3,.ogg,.wav,.flac,.opus"
+                           required>
+                </div>
+                <div class="drop-zone-preview" id="filePreview" style="display:none;">
+                    <div class="preview-info">
+                        <span class="preview-icon" id="previewIcon">📄</span>
+                        <div class="preview-details">
+                            <span class="preview-name" id="previewName"></span>
+                            <span class="preview-size" id="previewSize"></span>
+                        </div>
+                        <button type="button" class="btn btn-danger btn-sm" id="clearFileBtn" title="Remove file">✕</button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="uploadStatus" class="status-message" style="display:none;"></div>
+
+            <!-- Progress Bar -->
+            <div id="progressContainer" class="progress-container" style="display:none;">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill"></div>
+                </div>
+                <span class="progress-text" id="progressText">0%</span>
+            </div>
+
+            <div class="upload-actions">
+                <button type="submit" class="btn btn-primary" id="uploadBtn">📤 Upload</button>
+                <button type="reset" class="btn btn-secondary" id="resetBtn">🔄 Reset</button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Upload Results -->
+    <div id="resultSection" class="result-section" style="display:none;">
+        <h3 id="resultTitle">✅ Upload Complete</h3>
+        <div id="resultContent"></div>
+        <div class="result-actions">
+            <a href="/songs" class="btn btn-primary">📁 View Song Library</a>
+            <button type="button" class="btn btn-secondary" onclick="resetUpload()">📤 Upload Another</button>
+        </div>
+    </div>
+
+    <!-- How It Works -->
+    <div class="info-section">
+        <h2></h2>📖 How It Works</h2>
+
+        <h3>🎵 Uploading Songs</h3>
+        <ol>
+            <li><strong>Prepare your archive:</strong> Songs must be uploaded as <code>.zip</code> or <code>.rar</code> files.</li>
+            <li><strong>Required files:</strong> Each song folder must contain a <code>song.ini</code> file with at least <code>name</code>, <code>artist</code>, and <code>album</code> fields.</li>
+            <li><strong>Automatic processing:</strong> The system extracts the archive, parses all <code>song.ini</code> files, organizes content into <code>Artist/Title</code> folders, and registers metadata in the database.</li>
+            <li><strong>Multiple songs:</strong> You can upload archives containing multiple song folders at once.</li>
+        </ol>
+
+        <h3>🌆 Uploading Assets</h3>
+        <ul>
+            <li><strong>Backgrounds:</strong> Image or video files for Clone Hero backgrounds.</li>
+            <li><strong>Colors:</strong> Color profile files for custom themes.</li>
+            <li><strong>Highways:</strong> Image or video files for custom highway textures.</li>
+        </ul>
+
+        <h3>📋</h3> Supported Formats</h3>
+        <div class="format-grid">
+            <div class="format-item">
+                <strong>Archives:</strong> .zip, .rar
+            </div>
+            <div class="format-item">
+                <strong>Images:</strong> .png, .jpg, .jpeg, .gif, .webp
+            </div>
+            <div class="format-item">
+                <strong>Audio:</strong> .mp3, .ogg, .wav, .flac, .opus
+            </div>
+        </div>
+
+        <div class="alert alert-info">
+            💡 <strong>Tip:</strong> For the best results, make sure each song folder in your archive contains a properly formatted <code>song.ini</code> file. The system will skip any folders without valid metadata.
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+    .drop-zone {
+        border: 3px dashed #bdc3c7;
+        border-radius: 12px;
+        padding: 40px 20px;
+        text-align: center;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        background: #fafbfc;
+        margin-bottom: 20px;
+        position: relative;
+    }
+
+    .drop-zone:hover {
+        border-color: #3498db;
+        background: #f0f7ff;
+    }
+
+    .drop-zone.drag-over {
+        border-color: #2ecc71;
+        background: #f0fff4;
+        transform: scale(1.01);
+        box-shadow: 0 0 20px rgba(46, 204, 113, 0.15);
+    }
+
+    .drop-zone.has-file {
+        border-color: #3498db;
+        border-style: solid;
+        background: #f0f7ff;
+        padding: 20px;
+    }
+
+    .drop-zone-icon {
+        font-size: 3em;
+        margin-bottom: 10px;
+    }
+
+    .drop-zone-text {
+        font-size: 1.2em;
+        font-weight: bold;
+        color: #2c3e50;
+        margin-bottom: 5px;
+    }
+
+    .drop-zone-hint {
+        color: #7f8c8d;
+        font-size: 0.95em;
+    }
+
+    .drop-zone-input {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        opacity: 0;
+        cursor: pointer;
+    }
+
+    .drop-zone.has-file .drop-zone-input {
+        display: none;
+    }
+
+    .drop-zone-preview {
+        width: 100%;
+    }
+
+    .preview-info {
+        display: flex;
+        align-items: center;
+        gap: 15px;
+        padding: 10px;
+        background: white;
+        border-radius: 8px;
+        border: 1px solid #dee2e6;
+    }
+
+    .preview-icon {
+        font-size: 2em;
+    }
+
+    .preview-details {
+        flex: 1;
+        text-align: left;
+    }
+
+    .preview-name {
+        display: block;
+        font-weight: bold;
+        color: #2c3e50;
+        font-size: 1.05em;
+        word-break: break-all;
+    }
+
+    .preview-size {
+        display: block;
+        color: #7f8c8d;
+        font-size: 0.9em;
+        margin-top: 2px;
+    }
+
+    .progress-container {
+        margin: 20px 0;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .progress-bar {
+        flex: 1;
+        height: 24px;
+        background: #e9ecef;
+        border-radius: 12px;
+        overflow: hidden;
+    }
+
+    .progress-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #3498db, #2ecc71);
+        border-radius: 12px;
+        transition: width 0.3s ease;
+        width: 0%;
+    }
+
+    .progress-fill.indeterminate {
+        width: 100%;
+        animation: indeterminate 1.5s ease-in-out infinite;
+        background: linear-gradient(90deg, #3498db 0%, #2ecc71 50%, #3498db 100%);
+        background-size: 200% 100%;
+    }
+
+    @keyframes indeterminate {
+        0% { background-position: 200% 0; }
+        100% { background-position: -200% 0; }
+    }
+
+    .progress-text {
+        font-weight: bold;
+        color: #2c3e50;
+        min-width: 45px;
+        text-align: right;
+    }
+
+    .upload-actions {
+        display: flex;
+        gap: 12px;
+        margin-top: 10px;
+    }
+
+    .result-section {
+        background: #f8f9fa;
+        border: 2px solid #dee2e6;
+        border-radius: 8px;
+        padding: 25px;
+        margin-bottom: 30px;
+    }
+
+    .result-section.success {
+        background: #d4edda;
+        border-color: #c3e6cb;
+    }
+
+    .result-section.error {
+        background: #f8d7da;
+        border-color: #f5c6cb;
+    }
+
+    .result-section h3 {
+        margin-top: 0;
+        margin-bottom: 15px;
+    }
+
+    .result-actions {
+        display: flex;
+        gap: 10px;
+        margin-top: 20px;
+    }
+
+    .result-song {
+        background: white;
+        border: 1px solid #dee2e6;
+        border-radius: 6px;
+        padding: 12px 16px;
+        margin: 8px 0;
+    }
+
+    .result-song strong {
+        color: #2c3e50;
+    }
+
+    .format-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+        gap: 10px;
+        margin: 15px 0;
+    }
+
+    .format-item {
+        background: white;
+        border: 1px solid #dee2e6;
+        border-radius: 5px;
+        padding: 12px;
+        font-size: 0.95em;
+    }
+
+    @media (max-width: 768px) {
+        .drop-zone {
+            padding: 30px 15px;
+        }
+
+        .drop-zone-icon {
+            font-size: 2.5em;
+        }
+
+        .upload-actions,
+        .result-actions {
+            flex-direction: column;
+        }
+
+        .upload-actions .btn,
+        .result-actions .btn {
+            width: 100%;
+            text-align: center;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+const filePreview = document.getElementById('filePreview');
+const dropZoneContent = document.querySelector('.drop-zone-content');
+const clearFileBtn = document.getElementById('clearFileBtn');
+const uploadForm = document.getElementById('uploadForm');
+const uploadBtn = document.getElementById('uploadBtn');
+const statusDiv = document.getElementById('uploadStatus');
+const progressContainer = document.getElementById('progressContainer');
+const progressFill = document.getElementById('progressFill');
+const progressText = document.getElementById('progressText');
+const resultSection = document.getElementById('resultSection');
+const resultTitle = document.getElementById('resultTitle');
+const resultContent = document.getElementById('resultContent');
+
+// File size formatter
+function formatFileSize(bytes) {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+// Get icon for file type
+function getFileIcon(filename) {
+    const ext = filename.split('.').pop().toLowerCase();
+    const icons = {
+        'zip': '📦', 'rar': '📦',
+        'png': '🖼️', 'jpg': '🖼️', 'jpeg': '🖼️', 'gif': '🖼️', 'webp': '🖼️',
+        'mp3': '🎵', 'ogg': '🎵', 'wav': '🎵', 'flac': '🎵', 'opus': '🎵',
+    };
+    return icons[ext] || '📄';
+}
+
+// Show file preview
+function showFilePreview(file) {
+    document.getElementById('previewIcon').textContent = getFileIcon(file.name);
+    document.getElementById('previewName').textContent = file.name;
+    document.getElementById('previewSize').textContent = formatFileSize(file.size);
+
+    dropZoneContent.style.display = 'none';
+    filePreview.style.display = 'block';
+    dropZone.classList.add('has-file');
+}
+
+// Clear file selection
+function clearFile() {
+    fileInput.value = '';
+    dropZoneContent.style.display = 'block';
+    filePreview.style.display = 'none';
+    dropZone.classList.remove('has-file');
+}
+
+// Drag and drop events
+['dragenter', 'dragover'].forEach(eventName => {
+    dropZone.addEventListener(eventName, function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        dropZone.classList.add('drag-over');
+    });
+});
+
+['dragleave', 'drop'].forEach(eventName => {
+    dropZone.addEventListener(eventName, function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        dropZone.classList.remove('drag-over');
+    });
+});
+
+dropZone.addEventListener('drop', function(e) {
+    const files = e.dataTransfer.files;
+    if (files.length > 0) {
+        fileInput.files = files;
+        showFilePreview(files[0]);
+    }
+});
+
+// File input change
+fileInput.addEventListener('change', function() {
+    if (this.files.length > 0) {
+        showFilePreview(this.files[0]);
+    }
+});
+
+// Clear file button
+clearFileBtn.addEventListener('click', function(e) {
+    e.stopPropagation();
+    clearFile();
+});
+
+// Reset form
+uploadForm.addEventListener('reset', function() {
+    setTimeout(function() {
+        clearFile();
+        statusDiv.style.display = 'none';
+        progressContainer.style.display = 'none';
+        resultSection.style.display = 'none';
+    }, 0);
+});
+
+// Upload form submission
+uploadForm.addEventListener('submit', async function(e) {
+    e.preventDefault();
+
+    if (!fileInput.files || fileInput.files.length === 0) {
+        statusDiv.innerHTML = '<div class="alert alert-danger">❌ Please select a file to upload.</div>';
+        statusDiv.style.display = 'block';
+        return;
+    }
+
+    const file = fileInput.files[0];
+    const contentType = document.getElementById('contentType').value;
+
+    // Disable form during upload
+    uploadBtn.disabled = true;
+    uploadBtn.textContent = '⏳ Uploading...';
+
+    // Show progress
+    progressContainer.style.display = 'flex';
+    progressFill.style.width = '0%';
+    progressFill.classList.remove('indeterminate');
+    progressText.textContent = '0%';
+
+    statusDiv.innerHTML = '<div class="alert alert-info">📤 Uploading and processing...</div>';
+    statusDiv.style.display = 'block';
+    resultSection.style.display = 'none';
+
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('content_type', contentType);
+
+    try {
+        // Use XMLHttpRequest for progress tracking
+        const result = await new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+
+            xhr.upload.addEventListener('progress', function(e) {
+                if (e.lengthComputable) {
+                    const percent = Math.round((e.loaded / e.total) * 100);
+                    progressFill.style.width = percent + '%';
+                    progressText.textContent = percent + '%';
+
+                    if (percent === 100) {
+                        statusDiv.innerHTML = '<div class="alert alert-info">⚙️ Processing content... this may take a moment.</div>';
+                        progressFill.classList.add('indeterminate');
+                        progressText.textContent = '⚙️';
+                    }
+                }
+            });
+
+            xhr.addEventListener('load', function() {
+                try {
+                    const response = JSON.parse(xhr.responseText);
+                    if (xhr.status >= 200 && xhr.status < 300) {
+                        resolve(response);
+                    } else {
+                        reject(response);
+                    }
+                } catch (parseErr) {
+                    reject({ detail: 'Invalid server response' });
+                }
+            });
+
+            xhr.addEventListener('error', function() {
+                reject({ detail: 'Network error - upload failed' });
+            });
+
+            xhr.addEventListener('timeout', function() {
+                reject({ detail: 'Upload timed out' });
+            });
+
+            xhr.timeout = 600000; // 10 minute timeout
+            xhr.open('POST', '/api/upload');
+            xhr.send(formData);
+        });
+
+        // Success
+        progressFill.classList.remove('indeterminate');
+        progressFill.style.width = '100%';
+        progressText.textContent = '✅';
+
+        statusDiv.style.display = 'none';
+
+        resultSection.classList.remove('error');
+        resultSection.classList.add('success');
+        resultSection.style.display = 'block';
+
+        if (result.songs && result.songs.length > 0) {
+            resultTitle.textContent = `✅ ${result.songs.length} Song(s) Imported`;
+            let html = '';
+            result.songs.forEach(song => {
+                html += `<div class="result-song">
+                    <strong>🎵 ${song.title}</strong> by <strong>${song.artist}</strong>
+                    ${song.album ? ` — <em>${song.album}</em>` : ''}
+                </div>`;
+            });
+            resultContent.innerHTML = html;
+        } else if (result.files && result.files.length > 0) {
+            resultTitle.textContent = `✅ ${result.files.length} File(s) Stored`;
+            let html = '<ul class="file-list">';
+            result.files.forEach(f => {
+                const name = f.split('/').pop();
+                html += `<li><code>${name}</code></li>`;
+            });
+            html += '</ul>';
+            resultContent.innerHTML = html;
+        } else {
+            resultTitle.textContent = '✅ Upload Complete';
+            resultContent.innerHTML = `<p>${result.message || 'Content processed successfully.'}</p>`;
+        }
+
+    } catch (error) {
+        // Error
+        progressFill.classList.remove('indeterminate');
+        progressFill.style.width = '100%';
+        progressFill.style.background = '#e74c3c';
+        progressText.textContent = '❌';
+
+        statusDiv.style.display = 'none';
+
+        resultSection.classList.remove('success');
+        resultSection.classList.add('error');
+        resultSection.style.display = 'block';
+
+        const errMsg = error.detail || error.error || error.message || 'Upload failed';
+        resultTitle.textContent = '❌ Upload Failed';
+        resultContent.innerHTML = `<div class="alert alert-danger">${errMsg}</div>`;
+    } finally {
+        uploadBtn.disabled = false;
+        uploadBtn.textContent = '📤 Upload';
+    }
+
+    resultSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+});
+
+function resetUpload() {
+    uploadForm.reset();
+    clearFile();
+    statusDiv.style.display = 'none';
+    progressContainer.style.display = 'none';
+    progressFill.style.width = '0%';
+    progressFill.style.background = '';
+    progressFill.classList.remove('indeterminate');
+    progressText.textContent = '0%';
+    resultSection.style.display = 'none';
+    resultSection.classList.remove('success', 'error');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+</script>
+{% endblock %}

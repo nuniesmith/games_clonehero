@@ -1,310 +1,249 @@
-# Clone Hero Dockerized Setup & Content Manager
+# 🎸 Clone Hero Content Manager
 
-This repository provides a **fully containerized** environment for running a Clone Hero dedicated server, managing custom content, and synchronizing files across multiple devices. It includes:
+A single-container content management system for Clone Hero with Nextcloud WebDAV integration. Browse, upload, generate, and edit songs — all from one lightweight service.
 
-- **Clone Hero Standalone Server** (multiplayer server)
-- **Clone Hero Content Manager API** (FastAPI backend for content management)
-- **Clone Hero Content Manager Frontend** (Streamlit UI)
-- **PostgreSQL** (database for storing metadata)
-- **Syncthing** (file synchronization)
-- **NGINX** (reverse proxy for routing external requests)
+## Architecture
 
-The goal is to provide an all-in-one solution for hosting multiplayer sessions, managing songs, backgrounds, highways, and color profiles, and automatically syncing content across devices.
+This project was simplified from a 14-container microservice architecture down to a **single Docker container** running:
 
----
+- **FastAPI** web application serving both the UI and REST API
+- **SQLite** embedded database (no separate database container needed)
+- **Jinja2** templates with a responsive sidebar UI
+- **Nextcloud WebDAV** integration for centralized cloud storage
+- **librosa** audio analysis for automatic chart generation
 
-## Table of Contents
+```
+┌─────────────────────────────────────────────┐
+│           Single Docker Container           │
+│                                             │
+│  ┌─────────┐  ┌──────────┐  ┌───────────┐  │
+│  │ FastAPI  │  │  SQLite  │  │  librosa  │  │
+│  │ + Jinja2 │  │    DB    │  │  (audio)  │  │
+│  └────┬─────┘  └──────────┘  └───────────┘  │
+│       │                                     │
+│       ├── HTML Pages (/, /songs, /upload...) │
+│       ├── REST API (/api/*)                 │
+│       └── Static Files (/static/*)          │
+│                                             │
+└───────────────┬─────────────────────────────┘
+                │
+          ┌─────┴─────┐
+          │ Nextcloud  │  (optional)
+          │  WebDAV    │
+          └───────────┘
+```
 
-1. [Overview of Services](#overview-of-services)
-2. [Features](#features)
-3. [Directory Structure](#directory-structure)
-4. [Setup & Installation](#setup--installation)
-5. [Accessing Services](#accessing-services)
-6. [Managing Content](#managing-content)
-7. [API Endpoints](#api-endpoints)
-8. [Logging](#logging)
-9. [Troubleshooting](#troubleshooting)
-10. [Future Improvements](#future-improvements)
-11. [License](#license)
+## Quick Start
 
----
+### 1. Clone and configure
 
-## Overview of Services
+```bash
+git clone https://github.com/your-username/games_clonehero.git
+cd games_clonehero
+cp .env.example .env
+# Edit .env with your settings (Nextcloud credentials are optional)
+```
 
-### 1. NGINX Reverse Proxy
-- **Purpose**: Routes incoming requests to the appropriate service (Clone Hero server, API, frontend, Syncthing, and backend).
-- **Port**: 80 (HTTP) redirected to HTTPS.
-- **Configuration**: Located at `nginx/nginx.conf`.
+### 2. Start with Docker
 
-### 2. Clone Hero Standalone Server
-- **Purpose**: Dedicated server for Clone Hero multiplayer sessions.
-- **Port**: 14242 (Multiplayer connections)
-- **Note**: Currently running in sleep mode for maintenance; adjust the command as needed.
+```bash
+# Using the utility script (interactive menu):
+./utils.sh
 
-### 3. Content Manager API (FastAPI)
-- **Purpose**: Handles content uploads, organization, and metadata storage for songs, backgrounds, highways, and color profiles.
-- **Database**: Uses PostgreSQL to store content metadata.
-- **Port**: 8000 (API access)
+# Or directly with Docker Compose:
+docker compose up -d --build
 
-### 4. Content Manager Frontend (Streamlit)
-- **Purpose**: Provides a web UI for managing Clone Hero content.
-- **Port**: 8501 (Streamlit UI)
+# The app will be available at http://localhost:8000
+```
 
-### 5. Syncthing
-- **Purpose**: Automatically synchronizes custom songs and other assets across devices.
-- **Ports**:
-  - **8384**: Web UI
-  - **22000/TCP** and **21027/UDP**: Synchronization traffic
+### 3. Start for development (no Docker)
 
-### 6. Backend Service
-- **Purpose**: Processes data or background tasks (e.g., file processing, queuing, etc.).
-- **Port**: 8001 (exposed internally)
-- **Command**: Runs a worker process (`python worker.py`)
-- **Health Check**: Ensures the backend is responsive via an HTTP endpoint.
+```bash
+# Create a virtual environment
+python -m venv .venv
+source .venv/bin/activate  # or .venv\Scripts\activate on Windows
 
----
+# Install dependencies
+pip install -r requirements.txt
+
+# Run with auto-reload
+./utils.sh  # Select option [5] "Run locally (dev mode)"
+
+# Or manually:
+PYTHONPATH=$(pwd) python -m uvicorn src.app.main:app --reload --port 8000
+```
 
 ## Features
 
-1. **Multiplayer Server**  
-   - Run a dedicated server for Clone Hero multiplayer sessions.
+### 📁 Song Library
+Browse, search, and manage your Clone Hero song collection. Full-text search across title, artist, and album with pagination.
 
-2. **Content Management**  
-   - **Upload** and **organize** songs, backgrounds, highways, and color profiles.
-   - **Metadata Storage** using PostgreSQL.
+### 📤 Content Upload
+Upload `.zip` or `.rar` archives containing Clone Hero songs. The system automatically extracts archives, parses `song.ini` files, organizes content into `Artist/Title` folders, and registers metadata in the database.
 
-3. **Frontend UI**  
-   - Manage content through a user-friendly Streamlit interface.
+### ✏️ Song Editor
+Edit song metadata (title, artist, album, genre, difficulty ratings, etc.) through a rich form interface. Changes are saved to both the database and the `song.ini` file on disk. Supports all standard Clone Hero metadata fields.
 
-4. **File Synchronization**  
-   - Use Syncthing to sync your custom content across multiple devices.
+### 🎵 Song Generator
+Upload audio files (MP3, WAV, OGG, FLAC, OPUS) and automatically generate Clone Hero charts:
+- Tempo detection via beat tracking
+- Note placement from onset detection
+- Section markers (Intro, Verse, Chorus, etc.)
+- Multiple difficulty levels (Easy, Medium, Hard, Expert)
+- Generates `notes.chart` + `song.ini` + copies audio
 
-5. **Backend Processing**  
-   - Handle background tasks or data processing through a dedicated backend service.
+### ☁️ Nextcloud Browser
+Browse your Nextcloud file tree via WebDAV directly from the app:
+- Navigate folders, view file metadata
+- **Import** songs or archives from Nextcloud into your local library
+- **Upload** files from your computer to Nextcloud
+- **Sync** local songs to Nextcloud with one click
+- Create folders, delete files/folders
 
-6. **NGINX Reverse Proxy**  
-   - Route and secure all external requests with SSL and security headers.
-
-7. **Logging & Health Checks**  
-   - Built-in logging and health checks ensure service stability and ease of troubleshooting.
-
----
-
-## Directory Structure
-
-Below is a sample directory structure; adjust as needed for your organization:
+## Project Structure
 
 ```
-.
-├── docker-compose.yml         # Primary Docker Compose configuration
-├── nginx/
-│   └── nginx.conf             # NGINX reverse proxy configuration
-├── docker/
-│   ├── server/                # Docker setup for the Clone Hero Standalone Server
-│   ├── api/                   # Docker setup for the FastAPI backend (Content Manager API)
-│   ├── frontend/              # Docker setup for the Streamlit frontend
-│   ├── backend/               # Docker setup for the backend worker service
-│   └── syncthing/             # Docker setup for Syncthing
-├── data/
-│   ├── clonehero_content/     # Persistent volume for storing songs and assets
-│   └── sync_config/           # Configuration for Syncthing
+games_clonehero/
 ├── src/
-│   ├── main.py                # FastAPI entry point
-│   ├── worker.py              # Backend worker script
-│   ├── app.py                 # Streamlit entry point
-│   ├── routes/                # FastAPI routes (upload, content management)
-│   ├── pages/                 # Streamlit pages (songs, backgrounds, highways, colors)
-│   ├── services/              # Logic for interacting with files and database
-│   ├── database.py            # Database connection setup
-│   └── utils.py               # Shared utility functions
-└── ...
+│   └── app/
+│       ├── main.py              # FastAPI application entry point
+│       ├── config.py            # Configuration from environment
+│       ├── database.py          # SQLite database (async + sync)
+│       ├── webdav.py            # Nextcloud WebDAV client
+│       ├── routes/
+│       │   ├── pages.py         # HTML page routes (Jinja2)
+│       │   └── api.py           # REST API endpoints
+│       ├── services/
+│       │   ├── content_manager.py  # Song parsing, archive extraction
+│       │   └── song_generator.py   # Audio analysis, chart generation
+│       ├── templates/           # Jinja2 HTML templates
+│       │   ├── base.html        # Base layout with sidebar
+│       │   ├── home.html        # Dashboard
+│       │   ├── songs.html       # Song library browser
+│       │   ├── editor.html      # Song metadata editor
+│       │   ├── upload.html      # Content upload (drag & drop)
+│       │   ├── generator.html   # Song chart generator
+│       │   └── browser.html     # Nextcloud file browser
+│       └── static/
+│           ├── css/style.css    # Application styles
+│           ├── js/main.js       # Client-side utilities
+│           └── assets/          # Icons, images
+├── docker/
+│   └── Dockerfile              # Single multi-stage Dockerfile
+├── data/                       # Persistent data (gitignored)
+│   ├── clonehero.db            # SQLite database
+│   ├── clonehero_content/      # Song files, assets
+│   │   ├── songs/
+│   │   ├── backgrounds/
+│   │   ├── colors/
+│   │   ├── highways/
+│   │   └── generator/
+│   └── logs/
+├── docker-compose.yml          # Single-service compose file
+├── requirements.txt            # Python dependencies
+├── .env.example                # Environment configuration template
+├── utils.sh                    # Management utility script
+└── README.md
 ```
 
----
+## Configuration
 
-## Setup & Installation
+All settings are controlled via environment variables in the `.env` file. See [`.env.example`](.env.example) for the full list with descriptions.
 
-### 1. Prerequisites
+### Key Settings
 
-- **Docker Engine** installed on your system.
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `APP_PORT` | `8000` | Port the web server listens on |
+| `APP_ENV` | `development` | `development` or `production` |
+| `DEBUG` | `true` | Enable debug logging and API docs |
+| `NEXTCLOUD_URL` | _(empty)_ | Nextcloud instance URL |
+| `NEXTCLOUD_USERNAME` | _(empty)_ | Nextcloud username |
+| `NEXTCLOUD_PASSWORD` | _(empty)_ | Nextcloud password or app password |
+| `NEXTCLOUD_REMOTE_PATH` | `/remote.php/dav/files/{username}/CloneHero` | WebDAV path template |
+| `MAX_FILE_SIZE_GB` | `10` | Maximum upload file size |
 
-> **Note**: Refer to the official [Docker documentation](https://docs.docker.com/get-docker/) for installation instructions.
+### Nextcloud Setup
 
-### 2. Clone the Repository
+1. Generate an **App Password** in Nextcloud: Settings → Security → Devices & sessions
+2. Create a `CloneHero` folder in your Nextcloud (or customize `NEXTCLOUD_REMOTE_PATH`)
+3. Set the three `NEXTCLOUD_*` variables in your `.env`
+4. Restart the service
+
+## API Reference
+
+When running in development mode, interactive API documentation is available at:
+
+- **Swagger UI:** [http://localhost:8000/docs](http://localhost:8000/docs)
+- **ReDoc:** [http://localhost:8000/redoc](http://localhost:8000/redoc)
+
+### Key Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/api/health` | Health check |
+| `GET` | `/api/songs` | List songs (with search & pagination) |
+| `GET` | `/api/songs/{id}` | Get song by ID |
+| `PUT` | `/api/songs/{id}` | Update song metadata |
+| `DELETE` | `/api/songs/{id}` | Delete song (DB + files) |
+| `POST` | `/api/upload` | Upload content archive |
+| `POST` | `/api/generate` | Generate chart from audio |
+| `GET` | `/api/webdav/status` | Check Nextcloud connection |
+| `GET` | `/api/webdav/browse` | Browse Nextcloud directory |
+| `POST` | `/api/webdav/download` | Download from Nextcloud |
+| `POST` | `/api/webdav/upload` | Upload to Nextcloud |
+| `POST` | `/api/webdav/sync-to-nextcloud` | Sync local song to cloud |
+| `POST` | `/api/webdav/sync-from-nextcloud` | Import song from cloud |
+
+## Utility Script
+
+The `utils.sh` script provides an interactive menu for common operations:
 
 ```bash
-git clone https://github.com/nuniesmith/clonehero.git
-cd clonehero
+./utils.sh        # Interactive menu
+./utils.sh -y     # Non-interactive (auto-start service)
 ```
 
-### 3. (Optional) Adjust Environment Variables
+| Option | Action |
+|--------|--------|
+| 0 | Start service (Docker) |
+| 1 | Stop service |
+| 2 | Restart service |
+| 3 | Show status & health |
+| 4 | View logs (live) |
+| 5 | Run locally (dev mode, no Docker) |
+| 6 | Build & push Docker image |
+| 7 | Fix data directory permissions |
+| 8 | Backup data directory |
+| 9 | Docker cleanup (prune all) |
 
-- Copy the example environment file and edit as needed:
+## Song.ini Format
 
-  ```bash
-  cp .env.example .env
-  ```
+Songs must include a `song.ini` file with at minimum:
 
-- Update credentials (e.g., PostgreSQL user/password), service ports, etc.
-
-### 4. Build & Run
-
-Run the following command to build and start all services in the background:
-
-```bash
-docker compose up -d --build
+```ini
+[song]
+name = Song Title
+artist = Artist Name
+album = Album Name
 ```
 
-### 5. Verify Services
+Optional fields: `genre`, `year`, `charter`, `icon`, `loading_phrase`, `song_length`, `preview_start_time`, `delay`, `modchart`, and difficulty ratings (`diff_guitar`, `diff_drums`, `diff_bass`, `diff_keys`, etc.)
 
-Check if containers are running:
+## What Changed (v1 → v2)
 
-```bash
-docker ps
-```
-
----
-
-## Accessing Services
-
-| **Service**                | **URL / Port**                                 |
-|----------------------------|------------------------------------------------|
-| **Frontend (Streamlit)**   | [http://localhost:8501](http://localhost:8501) |
-| **API (FastAPI)**          | [http://localhost:8000](http://localhost:8000) |
-| **Backend Worker**         | Internal: port 8001 (for health checks and processing) |
-| **Clone Hero Server**      | Port `14242` (Multiplayer)                     |
-| **Syncthing (Web UI)**     | [http://localhost:8384](http://localhost:8384) |
-
----
-
-## Managing Content
-
-### 1. Frontend (Streamlit)
-
-- **Song Management**: View, upload, and delete songs.
-- **Backgrounds & Highways**: Upload and manage custom backgrounds or highways.
-- **Color Profiles**: Upload and organize `.ini` color profiles.
-
-Access the Streamlit UI at:
-
-```
-http://localhost:8501
-```
-
-### 2. Content Folder
-
-- Uploaded songs and assets are stored in the `data/clonehero_content` directory (mounted as a Docker volume) for persistence.
-
-### 3. Syncthing
-
-- Use the Syncthing UI to sync your songs and assets across multiple devices:
-  
-  ```
-  http://localhost:8384
-  ```
-
----
-
-## API Endpoints
-
-Some key FastAPI endpoints include:
-
-- **`POST /upload_content/`**  
-  Upload songs, highways, backgrounds, or color profiles.
-  
-- **`GET /songs/`**  
-  List all songs in the system.
-  
-- **`POST /songs/upload/`**  
-  Upload a song file (e.g., `.zip` or `.rar`).
-  
-- **`POST /songs/download/`**  
-  Download and extract a song from a specified URL.
-
-Access the auto-generated API docs (if enabled) at:
-
-```
-http://localhost:8000/docs
-```
-
----
-
-## Logging
-
-### Container Logs
-
-To view combined logs for all running services:
-
-```bash
-docker compose logs -f
-```
-
-### File-Based Logs
-
-Depending on your configuration, logs might also be stored inside containers or mapped volumes. For example:
-
-- `app.log` — FastAPI logs  
-- `streamlit_app.log` — Streamlit logs  
-
-Check your Docker volume mounts or service configurations for specific log paths.
-
----
-
-## Troubleshooting
-
-1. **Check Logs**  
-   ```bash
-   docker compose logs -f
-   ```
-   Review logs for errors or issues.
-
-2. **Rebuild from Scratch**  
-   ```bash
-   docker compose build --no-cache
-   ```
-   Useful if old cache layers are causing issues.
-
-3. **Restart a Specific Service**  
-   ```bash
-   docker compose restart <service-name>
-   ```
-   Example:  
-   ```bash
-   docker compose restart content
-   ```
-
-4. **Remove Unused Docker Assets**  
-   ```bash
-   docker system prune -a
-   ```
-   Clears unused images, containers, and other Docker artifacts.
-
-5. **Verify Docker Networks & Volumes**  
-   Ensure containers are connected to the `clonehero_network` and that volume mounts are configured correctly.
-
----
-
-## Future Improvements
-
-1. **HTTPS (SSL/TLS)**  
-   - Integrate Let’s Encrypt for secure external access via NGINX.
-
-2. **Authentication & Authorization**  
-   - Implement user logins for the API and frontend.
-
-3. **Monitoring & Metrics**  
-   - Integrate Prometheus and Grafana for detailed logging and performance metrics.
-
-4. **Scalability**  
-   - Consider Docker Swarm or Kubernetes for scaling services as needed.
-
----
+| Before (v1) | After (v2) |
+|-------------|------------|
+| 14 Docker containers | 1 Docker container |
+| PostgreSQL database | SQLite (embedded) |
+| Syncthing file sync | Nextcloud WebDAV |
+| Django + FastAPI + Streamlit | Single FastAPI app |
+| Nginx reverse proxy | Direct Uvicorn/Gunicorn |
+| Redis cache | Not needed |
+| Prometheus + Grafana + Datadog | Loguru file logging |
+| Multiple Dockerfiles | Single multi-stage Dockerfile |
+| 7 Docker images to build | 1 Docker image |
 
 ## License
 
-This project is licensed under the **MIT License**. See the [LICENSE](LICENSE) file for details.
-
----
-
-**Happy shredding!**  
-If you have any questions or suggestions, feel free to [open an issue](https://github.com/nuniesmith/clonehero/issues) or submit a pull request.
+See [LICENSE](LICENSE) for details.

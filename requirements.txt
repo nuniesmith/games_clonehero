@@ -1,23 +1,34 @@
-# Backend API dependencies
+# Clone Hero Content Manager - Dependencies
+# Single-container FastAPI application with SQLite and Nextcloud WebDAV
+
+# Web framework
 fastapi
-uvicorn
+uvicorn[standard]
 gunicorn
+
+# Templates and static files
+jinja2
 python-multipart
-pydantic
 aiofiles
+
+# Database (SQLite - async)
+aiosqlite
+
+# HTTP client (for Nextcloud WebDAV)
 httpx
 
-# Frontend Django dependencies
-django>=4.2,<5.0
-whitenoise
-psycopg2-binary
+# Audio analysis (song generator)
+librosa
+numpy
 
-# Shared dependencies
+# Archive extraction
+rarfile
+
+# Logging
 loguru
-requests
+
+# Configuration
 python-dotenv
 
-# Content processing
-librosa
-patool
-rarfile
+# Data validation
+pydantic

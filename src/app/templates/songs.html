@@ -1,0 +1,241 @@
+{% extends 'base.html' %}
+
+{% block title %}Song Library - Clone Hero Manager{% endblock %}
+
+{% block content %}
+<div class="container">
+    <h1>📁 Song Library</h1>
+    <p>Browse, search, and manage your Clone Hero song collection.</p>
+
+    <!-- Search Form -->
+    <div class="search-section">
+        <form method="get" action="/songs" class="search-form">
+            <input type="text" name="search" placeholder="🔍 Search by title, artist, or album..."
+                   value="{{ search_query }}" class="search-input">
+            <button type="submit" class="btn btn-primary">Search</button>
+            {% if search_query %}
+            <a href="/songs" class="btn btn-secondary">Clear</a>
+            {% endif %}
+        </form>
+        {% if search_query %}
+        <p class="search-results">Found {{ pagination.total }} result{{ 's' if pagination.total != 1 else '' }} for "{{ search_query }}"</p>
+        {% else %}
+        <p class="search-results">{{ pagination.total }} song{{ 's' if pagination.total != 1 else '' }} in library</p>
+        {% endif %}
+    </div>
+
+    <!-- Songs List -->
+    <div class="songs-list">
+        {% if songs %}
+            {% for song in songs %}
+            <div class="song-card" id="song-{{ song.id }}">
+                <div class="song-header">
+                    <h3>🎵 {{ song.title }}</h3>
+                    <div class="song-actions">
+                        <a href="/songs/{{ song.id }}/edit" class="btn btn-primary btn-sm" title="Edit song metadata">
+                            ✏️ Edit
+                        </a>
+                        <button class="btn btn-success btn-sm sync-song" data-song-id="{{ song.id }}" title="Sync to Nextcloud">
+                            ☁️ Sync
+                        </button>
+                        <button class="btn btn-danger btn-sm delete-song" data-song-id="{{ song.id }}" title="Delete song">
+                            🗑️ Delete
+                        </button>
+                    </div>
+                </div>
+                <div class="song-details">
+                    <p><strong>Artist:</strong> {{ song.artist }}</p>
+                    <p><strong>Album:</strong> {{ song.album or 'Unknown' }}</p>
+                    <p><strong>Path:</strong> <code>{{ song.file_path }}</code></p>
+                    {% if song.created_at %}
+                    <p><strong>Added:</strong> {{ song.created_at }}</p>
+                    {% endif %}
+                    {% if song.metadata and song.metadata | length > 0 %}
+                    <details class="metadata-details">
+                        <summary>🔍 Show Metadata ({{ song.metadata | length }} fields)</summary>
+                        <div class="metadata-grid">
+                            {% for key, value in song.metadata.items() %}
+                            <div class="metadata-item">
+                                <span class="metadata-key">{{ key }}:</span>
+                                <span class="metadata-value">{{ value }}</span>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </details>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+
+            <!-- Pagination -->
+            {% if pagination.total_pages > 1 %}
+            <div class="pagination">
+                {% if pagination.has_previous %}
+                <a href="/songs?page={{ pagination.previous_page }}{% if search_query %}&search={{ search_query }}{% endif %}"
+                   class="btn btn-secondary">⬅️ Previous</a>
+                {% endif %}
+
+                <span class="page-info">
+                    Page {{ pagination.page }} of {{ pagination.total_pages }}
+                </span>
+
+                {% if pagination.has_next %}
+                <a href="/songs?page={{ pagination.next_page }}{% if search_query %}&search={{ search_query }}{% endif %}"
+                   class="btn btn-secondary">Next ➡️</a>
+                {% endif %}
+            </div>
+            {% endif %}
+        {% else %}
+            <div class="alert alert-warning">
+                {% if search_query %}
+                ⚠️ No songs found matching "{{ search_query }}". Try a different search term.
+                {% else %}
+                ⚠️ No songs in the library yet. <a href="/upload">Upload some songs</a> or <a href="/generator">generate a chart</a> to get started!
+                {% endif %}
+            </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+    .song-actions {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+    }
+
+    .stats-bar {
+        display: flex;
+        gap: 20px;
+        margin-bottom: 20px;
+    }
+
+    .metadata-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 8px;
+        padding: 15px;
+        background: #f8f9fa;
+        border: 1px solid #dee2e6;
+        border-radius: 5px;
+        margin-top: 10px;
+    }
+
+    .metadata-item {
+        display: flex;
+        gap: 8px;
+        padding: 4px 0;
+    }
+
+    .metadata-key {
+        font-weight: bold;
+        color: #2c3e50;
+        text-transform: capitalize;
+        min-width: 120px;
+    }
+
+    .metadata-value {
+        color: #495057;
+    }
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Delete song
+document.querySelectorAll('.delete-song').forEach(button => {
+    button.addEventListener('click', async function() {
+        const songId = this.getAttribute('data-song-id');
+        const card = document.getElementById('song-' + songId);
+        const songTitle = card.querySelector('h3').textContent.trim();
+
+        if (!confirm(`Are you sure you want to delete "${songTitle}"?\n\nThis will remove the song from the database AND delete its files from disk.`)) {
+            return;
+        }
+
+        this.disabled = true;
+        this.textContent = '⏳...';
+
+        try {
+            const response = await fetch(`/api/songs/${songId}`, {
+                method: 'DELETE',
+            });
+
+            const result = await response.json();
+
+            if (response.ok) {
+                card.style.transition = 'opacity 0.5s, transform 0.5s';
+                card.style.opacity = '0';
+                card.style.transform = 'translateX(-20px)';
+                setTimeout(() => {
+                    card.innerHTML = '<div class="alert alert-success">✅ Song deleted successfully!</div>';
+                    card.style.opacity = '1';
+                    card.style.transform = 'none';
+                    setTimeout(() => card.remove(), 2000);
+                }, 500);
+            } else {
+                alert(`Error deleting song: ${result.detail || result.error || 'Unknown error'}`);
+                this.disabled = false;
+                this.textContent = '🗑️ Delete';
+            }
+        } catch (error) {
+            alert(`Error: ${error.message}`);
+            this.disabled = false;
+            this.textContent = '🗑️ Delete';
+        }
+    });
+});
+
+// Sync to Nextcloud
+document.querySelectorAll('.sync-song').forEach(button => {
+    button.addEventListener('click', async function() {
+        const songId = this.getAttribute('data-song-id');
+        const card = document.getElementById('song-' + songId);
+        const songTitle = card.querySelector('h3').textContent.trim();
+
+        if (!confirm(`Sync "${songTitle}" to Nextcloud?`)) {
+            return;
+        }
+
+        this.disabled = true;
+        this.textContent = '⏳ Syncing...';
+
+        try {
+            const formData = new FormData();
+            formData.append('song_id', songId);
+
+            const response = await fetch('/api/webdav/sync-to-nextcloud', {
+                method: 'POST',
+                body: formData,
+            });
+
+            const result = await response.json();
+
+            if (response.ok) {
+                this.textContent = '✅ Synced!';
+                this.classList.remove('btn-success');
+                this.classList.add('btn-primary');
+                showNotification(`${songTitle} synced to Nextcloud successfully!`, 'success');
+                setTimeout(() => {
+                    this.textContent = '☁️ Sync';
+                    this.classList.remove('btn-primary');
+                    this.classList.add('btn-success');
+                    this.disabled = false;
+                }, 3000);
+            } else {
+                const errMsg = result.detail || result.error || 'Sync failed';
+                alert(`Sync error: ${errMsg}`);
+                this.disabled = false;
+                this.textContent = '☁️ Sync';
+            }
+        } catch (error) {
+            alert(`Sync error: ${error.message}`);
+            this.disabled = false;
+            this.textContent = '☁️ Sync';
+        }
+    });
+});
+</script>
+{% endblock %}

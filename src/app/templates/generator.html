@@ -1,0 +1,653 @@
+{% extends 'base.html' %}
+
+{% block title %}Song Generator - Clone Hero Manager{% endblock %}
+
+{% block content %}
+<div class="container">
+    <h1>🎵 Song Generator</h1>
+    <p>Upload an audio file and generate a Clone Hero chart with auto-detected tempo, beats, and note patterns.</p>
+
+    <!-- Generator Form -->
+    <div class="upload-section">
+        <h2>🎸 Generate a Chart</h2>
+
+        <form id="generatorForm" enctype="multipart/form-data">
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="songName">Song Name</label>
+                    <input type="text" id="songName" name="song_name" placeholder="Leave blank to use filename">
+                </div>
+                <div class="form-group">
+                    <label for="artistName">Artist</label>
+                    <input type="text" id="artistName" name="artist" placeholder="Leave blank for 'Unknown Artist'">
+                </div>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="difficulty">Difficulty</label>
+                    <select id="difficulty" name="difficulty">
+                        <option value="easy">🟢 Easy</option>
+                        <option value="medium">🟡 Medium</option>
+                        <option value="hard">🟠 Hard</option>
+                        <option value="expert" selected>🔴 Expert</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Drop Zone -->
+            <div class="drop-zone" id="dropZone">
+                <div class="drop-zone-content" id="dropZoneContent">
+                    <div class="drop-zone-icon">🎶</div>
+                    <p class="drop-zone-text">Drag & drop an audio file here</p>
+                    <p class="drop-zone-hint">or click to browse — MP3, WAV, OGG, FLAC, OPUS</p>
+                    <input type="file" id="fileInput" name="file" class="drop-zone-input"
+                           accept=".mp3,.ogg,.wav,.flac,.opus" required>
+                </div>
+                <div class="drop-zone-preview" id="filePreview" style="display:none;">
+                    <div class="preview-info">
+                        <span class="preview-icon" id="previewIcon">🎵</span>
+                        <div class="preview-details">
+                            <span class="preview-name" id="previewName"></span>
+                            <span class="preview-size" id="previewSize"></span>
+                        </div>
+                        <button type="button" class="btn btn-danger btn-sm" id="clearFileBtn" title="Remove file">✕</button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="generatorStatus" class="status-message" style="display:none;"></div>
+
+            <!-- Progress -->
+            <div id="progressContainer" class="progress-container" style="display:none;">
+                <div class="progress-bar">
+                    <div class="progress-fill indeterminate" id="progressFill"></div>
+                </div>
+                <span class="progress-text" id="progressText">⏳</span>
+            </div>
+
+            <div class="upload-actions">
+                <button type="submit" class="btn btn-primary" id="generateBtn">🎸 Generate Chart</button>
+                <button type="reset" class="btn btn-secondary" id="resetBtn">🔄 Reset</button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Result Section -->
+    <div id="resultSection" class="result-section" style="display:none;">
+        <h3 id="resultTitle">✅ Chart Generated</h3>
+        <div id="resultContent"></div>
+        <div class="result-actions">
+            <a href="/songs" class="btn btn-primary">📁 View Song Library</a>
+            <button type="button" class="btn btn-secondary" onclick="resetGenerator()">🎵 Generate Another</button>
+        </div>
+    </div>
+
+    <!-- How It Works -->
+    <div class="info-section">
+        <h2></h2>📖 How It Works</h2>
+
+        <h3>Step-by-Step Process</h3>
+        <ol>
+            <li>
+                <strong>Upload an Audio File</strong>
+                <ul>
+                    <li>Supported formats: MP3, WAV, OGG, FLAC, OPUS</li>
+                    <li>The file is analysed for tempo, beats, onsets, and rhythm patterns using <code>librosa</code>.</li>
+                </ul>
+            </li>
+            <li>
+                <strong></strong>Automatic Chart Generation</strong>
+                <ul>
+                    <li>BPM (beats per minute) is detected and a sync track is generated.</li>
+                    <li>Note positions are mapped from onset events to create playable patterns.</li>
+                    <li>Section markers (Intro, Verse, Chorus, etc.) are estimated automatically.</li>
+                </ul>
+            </li>
+            <li>
+                <strong>Song Folder Created</strong>
+                <ul>
+                    <li>A <code>notes.chart</code> file is generated in Clone Hero format.</li>
+                    <li>A <code>song.ini</code> file is created with metadata you provide.</li>
+                    <li>The audio file is copied into the song folder.</li>
+                    <li>The song is registered in your local database and ready to play!</li>
+                </ul>
+            </li>
+        </ol>
+
+        <h3>🔍 Features</h3>
+        <ul>
+            <li>✅ Automatic tempo detection and beat tracking</li>
+            <li>✅ Onset-based note placement for natural-feeling charts</li>
+            <li>✅ Multiple difficulty levels (Easy, Medium, Hard, Expert)</li>
+            <li>✅ Section markers for song structure</li>
+            <li>✅ Variable tempo support</li>
+            <li>✅ Full song.ini and notes.chart output</li>
+        </ul>
+
+        <div class="alert alert-info">
+            💡 <strong>Tip:</strong> For best results, use high-quality audio files. The generator works best with songs
+            that have a clear rhythmic structure. You can always edit the generated chart metadata afterwards using the
+            <a href="/songs">Song Library</a> editor.
+        </div>
+
+        <div class="alert alert-warning">
+            ⚠️ <strong>Note:</strong> Chart generation can take 15–60 seconds depending on the length and complexity
+            of the audio file. Please be patient during processing.
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+    .form-row {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 20px;
+        margin-bottom: 15px;
+    }
+
+    .drop-zone {
+        border: 3px dashed #bdc3c7;
+        border-radius: 12px;
+        padding: 40px 20px;
+        text-align: center;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        background: #fafbfc;
+        margin-bottom: 20px;
+        position: relative;
+    }
+
+    .drop-zone:hover {
+        border-color: #3498db;
+        background: #f0f7ff;
+    }
+
+    .drop-zone.drag-over {
+        border-color: #2ecc71;
+        background: #f0fff4;
+        transform: scale(1.01);
+        box-shadow: 0 0 20px rgba(46, 204, 113, 0.15);
+    }
+
+    .drop-zone.has-file {
+        border-color: #3498db;
+        border-style: solid;
+        background: #f0f7ff;
+        padding: 20px;
+    }
+
+    .drop-zone-icon {
+        font-size: 3em;
+        margin-bottom: 10px;
+    }
+
+    .drop-zone-text {
+        font-size: 1.2em;
+        font-weight: bold;
+        color: #2c3e50;
+        margin-bottom: 5px;
+    }
+
+    .drop-zone-hint {
+        color: #7f8c8d;
+        font-size: 0.95em;
+    }
+
+    .drop-zone-input {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        opacity: 0;
+        cursor: pointer;
+    }
+
+    .drop-zone.has-file .drop-zone-input {
+        display: none;
+    }
+
+    .drop-zone-preview {
+        width: 100%;
+    }
+
+    .preview-info {
+        display: flex;
+        align-items: center;
+        gap: 15px;
+        padding: 10px;
+        background: white;
+        border-radius: 8px;
+        border: 1px solid #dee2e6;
+    }
+
+    .preview-icon {
+        font-size: 2em;
+    }
+
+    .preview-details {
+        flex: 1;
+        text-align: left;
+    }
+
+    .preview-name {
+        display: block;
+        font-weight: bold;
+        color: #2c3e50;
+        font-size: 1.05em;
+        word-break: break-all;
+    }
+
+    .preview-size {
+        display: block;
+        color: #7f8c8d;
+        font-size: 0.9em;
+        margin-top: 2px;
+    }
+
+    .progress-container {
+        margin: 20px 0;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .progress-bar {
+        flex: 1;
+        height: 24px;
+        background: #e9ecef;
+        border-radius: 12px;
+        overflow: hidden;
+    }
+
+    .progress-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #3498db, #2ecc71);
+        border-radius: 12px;
+        transition: width 0.3s ease;
+        width: 0%;
+    }
+
+    .progress-fill.indeterminate {
+        width: 100%;
+        animation: indeterminate 1.5s ease-in-out infinite;
+        background: linear-gradient(90deg, #3498db 0%, #9b59b6 50%, #3498db 100%);
+        background-size: 200% 100%;
+    }
+
+    @keyframes indeterminate {
+        0% { background-position: 200% 0; }
+        100% { background-position: -200% 0; }
+    }
+
+    .progress-text {
+        font-weight: bold;
+        color: #2c3e50;
+        min-width: 45px;
+        text-align: right;
+    }
+
+    .upload-actions {
+        display: flex;
+        gap: 12px;
+        margin-top: 10px;
+    }
+
+    .result-section {
+        background: #f8f9fa;
+        border: 2px solid #dee2e6;
+        border-radius: 8px;
+        padding: 25px;
+        margin-bottom: 30px;
+    }
+
+    .result-section.success {
+        background: #d4edda;
+        border-color: #c3e6cb;
+    }
+
+    .result-section.error {
+        background: #f8d7da;
+        border-color: #f5c6cb;
+    }
+
+    .result-section h3 {
+        margin-top: 0;
+        margin-bottom: 15px;
+    }
+
+    .result-actions {
+        display: flex;
+        gap: 10px;
+        margin-top: 20px;
+    }
+
+    .result-details {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+        gap: 12px;
+        margin: 15px 0;
+    }
+
+    .result-detail-item {
+        background: white;
+        border: 1px solid #dee2e6;
+        border-radius: 8px;
+        padding: 14px 16px;
+        text-align: center;
+    }
+
+    .result-detail-value {
+        display: block;
+        font-size: 1.6em;
+        font-weight: bold;
+        color: #2c3e50;
+        margin-bottom: 4px;
+    }
+
+    .result-detail-label {
+        display: block;
+        font-size: 0.85em;
+        color: #7f8c8d;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .result-file-info {
+        background: white;
+        border: 1px solid #dee2e6;
+        border-radius: 6px;
+        padding: 12px 16px;
+        margin-top: 12px;
+    }
+
+    .result-file-info p {
+        margin: 6px 0;
+        color: #495057;
+    }
+
+    .result-file-info code {
+        background: #e9ecef;
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-size: 0.9em;
+    }
+
+    @media (max-width: 768px) {
+        .form-row {
+            grid-template-columns: 1fr;
+        }
+
+        .drop-zone {
+            padding: 30px 15px;
+        }
+
+        .drop-zone-icon {
+            font-size: 2.5em;
+        }
+
+        .upload-actions,
+        .result-actions {
+            flex-direction: column;
+        }
+
+        .upload-actions .btn,
+        .result-actions .btn {
+            width: 100%;
+            text-align: center;
+        }
+
+        .result-details {
+            grid-template-columns: repeat(2, 1fr);
+        }
+    }
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+const filePreview = document.getElementById('filePreview');
+const dropZoneContent = document.getElementById('dropZoneContent');
+const clearFileBtn = document.getElementById('clearFileBtn');
+const generatorForm = document.getElementById('generatorForm');
+const generateBtn = document.getElementById('generateBtn');
+const statusDiv = document.getElementById('generatorStatus');
+const progressContainer = document.getElementById('progressContainer');
+const progressFill = document.getElementById('progressFill');
+const progressText = document.getElementById('progressText');
+const resultSection = document.getElementById('resultSection');
+const resultTitle = document.getElementById('resultTitle');
+const resultContent = document.getElementById('resultContent');
+
+// File size formatter
+function formatFileSize(bytes) {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+// Format duration
+function formatDuration(seconds) {
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.round(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+}
+
+// Show file preview
+function showFilePreview(file) {
+    document.getElementById('previewIcon').textContent = '🎵';
+    document.getElementById('previewName').textContent = file.name;
+    document.getElementById('previewSize').textContent = formatFileSize(file.size);
+
+    dropZoneContent.style.display = 'none';
+    filePreview.style.display = 'block';
+    dropZone.classList.add('has-file');
+
+    // Auto-fill song name from filename if empty
+    const songNameInput = document.getElementById('songName');
+    if (!songNameInput.value.trim()) {
+        const nameWithoutExt = file.name.replace(/\.[^/.]+$/, '');
+        songNameInput.value = nameWithoutExt;
+    }
+}
+
+// Clear file selection
+function clearFile() {
+    fileInput.value = '';
+    dropZoneContent.style.display = 'block';
+    filePreview.style.display = 'none';
+    dropZone.classList.remove('has-file');
+}
+
+// Drag and drop events
+['dragenter', 'dragover'].forEach(eventName => {
+    dropZone.addEventListener(eventName, function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        dropZone.classList.add('drag-over');
+    });
+});
+
+['dragleave', 'drop'].forEach(eventName => {
+    dropZone.addEventListener(eventName, function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        dropZone.classList.remove('drag-over');
+    });
+});
+
+dropZone.addEventListener('drop', function(e) {
+    const files = e.dataTransfer.files;
+    if (files.length > 0) {
+        fileInput.files = files;
+        showFilePreview(files[0]);
+    }
+});
+
+// File input change
+fileInput.addEventListener('change', function() {
+    if (this.files.length > 0) {
+        showFilePreview(this.files[0]);
+    }
+});
+
+// Clear file button
+clearFileBtn.addEventListener('click', function(e) {
+    e.stopPropagation();
+    clearFile();
+});
+
+// Reset form
+generatorForm.addEventListener('reset', function() {
+    setTimeout(function() {
+        clearFile();
+        statusDiv.style.display = 'none';
+        progressContainer.style.display = 'none';
+        resultSection.style.display = 'none';
+    }, 0);
+});
+
+// Form submission
+generatorForm.addEventListener('submit', async function(e) {
+    e.preventDefault();
+
+    if (!fileInput.files || fileInput.files.length === 0) {
+        statusDiv.innerHTML = '<div class="alert alert-danger">❌ Please select an audio file.</div>';
+        statusDiv.style.display = 'block';
+        return;
+    }
+
+    const file = fileInput.files[0];
+    const songName = document.getElementById('songName').value.trim();
+    const artist = document.getElementById('artistName').value.trim();
+    const difficulty = document.getElementById('difficulty').value;
+
+    // Disable form during processing
+    generateBtn.disabled = true;
+    generateBtn.textContent = '⏳ Analysing audio...';
+
+    // Show indeterminate progress
+    progressContainer.style.display = 'flex';
+    progressFill.style.width = '';
+    progressFill.classList.add('indeterminate');
+    progressText.textContent = '⏳';
+
+    statusDiv.innerHTML = '<div class="alert alert-info">🎵 Uploading audio and analysing tempo, beats, and rhythm patterns... This can take 15–60 seconds.</div>';
+    statusDiv.style.display = 'block';
+    resultSection.style.display = 'none';
+
+    const formData = new FormData();
+    formData.append('file', file);
+    if (songName) formData.append('song_name', songName);
+    if (artist) formData.append('artist', artist);
+    formData.append('difficulty', difficulty);
+
+    try {
+        const response = await fetch('/api/generate', {
+            method: 'POST',
+            body: formData,
+        });
+
+        const result = await response.json();
+
+        // Hide progress and status
+        progressContainer.style.display = 'none';
+        statusDiv.style.display = 'none';
+
+        if (response.ok && !result.error) {
+            // Success
+            resultSection.classList.remove('error');
+            resultSection.classList.add('success');
+            resultSection.style.display = 'block';
+
+            resultTitle.textContent = '✅ Chart Generated Successfully!';
+
+            let html = '';
+
+            // Stats grid
+            html += '<div class="result-details">';
+            html += `<div class="result-detail-item">
+                <span class="result-detail-value">${result.tempo || '?'}</span>
+                <span class="result-detail-label">BPM</span>
+            </div>`;
+            html += `<div class="result-detail-item">
+                <span class="result-detail-value">${result.duration ? formatDuration(result.duration) : '?'}</span>
+                <span class="result-detail-label">Duration</span>
+            </div>`;
+            html += `<div class="result-detail-item">
+                <span class="result-detail-value">${result.total_notes || result.total_beats || '?'}</span>
+                <span class="result-detail-label">Notes</span>
+            </div>`;
+            html += `<div class="result-detail-item">
+                <span class="result-detail-value">${(result.difficulty || difficulty).charAt(0).toUpperCase() + (result.difficulty || difficulty).slice(1)}</span>
+                <span class="result-detail-label">Difficulty</span>
+            </div>`;
+            html += '</div>';
+
+            // File details
+            html += '<div class="result-file-info">';
+            html += `<p><strong>🎵 Song:</strong> ${result.song_name || songName || file.name}</p>`;
+            html += `<p><strong>🎤 Artist:</strong> ${result.artist || artist || 'Unknown Artist'}</p>`;
+            if (result.notes_chart) {
+                html += `<p><strong>📄 Chart File:</strong> <code>${result.notes_chart}</code></p>`;
+            }
+            if (result.output_dir) {
+                html += `<p><strong>📂 Song Folder:</strong> <code>${result.output_dir}</code></p>`;
+            }
+            if (result.id) {
+                html += `<p><strong>🆔 Database ID:</strong> ${result.id}
+                    — <a href="/songs/${result.id}/edit" class="btn btn-primary btn-sm">✏️ Edit Metadata</a></p>`;
+            }
+            html += '</div>';
+
+            resultContent.innerHTML = html;
+
+        } else {
+            // Error
+            resultSection.classList.remove('success');
+            resultSection.classList.add('error');
+            resultSection.style.display = 'block';
+
+            const errMsg = result.detail || result.error || 'Chart generation failed';
+            resultTitle.textContent = '❌ Generation Failed';
+            resultContent.innerHTML = `<div class="alert alert-danger">${errMsg}</div>`;
+        }
+
+    } catch (error) {
+        progressContainer.style.display = 'none';
+        statusDiv.style.display = 'none';
+
+        resultSection.classList.remove('success');
+        resultSection.classList.add('error');
+        resultSection.style.display = 'block';
+
+        resultTitle.textContent = '❌ Generation Failed';
+        resultContent.innerHTML = `<div class="alert alert-danger">Network error: ${error.message}</div>`;
+
+    } finally {
+        generateBtn.disabled = false;
+        generateBtn.textContent = '🎸 Generate Chart';
+    }
+
+    resultSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+});
+
+function resetGenerator() {
+    generatorForm.reset();
+    clearFile();
+    statusDiv.style.display = 'none';
+    progressContainer.style.display = 'none';
+    progressFill.classList.remove('indeterminate');
+    resultSection.style.display = 'none';
+    resultSection.classList.remove('success', 'error');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+</script>
+{% endblock %}

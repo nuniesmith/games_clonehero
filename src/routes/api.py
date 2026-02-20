@@ -5,6 +5,8 @@ Provides all REST API endpoints for:
 - Songs CRUD (list, get, update, delete) — backed by Nextcloud WebDAV
 - Content upload (archives and direct files) — songs go to Nextcloud
 - Song generation from audio files — output uploaded to Nextcloud
+- Metadata lookup (MusicBrainz / Cover Art Archive)
+- Filename parsing (smart artist/title extraction)
 - Nextcloud WebDAV operations (browse, download, upload, mkdir, delete)
 - Library sync (scan Nextcloud and refresh local metadata cache)
 - Library sync with SSE streaming for real-time progress
@@ -22,11 +24,12 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 import aiofiles
-from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from loguru import logger
 from pydantic import BaseModel
 
+from src.auth import get_charter_name
 from src.config import (
     ALLOWED_AUDIO_EXTENSIONS,
     ALLOWED_UPLOAD_EXTENSIONS,
@@ -44,12 +47,22 @@ from src.database import (
     get_songs,
     update_song,
 )
+from src.services.chart_parser import (
+    chart_to_viewer_json,
+    get_chart_summary,
+    parse_chart_file,
+)
 from src.services.content_manager import (
     delete_song_from_nextcloud,
     get_sync_state,
     process_upload,
     sync_library_from_nextcloud,
     sync_library_from_nextcloud_stream,
+)
+from src.services.metadata_lookup import (
+    lookup_all,
+    lookup_song_metadata,
+    parse_filename,
 )
 from src.services.song_generator import process_and_upload_song
 from src.webdav import (
@@ -95,6 +108,22 @@ class GenerateSongRequest(BaseModel):
     difficulty: str = "expert"
     enable_lyrics: bool = True
     enable_album_art: bool = True
+
+
+class FilenameParseRequest(BaseModel):
+    filename: str
+
+
+class MetadataLookupRequest(BaseModel):
+    title: str
+    artist: str = ""
+
+
+class ChartViewRequest(BaseModel):
+    difficulty: Optional[str] = None
+    start_time: Optional[float] = None
+    end_time: Optional[float] = None
+    max_notes: int = 5000
 
 
 # ---------------------------------------------------------------------------
@@ -309,7 +338,7 @@ def _get_temp_path(filename: str) -> str:
     return os.path.join(tempfile.gettempdir(), f"ch_{uuid.uuid4().hex}_{filename}")
 
 
-def _validate_extension(filename: str, allowed: set) -> str:
+def _validate_extension(filename: str, allowed: set[str]) -> str:
     """Validate and return the file extension, raising HTTPException if invalid."""
     ext = Path(filename).suffix.lower()
     if ext not in allowed:
@@ -403,18 +432,24 @@ async def api_upload_content(
 # ---------------------------------------------------------------------------
 @router.post("/generate")
 async def api_generate_song(
+    request: Request,
     file: UploadFile = File(...),
     song_name: Optional[str] = Form(None),
     artist: Optional[str] = Form(None),
     difficulty: str = Form("expert"),
     enable_lyrics: bool = Form(True),
     enable_album_art: bool = Form(True),
+    auto_lookup: bool = Form(True),
 ):
     """
     Upload an audio file and generate a Clone Hero chart from it.
 
     The generated chart and song.ini are uploaded to Nextcloud and
     registered in the local metadata cache.
+
+    When ``auto_lookup`` is True (default), the endpoint queries MusicBrainz
+    for canonical metadata (album, year, genre) and downloads album art from
+    the Cover Art Archive if available.
 
     Supports MP3, OGG, WAV, FLAC, and OPUS formats.
     """
@@ -434,7 +469,11 @@ async def api_generate_song(
 
     ext = _validate_extension(filename, ALLOWED_AUDIO_EXTENSIONS)
 
+    # Use the logged-in charter name
+    charter = get_charter_name(request)
+
     temp_path = _get_temp_path(f"gen_{uuid.uuid4().hex}{ext}")
+    cover_art_path: str | None = None
 
     try:
         async with aiofiles.open(temp_path, "wb") as f:
@@ -443,17 +482,66 @@ async def api_generate_song(
 
         logger.info(f"🎵 Generate request: {filename} (difficulty={difficulty})")
 
+        # --- Metadata lookup ---
+        lookup_data: Dict[str, Any] = {}
+        effective_name = song_name or Path(filename).stem
+        effective_artist = artist or ""
+
+        if auto_lookup and (effective_name or effective_artist):
+            try:
+                lookup_data = await lookup_all(
+                    title=effective_name,
+                    artist=effective_artist,
+                    download_art=enable_album_art,
+                )
+                logger.info(
+                    "🔍 Metadata lookup: source={}, album={}, year={}, genre={}",
+                    lookup_data.get("lookup_source", "none"),
+                    lookup_data.get("album", ""),
+                    lookup_data.get("year", ""),
+                    lookup_data.get("genre", ""),
+                )
+            except Exception as e:
+                logger.warning("⚠️ Metadata lookup failed (continuing): {}", e)
+
+        # Use looked-up values as defaults, user-provided values take priority
+        final_name = song_name or lookup_data.get("title", effective_name)
+        final_artist = artist or lookup_data.get("artist", "") or "Unknown Artist"
+        album = lookup_data.get("album", "Generated")
+        year = lookup_data.get("year", "")
+        genre = lookup_data.get("genre", "Generated")
+
+        # Save cover art from lookup to a temp file for the generator
+        cover_art_path = None
+        cover_art_bytes = lookup_data.get("cover_art_bytes")
+        if cover_art_bytes and isinstance(cover_art_bytes, bytes):
+            cover_art_path = _get_temp_path(f"cover_{uuid.uuid4().hex}.jpg")
+            with open(cover_art_path, "wb") as art_f:
+                art_f.write(cover_art_bytes)
+            logger.info("🎨 Saved looked-up cover art ({} bytes)", len(cover_art_bytes))
+
         result = await process_and_upload_song(
             temp_path,
-            song_name=song_name or Path(filename).stem,
-            artist=artist,
+            song_name=final_name,
+            artist=final_artist,
             difficulty=difficulty,
             enable_lyrics=enable_lyrics,
             enable_album_art=enable_album_art,
+            charter=charter,
+            album=album,
+            year=year,
+            genre=genre,
+            cover_art_path=cover_art_path,
         )
 
         if "error" in result:
             raise HTTPException(status_code=500, detail=result["error"])
+
+        # Enrich response with lookup info
+        result["lookup_source"] = lookup_data.get("lookup_source", "")
+        result["album"] = album
+        result["year"] = year
+        result["genre"] = genre
 
         return result
 
@@ -463,10 +551,53 @@ async def api_generate_song(
         logger.exception(f"❌ Song generation error: {e}")
         raise HTTPException(status_code=500, detail=f"Song generation failed: {str(e)}")
     finally:
-        try:
-            os.remove(temp_path)
-        except FileNotFoundError:
-            pass
+        for p in [temp_path, cover_art_path]:
+            if p:
+                try:
+                    os.remove(p)
+                except FileNotFoundError:
+                    pass
+
+
+# ---------------------------------------------------------------------------
+# Filename Parsing & Metadata Lookup
+# ---------------------------------------------------------------------------
+@router.post("/parse-filename")
+async def api_parse_filename(req: FilenameParseRequest):
+    """
+    Parse an audio filename to extract artist and song title.
+
+    Handles patterns like "Artist - Song Title.mp3", underscores, dashes,
+    track numbers, and common YouTube-style tags.  Returns cleaned,
+    title-cased values.
+    """
+    result = parse_filename(req.filename)
+    return result
+
+
+@router.post("/lookup-metadata")
+async def api_lookup_metadata(req: MetadataLookupRequest):
+    """
+    Look up song metadata from MusicBrainz by title and optional artist.
+
+    Returns canonical title, artist, album, year, genre, and whether
+    cover art is available.  Does NOT download the cover art itself
+    (that happens during generation).
+    """
+    try:
+        data = await lookup_song_metadata(req.title, req.artist)
+        if not data:
+            return {
+                "found": False,
+                "message": f"No results for '{req.title}' by '{req.artist}'",
+            }
+        data["found"] = True
+        # Don't send binary art data through this endpoint
+        data.pop("cover_art_bytes", None)
+        return data
+    except Exception as e:
+        logger.warning("Metadata lookup error: {}", e)
+        return {"found": False, "error": str(e)}
 
 
 # ---------------------------------------------------------------------------
@@ -765,3 +896,220 @@ async def api_webdav_delete(path: str = Query(...)):
         )
 
     return {"message": f"Deleted: {path}"}
+
+
+# ---------------------------------------------------------------------------
+# Chart Viewer / Editor
+# ---------------------------------------------------------------------------
+
+
+@router.get("/songs/{song_id}/chart")
+async def api_get_song_chart(
+    song_id: int,
+    difficulty: Optional[str] = Query(None),
+    start_time: Optional[float] = Query(None),
+    end_time: Optional[float] = Query(None),
+    max_notes: int = Query(5000, ge=1, le=50000),
+):
+    """
+    Fetch parsed chart data for a song, optimised for the chart viewer.
+
+    Downloads the song's ``notes.chart`` from Nextcloud, parses it, and
+    returns structured JSON with notes, events, tempo markers, and lyrics
+    for the requested difficulty and time window.
+
+    Query parameters:
+        difficulty  – easy / medium / hard / expert (default: highest available)
+        start_time  – start of time window in seconds (default: 0)
+        end_time    – end of time window in seconds (default: full song)
+        max_notes   – maximum notes to return (default: 5000, max: 50000)
+    """
+    if not is_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="Nextcloud WebDAV is not configured.",
+        )
+
+    song = await get_song_by_id(song_id)
+    if not song:
+        raise HTTPException(status_code=404, detail=f"Song {song_id} not found")
+
+    remote_path = song.get("remote_path", "")
+    if not remote_path:
+        raise HTTPException(
+            status_code=404,
+            detail="Song has no remote path — cannot locate chart file.",
+        )
+
+    # Download notes.chart from Nextcloud
+    from src.webdav import download_file
+
+    chart_remote = f"{remote_path.rstrip('/')}/notes.chart"
+    temp_chart = _get_temp_path(f"chart_{song_id}_{uuid.uuid4().hex[:6]}.chart")
+
+    try:
+        chart_bytes = await download_file(chart_remote)
+        if chart_bytes is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"notes.chart not found at {chart_remote}",
+            )
+
+        # Write to temp file for the parser
+        import aiofiles as _aio
+
+        async with _aio.open(temp_chart, "wb") as f:
+            await f.write(chart_bytes)
+
+        # Parse the chart
+        parsed = parse_chart_file(temp_chart)
+        viewer_data = chart_to_viewer_json(
+            parsed,
+            difficulty=difficulty,
+            start_time=start_time,
+            end_time=end_time,
+            max_notes=max_notes,
+        )
+
+        # Add song database info
+        viewer_data["song_id"] = song_id
+        viewer_data["remote_path"] = remote_path
+
+        return viewer_data
+
+    except HTTPException:
+        raise
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=f"Chart parse error: {e}")
+    except Exception as e:
+        logger.exception(f"❌ Error fetching chart for song {song_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to load chart: {str(e)}")
+    finally:
+        try:
+            os.remove(temp_chart)
+        except (FileNotFoundError, OSError):
+            pass
+
+
+@router.get("/songs/{song_id}/chart/summary")
+async def api_get_chart_summary(song_id: int):
+    """
+    Fetch a lightweight summary of a song's chart (no note data).
+
+    Returns metadata, section list, difficulty note counts, and BPM range.
+    Useful for the song library listing without loading full note arrays.
+    """
+    if not is_configured():
+        raise HTTPException(
+            status_code=503,
+            detail="Nextcloud WebDAV is not configured.",
+        )
+
+    song = await get_song_by_id(song_id)
+    if not song:
+        raise HTTPException(status_code=404, detail=f"Song {song_id} not found")
+
+    remote_path = song.get("remote_path", "")
+    if not remote_path:
+        raise HTTPException(
+            status_code=404,
+            detail="Song has no remote path.",
+        )
+
+    from src.webdav import download_file
+
+    chart_remote = f"{remote_path.rstrip('/')}/notes.chart"
+    temp_chart = _get_temp_path(f"summary_{song_id}_{uuid.uuid4().hex[:6]}.chart")
+
+    try:
+        chart_bytes = await download_file(chart_remote)
+        if chart_bytes is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"notes.chart not found at {chart_remote}",
+            )
+
+        import aiofiles as _aio
+
+        async with _aio.open(temp_chart, "wb") as f:
+            await f.write(chart_bytes)
+
+        parsed = parse_chart_file(temp_chart)
+        summary = get_chart_summary(parsed)
+        summary["song_id"] = song_id
+        summary["remote_path"] = remote_path
+
+        return summary
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"❌ Error fetching chart summary for song {song_id}: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to load chart summary: {str(e)}"
+        )
+    finally:
+        try:
+            os.remove(temp_chart)
+        except (FileNotFoundError, OSError):
+            pass
+
+
+@router.post("/chart/parse")
+async def api_parse_uploaded_chart(
+    file: UploadFile = File(...),
+    difficulty: Optional[str] = Form(None),
+    start_time: Optional[float] = Form(None),
+    end_time: Optional[float] = Form(None),
+    max_notes: int = Form(5000),
+):
+    """
+    Parse an uploaded ``notes.chart`` file and return structured viewer data.
+
+    This endpoint does not require Nextcloud — it works with any chart file
+    uploaded directly from the user's machine.  Useful for previewing or
+    inspecting charts that aren't in the library yet.
+    """
+    filename = file.filename or "notes.chart"
+    if not filename.lower().endswith(".chart"):
+        raise HTTPException(
+            status_code=400,
+            detail="Only .chart files are supported.",
+        )
+
+    temp_chart = _get_temp_path(f"upload_{uuid.uuid4().hex[:8]}.chart")
+
+    try:
+        import aiofiles as _aio
+
+        async with _aio.open(temp_chart, "wb") as f:
+            while chunk := await file.read(65536):
+                await f.write(chunk)
+
+        parsed = parse_chart_file(temp_chart)
+        viewer_data = chart_to_viewer_json(
+            parsed,
+            difficulty=difficulty,
+            start_time=start_time,
+            end_time=end_time,
+            max_notes=max_notes,
+        )
+        viewer_data["source"] = "uploaded"
+        viewer_data["filename"] = filename
+
+        return viewer_data
+
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=f"Chart parse error: {e}")
+    except Exception as e:
+        logger.exception(f"❌ Error parsing uploaded chart: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to parse chart: {str(e)}")
+    finally:
+        try:
+            os.remove(temp_chart)
+        except (FileNotFoundError, OSError):
+            pass

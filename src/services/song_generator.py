@@ -4,6 +4,10 @@ Clone Hero Content Manager - Song Generator Service
 Analyses audio files using librosa to detect tempo, beats, and rhythm patterns,
 then generates Clone Hero compatible notes.chart files.
 
+Audio files are automatically converted to OGG Vorbis format for maximum
+compatibility across Clone Hero versions (FLAC, WAV, etc. are not reliably
+supported by all builds).
+
 Generated songs are uploaded to Nextcloud via WebDAV and registered in the
 local metadata cache.  Local disk is only used as a transient staging area.
 """
@@ -11,6 +15,7 @@ local metadata cache.  Local disk is only used as a transient staging area.
 import json
 import random
 import shutil
+import subprocess
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -24,6 +29,100 @@ from src.services.album_art_generator import generate_album_art
 from src.services.album_art_generator import is_available as album_art_available
 from src.services.content_manager import write_song_ini
 from src.services.lyrics_generator import generate_lyrics_for_chart
+
+# ---------------------------------------------------------------------------
+# Audio format helpers
+# ---------------------------------------------------------------------------
+
+# Formats that Clone Hero reliably supports across all versions.
+# FLAC support is version-dependent, so we always convert to OGG.
+CLONE_HERO_SAFE_EXTENSIONS = {".ogg", ".opus", ".mp3"}
+
+
+def _ffmpeg_available() -> bool:
+    """Return True if ffmpeg is on the system PATH."""
+    try:
+        subprocess.run(
+            ["ffmpeg", "-version"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=5,
+        )
+        return True
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return False
+
+
+def convert_audio_to_ogg(
+    source_path: Path,
+    dest_dir: Path,
+    target_filename: str = "song.ogg",
+    bitrate: str = "192k",
+) -> Optional[Path]:
+    """
+    Convert an audio file to OGG Vorbis using ffmpeg.
+
+    Parameters
+    ----------
+    source_path : Path
+        Input audio file (FLAC, WAV, MP3, etc.).
+    dest_dir : Path
+        Directory where the output file will be written.
+    target_filename : str
+        Name of the output file (default ``song.ogg``).
+    bitrate : str
+        Target audio bitrate for the OGG encoder (default ``192k``).
+
+    Returns
+    -------
+    Path or None
+        Path to the converted file on success, ``None`` on failure.
+    """
+    dest_path = dest_dir / target_filename
+    cmd = [
+        "ffmpeg",
+        "-y",  # overwrite without asking
+        "-i",
+        str(source_path),
+        "-vn",  # strip any embedded artwork / video
+        "-c:a",
+        "libvorbis",
+        "-b:a",
+        bitrate,
+        str(dest_path),
+    ]
+    try:
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=120,
+        )
+        if result.returncode == 0 and dest_path.exists():
+            logger.info(
+                "🔄 Converted {} → {} ({})",
+                source_path.name,
+                target_filename,
+                bitrate,
+            )
+            return dest_path
+        else:
+            stderr_text = result.stderr.decode(errors="replace")[-500:]
+            logger.error(
+                "❌ ffmpeg conversion failed (rc={}): {}",
+                result.returncode,
+                stderr_text,
+            )
+            return None
+    except FileNotFoundError:
+        logger.error("❌ ffmpeg not found — cannot convert audio")
+        return None
+    except subprocess.TimeoutExpired:
+        logger.error("❌ ffmpeg conversion timed out (>120s)")
+        return None
+    except Exception as e:
+        logger.error("❌ Audio conversion error: {}", e)
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -629,6 +728,7 @@ def generate_notes_chart(
     difficulties: Optional[List[str]] = None,
     seed: Optional[int] = None,
     enable_lyrics: bool = True,
+    charter: str = "nuniesmith",
 ) -> bool:
     """
     Generate a Clone Hero compatible notes.chart file.
@@ -661,7 +761,7 @@ def generate_notes_chart(
         lines.append(f'  Artist = "{artist}"')
         lines.append(f'  Album = "{album}"')
         lines.append(f'  Year = ", {year}"')
-        lines.append(f'  Charter = "Clone Hero Manager"')
+        lines.append(f'  Charter = "{charter}"')
         lines.append(f"  Offset = 0")
         lines.append(f"  Resolution = {RESOLUTION}")
         lines.append("  Player2 = bass")
@@ -881,6 +981,11 @@ def process_song_file(
     difficulty: str = "expert",
     enable_lyrics: bool = True,
     enable_album_art: bool = True,
+    charter: str = "nuniesmith",
+    album: str = "Generated",
+    year: str = "",
+    genre: str = "Generated",
+    cover_art_path: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Full pipeline: analyse audio -> generate chart -> stage locally.
@@ -892,6 +997,8 @@ def process_song_file(
     4. Copies the source audio into the staging folder
     5. Optionally generates procedural lyrics (timed to beats)
     6. Optionally generates procedural album art (album.png)
+       If ``cover_art_path`` is provided, that image is used instead
+       of generating one procedurally.
 
     The caller is responsible for uploading the staging directory to
     Nextcloud and registering the song in the database (this is done
@@ -911,6 +1018,17 @@ def process_song_file(
         If True, generate procedural lyrics in the [Events] section.
     enable_album_art : bool
         If True, generate a procedural album.png cover image.
+    charter : str
+        Name to use in the Charter field (default "nuniesmith").
+    album : str
+        Album name for chart metadata (default "Generated").
+    year : str
+        Year string for chart metadata.
+    genre : str
+        Genre string for chart metadata (default "Generated").
+    cover_art_path : str, optional
+        Path to an existing cover art image.  If provided and valid,
+        this image is copied as album.png instead of generating one.
 
     Returns a result dict with staging paths and metadata,
     or an error dict on failure.
@@ -944,16 +1062,40 @@ def process_song_file(
         staging_dir = TEMP_DIR / f"{safe_name}_{unique_id}"
         staging_dir.mkdir(parents=True, exist_ok=True)
 
-        # Step 3: Copy the audio file FIRST so we know the filename
+        # Step 3: Copy (and optionally convert) the audio file
         audio_ext = source_path.suffix.lower()
-        audio_filename = f"song{audio_ext}"
-        audio_dest = staging_dir / audio_filename
-        try:
-            shutil.copy2(file_path, str(audio_dest))
-            logger.info("🎶 Copied audio to {}", audio_dest)
-        except Exception as e:
-            logger.warning("⚠️ Could not copy audio to staging folder: {}", e)
-            audio_filename = f"song{audio_ext}"  # still set the name
+
+        if audio_ext in CLONE_HERO_SAFE_EXTENSIONS:
+            # Already a safe format — just copy
+            audio_filename = f"song{audio_ext}"
+            audio_dest = staging_dir / audio_filename
+            try:
+                shutil.copy2(file_path, str(audio_dest))
+                logger.info("🎶 Copied audio to {}", audio_dest)
+            except Exception as e:
+                logger.warning("⚠️ Could not copy audio to staging folder: {}", e)
+        else:
+            # Unsupported / unreliable format (FLAC, WAV, etc.)
+            # Convert to OGG Vorbis for maximum Clone Hero compatibility
+            logger.info(
+                "🔄 Audio format '{}' is not reliably supported by Clone Hero — converting to OGG",
+                audio_ext,
+            )
+            converted = convert_audio_to_ogg(source_path, staging_dir)
+            if converted:
+                audio_filename = converted.name  # "song.ogg"
+            else:
+                # Fallback: copy the original file as-is and hope for the best
+                logger.warning(
+                    "⚠️ Conversion failed — falling back to raw {} copy",
+                    audio_ext,
+                )
+                audio_filename = f"song{audio_ext}"
+                audio_dest = staging_dir / audio_filename
+                try:
+                    shutil.copy2(file_path, str(audio_dest))
+                except Exception as e:
+                    logger.warning("⚠️ Could not copy audio to staging folder: {}", e)
 
         # Step 4: Generate the notes.chart with ALL difficulties
         chart_path = staging_dir / "notes.chart"
@@ -962,9 +1104,9 @@ def process_song_file(
         chart_ok = generate_notes_chart(
             song_name=song_name,
             artist=artist,
-            album="Generated",
-            year="",
-            genre="Generated",
+            album=album,
+            year=year,
+            genre=genre,
             tempo=tempo,
             beat_times=beat_times,
             onset_times=onset_times,
@@ -980,9 +1122,38 @@ def process_song_file(
         if not chart_ok:
             return {"error": "Failed to generate notes.chart"}
 
-        # Step 5: Generate album art (album.png)
+        # Step 5: Album art — use provided cover or generate procedurally
         has_album_art = False
-        if enable_album_art and album_art_available():
+
+        # 5a: If caller provided external cover art, use it directly
+        if cover_art_path and Path(cover_art_path).exists():
+            try:
+                album_art_dest = staging_dir / "album.png"
+                ext = Path(cover_art_path).suffix.lower()
+                if ext in (".jpg", ".jpeg"):
+                    # Convert JPEG to PNG for Clone Hero compatibility
+                    try:
+                        from PIL import Image
+
+                        img = Image.open(cover_art_path)
+                        img.save(str(album_art_dest), "PNG")
+                        has_album_art = True
+                        logger.info("🎨 Saved looked-up cover art as album.png")
+                    except ImportError:
+                        shutil.copy2(cover_art_path, str(album_art_dest))
+                        has_album_art = True
+                        logger.info(
+                            "🎨 Copied looked-up cover art (no PIL for convert)"
+                        )
+                else:
+                    shutil.copy2(cover_art_path, str(album_art_dest))
+                    has_album_art = True
+                    logger.info("🎨 Copied looked-up cover art as album.png")
+            except Exception as e:
+                logger.warning("⚠️ Failed to use provided cover art: {}", e)
+
+        # 5b: Fall back to procedural generation if no external art
+        if not has_album_art and enable_album_art and album_art_available():
             try:
                 # Compute average RMS energy for palette generation
                 rms_values = analysis.get("rms_values", [])
@@ -1020,11 +1191,11 @@ def process_song_file(
         song_data = {
             "title": song_name,
             "artist": artist,
-            "album": "Generated",
+            "album": album,
             "metadata": {
-                "charter": "Clone Hero Manager (AI)",
+                "charter": charter,
                 "song_length": song_length_ms,
-                "genre": "Generated",
+                "genre": genre,
                 "preview_start_time": preview_start,
                 "diff_guitar": "3",
                 "diff_bass": "-1",
@@ -1078,6 +1249,11 @@ async def process_and_upload_song(
     difficulty: str = "expert",
     enable_lyrics: bool = True,
     enable_album_art: bool = True,
+    charter: str = "nuniesmith",
+    album: str = "Generated",
+    year: str = "",
+    genre: str = "Generated",
+    cover_art_path: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     High-level async pipeline: generate chart -> upload to Nextcloud -> register in DB.
@@ -1099,6 +1275,16 @@ async def process_and_upload_song(
         If True, generate procedural lyrics in the [Events] section.
     enable_album_art : bool
         If True, generate a procedural album.png cover image.
+    charter : str
+        Name for the Charter field (default "nuniesmith").
+    album : str
+        Album name for chart metadata.
+    year : str
+        Year string for chart metadata.
+    genre : str
+        Genre string for chart metadata.
+    cover_art_path : str, optional
+        Path to an existing cover art image to use instead of generating one.
     """
     import asyncio
 
@@ -1120,6 +1306,11 @@ async def process_and_upload_song(
         difficulty=difficulty,
         enable_lyrics=enable_lyrics,
         enable_album_art=enable_album_art,
+        charter=charter,
+        album=album,
+        year=year,
+        genre=genre,
+        cover_art_path=cover_art_path,
     )
 
     if "error" in result:
@@ -1143,16 +1334,18 @@ async def process_and_upload_song(
 
         # Register in database
         metadata = {
-            "charter": "Clone Hero Manager (AI)",
+            "charter": charter,
             "song_length": str(int(result.get("duration", 0) * 1000)),
-            "genre": "Generated",
+            "genre": genre,
             "diff_guitar": "3",
         }
+        if year:
+            metadata["year"] = year
         metadata_json = json.dumps(metadata)
         song_id = await upsert_song(
             title=result.get("song_name", "Unknown"),
             artist=result.get("artist", "Unknown Artist"),
-            album="Generated",
+            album=album or "Generated",
             remote_path=remote_path,
             metadata=metadata_json,
         )

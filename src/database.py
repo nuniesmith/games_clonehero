@@ -78,7 +78,7 @@ _MIGRATIONS = [
 def _run_migrations(conn: sqlite3.Connection) -> None:
     """Run any pending schema migrations."""
     for migration in _MIGRATIONS:
-        cursor = conn.execute(migration["check"])
+        cursor = conn.execute(str(migration["check"]))
         (count,) = cursor.fetchone()
         if count == 0:
             logger.info("🔄 Running migration: {}", migration["description"])

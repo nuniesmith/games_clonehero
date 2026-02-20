@@ -113,6 +113,57 @@
                 text-overflow: ellipsis;
                 white-space: nowrap;
             }
+            /* ── User Greeting / Logout ── */
+            .sidebar-user {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                padding: 8px 12px;
+                margin: 0 10px 6px 10px;
+                background: rgba(255, 255, 255, 0.06);
+                border-radius: 8px;
+                font-size: 0.85em;
+            }
+            .sidebar-user-info {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                color: #ecf0f1;
+                min-width: 0;
+            }
+            .sidebar-user-icon {
+                font-size: 1.1em;
+                flex-shrink: 0;
+            }
+            .sidebar-user-name {
+                font-weight: 600;
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                max-width: 120px;
+            }
+            .sidebar-logout-btn {
+                display: inline-flex;
+                align-items: center;
+                gap: 4px;
+                padding: 4px 10px;
+                background: rgba(231, 76, 60, 0.15);
+                border: 1px solid rgba(231, 76, 60, 0.3);
+                border-radius: 6px;
+                color: #e74c3c;
+                font-size: 0.85em;
+                text-decoration: none;
+                cursor: pointer;
+                transition:
+                    background 0.2s,
+                    border-color 0.2s;
+                flex-shrink: 0;
+            }
+            .sidebar-logout-btn:hover {
+                background: rgba(231, 76, 60, 0.3);
+                border-color: rgba(231, 76, 60, 0.5);
+                color: #fff;
+            }
         </style>
         {% block extra_css %}{% endblock %}
     </head>
@@ -127,6 +178,18 @@
                 />
                 <h2>Clone Hero Manager</h2>
             </div>
+
+            {% if current_user %}
+            <div class="sidebar-user">
+                <div class="sidebar-user-info">
+                    <span class="sidebar-user-icon">👤</span>
+                    <span class="sidebar-user-name" title="{{ current_user }}"
+                        >{{ current_user }}</span
+                    >
+                </div>
+                <a href="/logout" class="sidebar-logout-btn"> 🚪 Logout </a>
+            </div>
+            {% endif %}
 
             <nav class="sidebar-nav">
                 <h3>📂 Navigation</h3>
@@ -161,6 +224,14 @@
                             class="{% if page_title == 'Song Generator' %}active{% endif %}"
                         >
                             🎵 Song Generator
+                        </a>
+                    </li>
+                    <li>
+                        <a
+                            href="/chart-viewer"
+                            class="{% if page_title == 'Chart Viewer' %}active{% endif %}"
+                        >
+                            📊 Chart Viewer
                         </a>
                     </li>
                     <li>

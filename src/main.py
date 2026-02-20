@@ -6,6 +6,8 @@ Single-container FastAPI application that serves:
 - Static files (CSS, JS, images)
 - REST API endpoints for songs CRUD, upload, generation, and WebDAV
 - Health check endpoint
+- Simple session-based authentication
+- Auto-sync with Nextcloud library
 
 The application is fully stateless: the SQLite database is downloaded from
 Nextcloud on startup and uploaded back periodically and on shutdown.  All
@@ -17,19 +19,31 @@ import sys
 import time
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Form, Request
+from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from loguru import logger
 
+from src.auth import (
+    auth_required,
+    clear_session_cookie,
+    get_current_user,
+    render_login_page,
+    set_session_cookie,
+    verify_credentials,
+)
 from src.config import (
     APP_ENV,
     APP_HOST,
     APP_PORT,
     APP_VERSION,
+    AUTH_PASSWORD,
     DB_PATH,
     DB_SYNC_INTERVAL,
     DEBUG,
+    LIBRARY_SYNC_INTERVAL,
+    LIBRARY_SYNC_ON_STARTUP,
     LOG_LEVEL,
     NEXTCLOUD_DB_PATH,
     STATIC_DIR,
@@ -55,7 +69,8 @@ logger.add(
 # ---------------------------------------------------------------------------
 # Database sync helpers (Nextcloud ↔ local temp file)
 # ---------------------------------------------------------------------------
-_db_sync_task: asyncio.Task | None = None
+_db_sync_task: asyncio.Task[None] | None = None
+_library_sync_task: asyncio.Task[None] | None = None
 
 
 async def _download_db_from_nextcloud() -> bool:
@@ -172,6 +187,53 @@ async def _periodic_db_sync():
 
 
 # ---------------------------------------------------------------------------
+# Library auto-sync (Nextcloud → local DB)
+# ---------------------------------------------------------------------------
+
+
+async def _run_library_sync() -> None:
+    """Run a single library sync (non-streaming version for background use)."""
+    from src.services.content_manager import sync_library_from_nextcloud
+    from src.webdav import is_configured
+
+    if not is_configured():
+        return
+
+    try:
+        logger.info("🔄 Auto-sync: refreshing library from Nextcloud …")
+        result = await sync_library_from_nextcloud()
+        if "error" in result:
+            logger.warning("⚠️  Auto-sync error: {}", result["error"])
+        else:
+            synced = result.get("synced", 0)
+            purged = result.get("purged", 0)
+            logger.info(
+                "🔄 Auto-sync complete: {} synced, {} purged",
+                synced,
+                purged,
+            )
+    except Exception as e:
+        logger.error("❌ Auto-sync error: {}", e)
+
+
+async def _periodic_library_sync():
+    """Background task that syncs the song library from Nextcloud periodically."""
+    if LIBRARY_SYNC_INTERVAL <= 0:
+        logger.info("ℹ️  Library auto-sync is disabled (interval=0)")
+        return
+
+    while True:
+        try:
+            await asyncio.sleep(LIBRARY_SYNC_INTERVAL)
+            await _run_library_sync()
+        except asyncio.CancelledError:
+            logger.debug("🔄 Periodic library sync task cancelled")
+            break
+        except Exception as e:
+            logger.error("❌ Periodic library sync error: {}", e)
+
+
+# ---------------------------------------------------------------------------
 # Lifespan
 # ---------------------------------------------------------------------------
 @asynccontextmanager
@@ -184,17 +246,24 @@ async def lifespan(app: FastAPI):
         2. Download database from Nextcloud (if available)
         3. Initialize / migrate the SQLite database
         4. Start periodic DB sync background task
+        5. Run initial library sync (if enabled)
+        6. Start periodic library sync background task
 
     On shutdown:
-        5. Cancel periodic sync
-        6. Upload database to Nextcloud one final time
-        7. Log shutdown
+        7. Cancel periodic tasks
+        8. Upload database to Nextcloud one final time
+        9. Log shutdown
     """
-    global _db_sync_task
+    global _db_sync_task, _library_sync_task
 
     # --- Startup ---
     logger.info("🚀 Starting Clone Hero Content Manager v{}", APP_VERSION)
     logger.info("📋 Environment: {} | Debug: {}", APP_ENV, DEBUG)
+
+    if AUTH_PASSWORD:
+        logger.info("🔒 Authentication enabled")
+    else:
+        logger.warning("🔓 Authentication DISABLED (no AUTH_PASSWORD set)")
 
     # Step 1: Ensure temp directories exist
     ensure_directories()
@@ -214,6 +283,19 @@ async def lifespan(app: FastAPI):
     _db_sync_task = asyncio.create_task(_periodic_db_sync())
     logger.info("🔄 Periodic DB sync started (every {}s)", DB_SYNC_INTERVAL)
 
+    # Step 5: Initial library sync on startup
+    if LIBRARY_SYNC_ON_STARTUP:
+        # Run in background so we don't block startup
+        asyncio.create_task(_run_library_sync())
+        logger.info("🔄 Startup library sync triggered (runs in background)")
+
+    # Step 6: Start periodic library sync
+    _library_sync_task = asyncio.create_task(_periodic_library_sync())
+    if LIBRARY_SYNC_INTERVAL > 0:
+        logger.info(
+            "🔄 Periodic library sync started (every {}s)", LIBRARY_SYNC_INTERVAL
+        )
+
     logger.success("✅ Application ready — listening on {}:{}", APP_HOST, APP_PORT)
 
     yield
@@ -221,15 +303,20 @@ async def lifespan(app: FastAPI):
     # --- Shutdown ---
     logger.info("🛑 Shutting down Clone Hero Content Manager …")
 
-    # Step 5: Cancel periodic sync
-    if _db_sync_task and not _db_sync_task.done():
-        _db_sync_task.cancel()
-        try:
-            await _db_sync_task
-        except asyncio.CancelledError:
-            pass
+    # Step 7: Cancel periodic tasks
+    for task, name in [
+        (_db_sync_task, "DB sync"),
+        (_library_sync_task, "Library sync"),
+    ]:
+        if task and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            logger.debug("🔄 {} task cancelled", name)
 
-    # Step 6: Final DB upload
+    # Step 8: Final DB upload
     logger.info("⬆️  Uploading database to Nextcloud before shutdown …")
     await _upload_db_to_nextcloud()
 
@@ -264,6 +351,26 @@ def create_app() -> FastAPI:
     # Static files
     # ------------------------------------------------------------------
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+    # ------------------------------------------------------------------
+    # Authentication middleware
+    # ------------------------------------------------------------------
+    @app.middleware("http")
+    async def auth_middleware(request: Request, call_next):
+        """Redirect unauthenticated requests to the login page."""
+        if auth_required(request):
+            # For API requests, return 401 instead of redirect
+            if request.url.path.startswith("/api/"):
+                from fastapi.responses import JSONResponse
+
+                return JSONResponse(
+                    status_code=401,
+                    content={"detail": "Authentication required"},
+                )
+            return RedirectResponse(url="/login", status_code=302)
+
+        response = await call_next(request)
+        return response
 
     # ------------------------------------------------------------------
     # Request logging middleware
@@ -316,6 +423,46 @@ def create_app() -> FastAPI:
                     )
 
             return response
+
+    # ------------------------------------------------------------------
+    # Login / Logout routes (mounted directly on app, before routers)
+    # ------------------------------------------------------------------
+    @app.get("/login")
+    async def login_page(request: Request):
+        """Show the login form."""
+        # If already logged in, redirect to home
+        if get_current_user(request):
+            return RedirectResponse(url="/", status_code=302)
+        return render_login_page()
+
+    @app.post("/login")
+    async def login_post(
+        request: Request,
+        username: str = Form(...),
+        password: str = Form(...),
+    ):
+        """Handle login form submission."""
+        if verify_credentials(username, password):
+            logger.info("🔓 User '{}' logged in", username)
+            response = RedirectResponse(url="/", status_code=302)
+            set_session_cookie(response, username)
+            return response
+        else:
+            logger.warning("🔒 Failed login attempt for '{}'", username)
+            return render_login_page(
+                error="Invalid username or password",
+                prefill_user=username,
+            )
+
+    @app.get("/logout")
+    async def logout(request: Request):
+        """Log out and redirect to login page."""
+        user = get_current_user(request)
+        if user:
+            logger.info("🔒 User '{}' logged out", user)
+        response = RedirectResponse(url="/login", status_code=302)
+        clear_session_cookie(response)
+        return response
 
     # ------------------------------------------------------------------
     # Register routers

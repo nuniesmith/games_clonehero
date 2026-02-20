@@ -3,7 +3,7 @@ Clone Hero Content Manager - Page Routes
 
 Serves HTML pages using Jinja2 templates. These routes handle all the
 browser-facing views: home, songs browser, song editor, upload page,
-song generator, and the Nextcloud WebDAV file browser.
+song generator, chart viewer/editor, and the Nextcloud WebDAV file browser.
 
 Songs are stored on Nextcloud via WebDAV.  The local SQLite database is
 a metadata cache that is refreshed by the library sync process.
@@ -16,6 +16,7 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import HTMLResponse
 from loguru import logger
 
+from src.auth import get_current_user
 from src.config import APP_VERSION, CONTENT_FOLDERS, NEXTCLOUD_SONGS_PATH
 from src.database import count_songs, get_song_by_id, get_songs
 from src.webdav import check_connection, is_configured, list_directory
@@ -76,6 +77,7 @@ async def home(request: Request):
     context = {
         "request": request,
         "page_title": "Home",
+        "current_user": get_current_user(request),
         "total_songs": total,
         "webdav_configured": webdav_configured,
         "webdav_connected": webdav_connected,
@@ -114,6 +116,7 @@ async def songs_page(
     context = {
         "request": request,
         "page_title": "Songs",
+        "current_user": get_current_user(request),
         "songs": songs,
         "search_query": search_query or "",
         "pagination": pag,
@@ -135,6 +138,7 @@ async def song_editor(request: Request, song_id: int):
         context = {
             "request": request,
             "page_title": "Song Not Found",
+            "current_user": get_current_user(request),
             "error": f"Song with ID {song_id} was not found.",
         }
         return request.app.state.templates.TemplateResponse("editor.html", context)
@@ -144,6 +148,7 @@ async def song_editor(request: Request, song_id: int):
     context = {
         "request": request,
         "page_title": f"Edit: {song.get('title', 'Song')}",
+        "current_user": get_current_user(request),
         "song": song,
         "webdav_configured": is_configured(),
     }
@@ -159,6 +164,7 @@ async def upload_page(request: Request):
     context = {
         "request": request,
         "page_title": "Upload Content",
+        "current_user": get_current_user(request),
         "content_types": ["songs", "backgrounds", "colors", "highways"],
         "webdav_configured": is_configured(),
     }
@@ -174,9 +180,44 @@ async def generator_page(request: Request):
     context = {
         "request": request,
         "page_title": "Song Generator",
+        "current_user": get_current_user(request),
         "webdav_configured": is_configured(),
     }
     return request.app.state.templates.TemplateResponse("generator.html", context)
+
+
+# ---------------------------------------------------------------------------
+# Chart Viewer / Editor
+# ---------------------------------------------------------------------------
+@router.get("/chart-viewer", response_class=HTMLResponse)
+async def chart_viewer_page(
+    request: Request,
+    song_id: Optional[int] = Query(None),
+    difficulty: Optional[str] = Query(None),
+):
+    """
+    Interactive chart viewer / editor.
+
+    If *song_id* is provided the viewer will auto-load that song's chart
+    from Nextcloud.  Otherwise the user can upload a ``.chart`` file or
+    pick a song from the library.
+    """
+    song = None
+    if song_id is not None:
+        song = await get_song_by_id(song_id)
+        if song:
+            song["metadata"] = _parse_metadata(song.get("metadata"))
+
+    context = {
+        "request": request,
+        "page_title": "Chart Viewer",
+        "current_user": get_current_user(request),
+        "webdav_configured": is_configured(),
+        "song": song,
+        "song_id": song_id,
+        "initial_difficulty": difficulty or "expert",
+    }
+    return request.app.state.templates.TemplateResponse("chart_viewer.html", context)
 
 
 # ---------------------------------------------------------------------------
@@ -221,6 +262,7 @@ async def browser_page(
     context = {
         "request": request,
         "page_title": "Nextcloud Browser",
+        "current_user": get_current_user(request),
         "webdav_configured": webdav_configured,
         "connected": connection_status.get("connected", False),
         "connection_error": error,

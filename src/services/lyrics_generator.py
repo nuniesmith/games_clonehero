@@ -746,7 +746,7 @@ def _generate_phrase(
     template: List[str],
     theme_words: Dict[str, List[str]],
     rng: random.Random,
-    avoid_words: Optional[set] = None,
+    avoid_words: Optional[set] = None,  # type: ignore[type-arg]
 ) -> List[str]:
     """
     Generate a phrase (list of words) from a template.
@@ -879,7 +879,7 @@ def generate_lyrics(
     chorus_cache: List[List[str]] = []
 
     # Track recently used words to promote variety
-    recent_words: set = set()
+    recent_words: set = set()  # type: ignore[type-arg]
 
     # Process each segment
     for seg_start, seg_end, seg_label in seg_ranges:

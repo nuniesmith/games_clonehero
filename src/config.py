@@ -14,7 +14,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
-load_dotenv()
+_ = load_dotenv()
 
 # ---------------------------------------------------------------------------
 # Application
@@ -25,6 +25,16 @@ APP_ENV = os.getenv("APP_ENV", "development")
 APP_VERSION = os.getenv("APP_VERSION", "1.0.0")
 DEBUG = os.getenv("DEBUG", "true").lower() == "true"
 SECRET_KEY = os.getenv("SECRET_KEY", "change-me-in-production")
+
+# ---------------------------------------------------------------------------
+# Authentication (simple single-user login)
+# ---------------------------------------------------------------------------
+AUTH_USERNAME = os.getenv("AUTH_USERNAME", "nuniesmith")
+AUTH_PASSWORD = os.getenv("AUTH_PASSWORD", "")  # MUST be set in .env
+CHARTER_NAME = os.getenv("CHARTER_NAME", "nuniesmith")
+# Session cookie name and max age (seconds) — default 30 days
+SESSION_COOKIE_NAME = "ch_session"
+SESSION_MAX_AGE = int(os.getenv("SESSION_MAX_AGE", str(60 * 60 * 24 * 30)))
 
 # ---------------------------------------------------------------------------
 # Paths — local disk is used only for transient data
@@ -67,13 +77,19 @@ NEXTCLOUD_DB_PATH = os.getenv("NEXTCLOUD_DB_PATH", "/Database/clonehero.db")
 # How often (in seconds) to upload the DB to Nextcloud as a backup
 DB_SYNC_INTERVAL = int(os.getenv("DB_SYNC_INTERVAL", "300"))  # default 5 minutes
 
+# How often (in seconds) to auto-sync the song library from Nextcloud.
+# Set to 0 to disable auto-sync (manual only).
+LIBRARY_SYNC_INTERVAL = int(os.getenv("LIBRARY_SYNC_INTERVAL", "120"))  # default 2 min
+# Whether to run a full library sync on application startup
+LIBRARY_SYNC_ON_STARTUP = os.getenv("LIBRARY_SYNC_ON_STARTUP", "true").lower() == "true"
+
 # Build the full WebDAV base URL
-if NEXTCLOUD_URL and NEXTCLOUD_USERNAME:
-    WEBDAV_BASE_URL = NEXTCLOUD_URL.rstrip("/") + NEXTCLOUD_REMOTE_PATH.format(
-        username=NEXTCLOUD_USERNAME
-    )
-else:
-    WEBDAV_BASE_URL = ""
+WEBDAV_BASE_URL: str = (
+    NEXTCLOUD_URL.rstrip("/")
+    + NEXTCLOUD_REMOTE_PATH.format(username=NEXTCLOUD_USERNAME)
+    if NEXTCLOUD_URL and NEXTCLOUD_USERNAME
+    else ""
+)
 
 # ---------------------------------------------------------------------------
 # Nextcloud folder mappings
@@ -117,6 +133,20 @@ ALLOWED_UPLOAD_EXTENSIONS = (
 # ---------------------------------------------------------------------------
 # Song.ini optional metadata fields
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# MusicBrainz / metadata lookup
+# ---------------------------------------------------------------------------
+MUSICBRAINZ_ENABLED = os.getenv("MUSICBRAINZ_ENABLED", "true").lower() == "true"
+# User-Agent string required by MusicBrainz API policy
+MUSICBRAINZ_USER_AGENT = os.getenv(
+    "MUSICBRAINZ_USER_AGENT",
+    "CloneHeroManager/1.0.0 (https://github.com/nuniesmith/games_clonehero)",
+)
+# Cover Art Archive base URL
+COVER_ART_ARCHIVE_URL = os.getenv(
+    "COVER_ART_ARCHIVE_URL", "https://coverartarchive.org"
+)
+
 OPTIONAL_SONG_FIELDS = [
     "genre",
     "year",

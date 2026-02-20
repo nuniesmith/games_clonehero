@@ -1,0 +1,1701 @@
+{% extends 'base.html' %}
+
+{% block title %}Chart Viewer - Clone Hero Manager{% endblock %}
+
+{% block content %}
+<div class="container" style="max-width: 1400px;">
+    <h1>📊 Chart Viewer</h1>
+    <p>Visualise and inspect Clone Hero chart files. Load a song from your library or upload a <code>.chart</code> file directly.</p>
+
+    <!-- Source Selection -->
+    <div class="viewer-source-panel" id="sourcePanel">
+        <div class="source-tabs">
+            <button class="source-tab active" data-source="library" onclick="switchSource('library')">📁 From Library</button>
+            <button class="source-tab" data-source="upload" onclick="switchSource('upload')">📤 Upload File</button>
+        </div>
+
+        <div class="source-content" id="sourceLibrary">
+            {% if song %}
+            <div class="alert alert-info">
+                🎵 Loaded: <strong>{{ song.title }}</strong> by <strong>{{ song.artist }}</strong>
+                (ID: {{ song_id }})
+            </div>
+            {% endif %}
+            <div class="form-row">
+                <div class="form-group" style="flex:1;">
+                    <label for="songIdInput">Song ID</label>
+                    <input type="number" id="songIdInput" placeholder="Enter song ID" value="{{ song_id or '' }}" min="1">
+                </div>
+                <div class="form-group" style="flex:0 0 auto; align-self:flex-end;">
+                    <button class="btn btn-primary" id="loadFromLibraryBtn" onclick="loadFromLibrary()">📥 Load Chart</button>
+                </div>
+            </div>
+            <p style="font-size:0.85em; color:#7f8c8d;">
+                Find song IDs in the <a href="/songs">Song Library</a>. Songs must be synced from Nextcloud.
+            </p>
+        </div>
+
+        <div class="source-content" id="sourceUpload" style="display:none;">
+            <div class="form-row">
+                <div class="form-group" style="flex:1;">
+                    <label for="chartFileInput">Chart File</label>
+                    <input type="file" id="chartFileInput" accept=".chart">
+                </div>
+                <div class="form-group" style="flex:0 0 auto; align-self:flex-end;">
+                    <button class="btn btn-primary" id="loadUploadBtn" onclick="loadFromUpload()">📥 Parse Chart</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Indicator -->
+    <div id="loadingIndicator" class="alert alert-info" style="display:none;">
+        ⏳ <strong>Loading chart data...</strong> This may take a moment for large charts.
+    </div>
+
+    <!-- Error Display -->
+    <div id="errorDisplay" class="alert alert-danger" style="display:none;"></div>
+
+    <!-- Chart Viewer Panel (hidden until loaded) -->
+    <div id="viewerPanel" style="display:none;">
+
+        <!-- Song Info Bar -->
+        <div class="chart-info-bar" id="chartInfoBar">
+            <div class="info-item">
+                <span class="info-label">Song</span>
+                <span class="info-value" id="infoSongName">—</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">Artist</span>
+                <span class="info-value" id="infoArtist">—</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">BPM</span>
+                <span class="info-value" id="infoBPM">—</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">Duration</span>
+                <span class="info-value" id="infoDuration">—</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">Notes</span>
+                <span class="info-value" id="infoNotes">—</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">Lyrics</span>
+                <span class="info-value" id="infoLyrics">—</span>
+            </div>
+        </div>
+
+        <!-- Controls -->
+        <div class="chart-controls">
+            <div class="control-group">
+                <label>Difficulty</label>
+                <div class="difficulty-buttons" id="difficultyButtons">
+                    <button class="diff-btn" data-diff="easy" onclick="switchDifficulty('easy')">🟢 Easy</button>
+                    <button class="diff-btn" data-diff="medium" onclick="switchDifficulty('medium')">🟡 Medium</button>
+                    <button class="diff-btn" data-diff="hard" onclick="switchDifficulty('hard')">🟠 Hard</button>
+                    <button class="diff-btn active" data-diff="expert" onclick="switchDifficulty('expert')">🔴 Expert</button>
+                </div>
+            </div>
+
+            <div class="control-group">
+                <label>Zoom</label>
+                <div class="zoom-controls">
+                    <button class="btn btn-sm btn-secondary" onclick="zoomOut()">−</button>
+                    <span id="zoomLevel">100%</span>
+                    <button class="btn btn-sm btn-secondary" onclick="zoomIn()">+</button>
+                    <button class="btn btn-sm btn-secondary" onclick="zoomReset()">Reset</button>
+                </div>
+            </div>
+
+            <div class="control-group">
+                <label>Display</label>
+                <div class="toggle-controls">
+                    <label class="toggle-label">
+                        <input type="checkbox" id="toggleSections" checked onchange="redrawChart()"> Sections
+                    </label>
+                    <label class="toggle-label">
+                        <input type="checkbox" id="toggleLyrics" checked onchange="redrawChart()"> Lyrics
+                    </label>
+                    <label class="toggle-label">
+                        <input type="checkbox" id="toggleStarPower" checked onchange="redrawChart()"> Star Power
+                    </label>
+                    <label class="toggle-label">
+                        <input type="checkbox" id="toggleBeats" checked onchange="redrawChart()"> Beat Lines
+                    </label>
+                </div>
+            </div>
+        </div>
+
+        <!-- Sections Quick-Jump -->
+        <div class="sections-bar" id="sectionsBar" style="display:none;">
+            <span class="sections-label">Sections:</span>
+            <div class="sections-list" id="sectionsList"></div>
+        </div>
+
+        <!-- Canvas Container -->
+        <div class="chart-canvas-container" id="canvasContainer">
+            <canvas id="chartCanvas" width="1200" height="500"></canvas>
+            <!-- Scrollbar -->
+            <div class="chart-scrollbar" id="chartScrollbar">
+                <div class="scrollbar-track" id="scrollbarTrack">
+                    <div class="scrollbar-thumb" id="scrollbarThumb"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Position Info -->
+        <div class="position-bar">
+            <span id="positionTime">0:00.000</span>
+            <span id="positionTick">Tick: 0</span>
+            <span id="positionBPM">BPM: —</span>
+            <span id="positionSection">Section: —</span>
+        </div>
+
+        <!-- Lyrics Panel -->
+        <div class="lyrics-panel" id="lyricsPanel" style="display:none;">
+            <h3>🎤 Lyrics</h3>
+            <div class="lyrics-content" id="lyricsContent"></div>
+        </div>
+
+        <!-- Stats Panel -->
+        <div class="chart-stats" id="chartStats">
+            <h3>📈 Chart Statistics</h3>
+            <div class="stats-grid" id="statsGrid"></div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+    /* Source panel */
+    .viewer-source-panel {
+        background: #f8f9fa;
+        border: 1px solid #dee2e6;
+        border-radius: 8px;
+        padding: 20px;
+        margin-bottom: 20px;
+    }
+
+    .source-tabs {
+        display: flex;
+        gap: 8px;
+        margin-bottom: 16px;
+        border-bottom: 2px solid #dee2e6;
+        padding-bottom: 12px;
+    }
+
+    .source-tab {
+        padding: 8px 18px;
+        border: 2px solid transparent;
+        border-radius: 6px 6px 0 0;
+        background: none;
+        cursor: pointer;
+        font-size: 0.95em;
+        font-weight: 600;
+        color: #7f8c8d;
+        transition: all 0.2s;
+    }
+
+    .source-tab:hover {
+        color: #3498db;
+    }
+
+    .source-tab.active {
+        color: #3498db;
+        border-color: #3498db;
+        border-bottom-color: #f8f9fa;
+        background: #f8f9fa;
+    }
+
+    .source-content {
+        padding-top: 8px;
+    }
+
+    /* Chart info bar */
+    .chart-info-bar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 16px;
+        background: linear-gradient(135deg, #2c3e50, #34495e);
+        color: #ecf0f1;
+        padding: 14px 20px;
+        border-radius: 8px 8px 0 0;
+        margin-bottom: 0;
+    }
+
+    .info-item {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        min-width: 80px;
+    }
+
+    .info-label {
+        font-size: 0.72em;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: #95a5a6;
+    }
+
+    .info-value {
+        font-size: 1em;
+        font-weight: 600;
+        color: #ecf0f1;
+    }
+
+    /* Controls */
+    .chart-controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 20px;
+        padding: 12px 20px;
+        background: #f0f3f5;
+        border: 1px solid #dee2e6;
+        border-top: none;
+        align-items: flex-end;
+    }
+
+    .control-group {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .control-group label {
+        font-size: 0.78em;
+        text-transform: uppercase;
+        font-weight: 700;
+        color: #7f8c8d;
+        letter-spacing: 0.5px;
+    }
+
+    .difficulty-buttons {
+        display: flex;
+        gap: 4px;
+    }
+
+    .diff-btn {
+        padding: 5px 12px;
+        border: 2px solid #bdc3c7;
+        border-radius: 4px;
+        background: #fff;
+        cursor: pointer;
+        font-size: 0.85em;
+        font-weight: 600;
+        color: #555;
+        transition: all 0.2s;
+    }
+
+    .diff-btn:hover {
+        border-color: #3498db;
+        color: #3498db;
+    }
+
+    .diff-btn.active {
+        background: #3498db;
+        border-color: #3498db;
+        color: #fff;
+    }
+
+    .diff-btn:disabled {
+        opacity: 0.3;
+        cursor: not-allowed;
+    }
+
+    .zoom-controls {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    #zoomLevel {
+        font-weight: 600;
+        min-width: 50px;
+        text-align: center;
+        font-size: 0.9em;
+    }
+
+    .toggle-controls {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+    }
+
+    .toggle-label {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 0.85em;
+        cursor: pointer;
+        color: #555;
+        white-space: nowrap;
+    }
+
+    .toggle-label input[type="checkbox"] {
+        accent-color: #3498db;
+    }
+
+    /* Sections bar */
+    .sections-bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 16px;
+        background: #eef2f5;
+        border: 1px solid #dee2e6;
+        border-top: none;
+        overflow-x: auto;
+    }
+
+    .sections-label {
+        font-size: 0.8em;
+        font-weight: 700;
+        color: #7f8c8d;
+        text-transform: uppercase;
+        white-space: nowrap;
+    }
+
+    .sections-list {
+        display: flex;
+        gap: 4px;
+        flex-wrap: nowrap;
+        overflow-x: auto;
+    }
+
+    .section-chip {
+        padding: 3px 10px;
+        background: #fff;
+        border: 1px solid #bdc3c7;
+        border-radius: 12px;
+        font-size: 0.8em;
+        cursor: pointer;
+        white-space: nowrap;
+        transition: all 0.15s;
+        color: #555;
+    }
+
+    .section-chip:hover {
+        background: #3498db;
+        border-color: #3498db;
+        color: #fff;
+    }
+
+    /* Canvas container */
+    .chart-canvas-container {
+        border: 1px solid #dee2e6;
+        border-top: none;
+        background: #1a1a2e;
+        position: relative;
+        overflow: hidden;
+    }
+
+    #chartCanvas {
+        display: block;
+        width: 100%;
+        cursor: crosshair;
+    }
+
+    /* Scrollbar */
+    .chart-scrollbar {
+        padding: 6px 16px;
+        background: #111;
+    }
+
+    .scrollbar-track {
+        position: relative;
+        height: 12px;
+        background: #2a2a3e;
+        border-radius: 6px;
+        cursor: pointer;
+    }
+
+    .scrollbar-thumb {
+        position: absolute;
+        height: 100%;
+        min-width: 30px;
+        background: #3498db;
+        border-radius: 6px;
+        cursor: grab;
+        transition: background 0.15s;
+    }
+
+    .scrollbar-thumb:hover,
+    .scrollbar-thumb:active {
+        background: #2980b9;
+    }
+
+    /* Position bar */
+    .position-bar {
+        display: flex;
+        gap: 20px;
+        padding: 8px 16px;
+        background: #222;
+        color: #95a5a6;
+        font-size: 0.82em;
+        font-family: 'Consolas', 'Monaco', monospace;
+        border: 1px solid #dee2e6;
+        border-top: none;
+        border-radius: 0 0 8px 8px;
+    }
+
+    /* Lyrics panel */
+    .lyrics-panel {
+        margin-top: 20px;
+        padding: 20px;
+        background: #f8f9fa;
+        border: 1px solid #dee2e6;
+        border-radius: 8px;
+    }
+
+    .lyrics-panel h3 {
+        margin-top: 0;
+        margin-bottom: 12px;
+        color: #2c3e50;
+    }
+
+    .lyrics-content {
+        font-size: 0.95em;
+        line-height: 1.8;
+        color: #333;
+        max-height: 200px;
+        overflow-y: auto;
+    }
+
+    .lyric-line {
+        padding: 2px 8px;
+        border-radius: 3px;
+        display: inline-block;
+        margin: 2px 4px;
+        cursor: pointer;
+        transition: background 0.15s;
+    }
+
+    .lyric-line:hover {
+        background: #e0e7ff;
+    }
+
+    .lyric-section-label {
+        display: block;
+        margin-top: 8px;
+        font-weight: 700;
+        color: #7f8c8d;
+        font-size: 0.85em;
+        text-transform: uppercase;
+    }
+
+    /* Stats panel */
+    .chart-stats {
+        margin-top: 20px;
+        padding: 20px;
+        background: #f8f9fa;
+        border: 1px solid #dee2e6;
+        border-radius: 8px;
+    }
+
+    .chart-stats h3 {
+        margin-top: 0;
+        margin-bottom: 12px;
+        color: #2c3e50;
+    }
+
+    .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+        gap: 12px;
+    }
+
+    .stat-card {
+        background: #fff;
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        padding: 12px;
+        text-align: center;
+    }
+
+    .stat-card-value {
+        font-size: 1.5em;
+        font-weight: 700;
+        color: #3498db;
+    }
+
+    .stat-card-label {
+        font-size: 0.78em;
+        text-transform: uppercase;
+        color: #7f8c8d;
+        margin-top: 2px;
+    }
+
+    /* Lane colours */
+    .lane-legend {
+        display: flex;
+        gap: 12px;
+        margin-top: 12px;
+        flex-wrap: wrap;
+    }
+
+    .lane-swatch {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 0.85em;
+        color: #555;
+    }
+
+    .lane-swatch-dot {
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        border: 1px solid rgba(0,0,0,0.2);
+    }
+
+    /* Responsive */
+    @media (max-width: 768px) {
+        .chart-info-bar {
+            gap: 10px;
+            padding: 10px 14px;
+        }
+        .chart-controls {
+            flex-direction: column;
+            gap: 12px;
+        }
+        .difficulty-buttons {
+            flex-wrap: wrap;
+        }
+        .stats-grid {
+            grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+        }
+        .position-bar {
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// ═══════════════════════════════════════════════════════════════════════════
+// Chart Viewer State
+// ═══════════════════════════════════════════════════════════════════════════
+const STATE = {
+    chartData: null,
+    currentDifficulty: '{{ initial_difficulty }}',
+    scrollX: 0,             // Current horizontal scroll in pixels
+    zoom: 1.0,              // Zoom multiplier
+    pixelsPerSecond: 120,   // Base scale
+    canvasWidth: 1200,
+    canvasHeight: 500,
+    mouseX: 0,
+    mouseY: 0,
+    isDragging: false,
+    dragStartX: 0,
+    dragScrollStart: 0,
+    hoveredNote: null,
+};
+
+// Lane colours matching Clone Hero
+const LANE_COLORS = {
+    0: '#2ecc71',  // Green
+    1: '#e74c3c',  // Red
+    2: '#f1c40f',  // Yellow
+    3: '#3498db',  // Blue
+    4: '#e67e22',  // Orange
+};
+
+const LANE_GLOW = {
+    0: 'rgba(46, 204, 113, 0.4)',
+    1: 'rgba(231, 76, 60, 0.4)',
+    2: 'rgba(241, 196, 15, 0.4)',
+    3: 'rgba(52, 152, 219, 0.4)',
+    4: 'rgba(230, 126, 34, 0.4)',
+};
+
+const LANE_NAMES = ['Green', 'Red', 'Yellow', 'Blue', 'Orange'];
+const NUM_LANES = 5;
+const LANE_HEIGHT = 60;
+const HEADER_HEIGHT = 40;
+const NOTE_RADIUS = 10;
+const SUSTAIN_HEIGHT = 6;
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Source Switching
+// ═══════════════════════════════════════════════════════════════════════════
+function switchSource(source) {
+    document.querySelectorAll('.source-tab').forEach(t => t.classList.remove('active'));
+    document.querySelector(`.source-tab[data-source="${source}"]`).classList.add('active');
+    document.getElementById('sourceLibrary').style.display = source === 'library' ? 'block' : 'none';
+    document.getElementById('sourceUpload').style.display = source === 'upload' ? 'block' : 'none';
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Data Loading
+// ═══════════════════════════════════════════════════════════════════════════
+async function loadFromLibrary() {
+    const songId = document.getElementById('songIdInput').value;
+    if (!songId) {
+        showError('Please enter a song ID.');
+        return;
+    }
+
+    showLoading(true);
+    hideError();
+
+    try {
+        const url = `/api/songs/${songId}/chart?difficulty=${STATE.currentDifficulty}&max_notes=50000`;
+        const resp = await fetch(url);
+
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.detail || `HTTP ${resp.status}`);
+        }
+
+        const data = await resp.json();
+        STATE.chartData = data;
+        STATE.scrollX = 0;
+        onChartLoaded();
+    } catch (e) {
+        showError(`Failed to load chart: ${e.message}`);
+    } finally {
+        showLoading(false);
+    }
+}
+
+async function loadFromUpload() {
+    const input = document.getElementById('chartFileInput');
+    if (!input.files || !input.files.length) {
+        showError('Please select a .chart file.');
+        return;
+    }
+
+    showLoading(true);
+    hideError();
+
+    try {
+        const formData = new FormData();
+        formData.append('file', input.files[0]);
+        formData.append('difficulty', STATE.currentDifficulty);
+        formData.append('max_notes', '50000');
+
+        const resp = await fetch('/api/chart/parse', {
+            method: 'POST',
+            body: formData,
+        });
+
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.detail || `HTTP ${resp.status}`);
+        }
+
+        const data = await resp.json();
+        STATE.chartData = data;
+        STATE.scrollX = 0;
+        onChartLoaded();
+    } catch (e) {
+        showError(`Failed to parse chart: ${e.message}`);
+    } finally {
+        showLoading(false);
+    }
+}
+
+async function switchDifficulty(diff) {
+    STATE.currentDifficulty = diff;
+
+    // Update button states
+    document.querySelectorAll('.diff-btn').forEach(b => b.classList.remove('active'));
+    const btn = document.querySelector(`.diff-btn[data-diff="${diff}"]`);
+    if (btn) btn.classList.add('active');
+
+    // If we have chart data with this difficulty already available, just re-render
+    if (STATE.chartData) {
+        const available = STATE.chartData.available_difficulties || {};
+        if (diff in available) {
+            // Reload from source to get the new difficulty's notes
+            const songId = STATE.chartData.song_id;
+            if (songId) {
+                showLoading(true);
+                try {
+                    const url = `/api/songs/${songId}/chart?difficulty=${diff}&max_notes=50000`;
+                    const resp = await fetch(url);
+                    if (resp.ok) {
+                        STATE.chartData = await resp.json();
+                        onChartLoaded();
+                    }
+                } catch (e) {
+                    showError(`Failed to switch difficulty: ${e.message}`);
+                } finally {
+                    showLoading(false);
+                }
+            } else {
+                // Uploaded file — re-parse with new difficulty
+                const input = document.getElementById('chartFileInput');
+                if (input.files && input.files.length) {
+                    await loadFromUpload();
+                } else {
+                    redrawChart();
+                }
+            }
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Chart Loaded Callback
+// ═══════════════════════════════════════════════════════════════════════════
+function onChartLoaded() {
+    const data = STATE.chartData;
+    if (!data) return;
+
+    document.getElementById('viewerPanel').style.display = 'block';
+
+    // Update info bar
+    const song = data.song || {};
+    document.getElementById('infoSongName').textContent = song.name || 'Unknown';
+    document.getElementById('infoArtist').textContent = song.artist || 'Unknown';
+    document.getElementById('infoDuration').textContent = formatTime(data.duration_s || 0);
+
+    // BPM
+    const markers = data.tempo_markers || [];
+    if (markers.length > 0) {
+        const bpms = markers.map(m => m.bpm);
+        const minBPM = Math.min(...bpms);
+        const maxBPM = Math.max(...bpms);
+        document.getElementById('infoBPM').textContent =
+            minBPM === maxBPM ? `${minBPM}` : `${minBPM}–${maxBPM}`;
+    } else {
+        document.getElementById('infoBPM').textContent = '—';
+    }
+
+    // Notes
+    const diff = data.difficulty || {};
+    document.getElementById('infoNotes').textContent = diff.total_notes || 0;
+    document.getElementById('infoLyrics').textContent = data.has_lyrics ? '✅ Yes' : '❌ No';
+
+    // Difficulty buttons
+    const available = data.available_difficulties || {};
+    document.querySelectorAll('.diff-btn').forEach(btn => {
+        const d = btn.dataset.diff;
+        const isAvail = d in available;
+        btn.disabled = !isAvail;
+        btn.classList.toggle('active', d === (diff.name || STATE.currentDifficulty));
+        if (isAvail) {
+            const count = available[d].note_count || 0;
+            btn.title = `${count} notes`;
+        }
+    });
+
+    // Sections
+    const sections = data.sections || [];
+    const sbar = document.getElementById('sectionsBar');
+    const slist = document.getElementById('sectionsList');
+    if (sections.length > 0) {
+        sbar.style.display = 'flex';
+        slist.innerHTML = '';
+        sections.forEach(sec => {
+            const chip = document.createElement('span');
+            chip.className = 'section-chip';
+            chip.textContent = sec.value;
+            chip.title = `${formatTime(sec.time_s)}`;
+            chip.onclick = () => scrollToTime(sec.time_s);
+            slist.appendChild(chip);
+        });
+    } else {
+        sbar.style.display = 'none';
+    }
+
+    // Lyrics panel
+    buildLyricsPanel(data);
+
+    // Stats
+    buildStatsPanel(data);
+
+    // Resize canvas and draw
+    resizeCanvas();
+    redrawChart();
+    updateScrollbar();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Canvas Setup
+// ═══════════════════════════════════════════════════════════════════════════
+function resizeCanvas() {
+    const container = document.getElementById('canvasContainer');
+    const canvas = document.getElementById('chartCanvas');
+    const dpr = window.devicePixelRatio || 1;
+
+    STATE.canvasWidth = container.clientWidth;
+    STATE.canvasHeight = HEADER_HEIGHT + NUM_LANES * LANE_HEIGHT + 40;
+
+    canvas.width = STATE.canvasWidth * dpr;
+    canvas.height = STATE.canvasHeight * dpr;
+    canvas.style.width = STATE.canvasWidth + 'px';
+    canvas.style.height = STATE.canvasHeight + 'px';
+
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Drawing
+// ═══════════════════════════════════════════════════════════════════════════
+function redrawChart() {
+    const canvas = document.getElementById('chartCanvas');
+    const ctx = canvas.getContext('2d');
+    const data = STATE.chartData;
+    if (!data) return;
+
+    const W = STATE.canvasWidth;
+    const H = STATE.canvasHeight;
+    const pps = STATE.pixelsPerSecond * STATE.zoom;
+    const duration = data.duration_s || 30;
+    const totalWidth = duration * pps;
+
+    // Clamp scroll
+    const maxScroll = Math.max(0, totalWidth - W);
+    STATE.scrollX = Math.max(0, Math.min(STATE.scrollX, maxScroll));
+
+    const viewStartTime = STATE.scrollX / pps;
+    const viewEndTime = (STATE.scrollX + W) / pps;
+
+    // Clear
+    ctx.fillStyle = '#1a1a2e';
+    ctx.fillRect(0, 0, W, H);
+
+    // Draw lane backgrounds
+    const laneTop = HEADER_HEIGHT;
+    for (let i = 0; i < NUM_LANES; i++) {
+        const y = laneTop + i * LANE_HEIGHT;
+        ctx.fillStyle = i % 2 === 0 ? '#16213e' : '#1a1a2e';
+        ctx.fillRect(0, y, W, LANE_HEIGHT);
+
+        // Lane separator
+        ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(W, y);
+        ctx.stroke();
+
+        // Lane label
+        ctx.fillStyle = LANE_COLORS[i];
+        ctx.globalAlpha = 0.3;
+        ctx.font = '11px sans-serif';
+        ctx.fillText(LANE_NAMES[i], 4, y + LANE_HEIGHT / 2 + 4);
+        ctx.globalAlpha = 1.0;
+    }
+
+    // Bottom separator
+    ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+    ctx.beginPath();
+    ctx.moveTo(0, laneTop + NUM_LANES * LANE_HEIGHT);
+    ctx.lineTo(W, laneTop + NUM_LANES * LANE_HEIGHT);
+    ctx.stroke();
+
+    // Beat lines
+    if (document.getElementById('toggleBeats').checked) {
+        drawBeatLines(ctx, data, W, H, laneTop, pps, viewStartTime, viewEndTime);
+    }
+
+    // Star power
+    const showSP = document.getElementById('toggleStarPower').checked;
+    if (showSP && data.difficulty && data.difficulty.star_power) {
+        drawStarPower(ctx, data.difficulty.star_power, laneTop, pps, viewStartTime, viewEndTime);
+    }
+
+    // Section markers
+    if (document.getElementById('toggleSections').checked) {
+        drawSections(ctx, data.sections || [], laneTop, pps, viewStartTime, viewEndTime, H);
+    }
+
+    // Notes
+    if (data.difficulty && data.difficulty.notes) {
+        drawNotes(ctx, data.difficulty.notes, laneTop, pps, viewStartTime, viewEndTime);
+    }
+
+    // Lyrics
+    if (document.getElementById('toggleLyrics').checked && data.lyrics) {
+        drawLyrics(ctx, data.lyrics, laneTop, pps, viewStartTime, viewEndTime, H);
+    }
+
+    // Time ruler (header)
+    drawTimeRuler(ctx, W, pps, viewStartTime, viewEndTime);
+
+    // Hovered note tooltip
+    if (STATE.hoveredNote) {
+        drawTooltip(ctx, STATE.hoveredNote);
+    }
+
+    updatePositionBar(viewStartTime);
+    updateScrollbar();
+}
+
+function timeToX(timeS) {
+    const pps = STATE.pixelsPerSecond * STATE.zoom;
+    return timeS * pps - STATE.scrollX;
+}
+
+function xToTime(x) {
+    const pps = STATE.pixelsPerSecond * STATE.zoom;
+    return (x + STATE.scrollX) / pps;
+}
+
+function drawTimeRuler(ctx, W, pps, startTime, endTime) {
+    ctx.fillStyle = '#0f0f23';
+    ctx.fillRect(0, 0, W, HEADER_HEIGHT);
+
+    // Determine tick interval
+    let interval = 1;
+    if (pps > 300) interval = 0.25;
+    else if (pps > 150) interval = 0.5;
+    else if (pps > 60) interval = 1;
+    else if (pps > 30) interval = 2;
+    else if (pps > 15) interval = 5;
+    else interval = 10;
+
+    const firstTick = Math.floor(startTime / interval) * interval;
+
+    ctx.font = '11px Consolas, Monaco, monospace';
+    ctx.textAlign = 'center';
+
+    for (let t = firstTick; t <= endTime; t += interval) {
+        const x = timeToX(t);
+        if (x < -20 || x > W + 20) continue;
+
+        // Major vs minor tick
+        const isMajor = Math.abs(t - Math.round(t)) < 0.01;
+
+        ctx.strokeStyle = isMajor ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.1)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(x, isMajor ? 20 : 28);
+        ctx.lineTo(x, HEADER_HEIGHT);
+        ctx.stroke();
+
+        if (isMajor || pps > 200) {
+            ctx.fillStyle = 'rgba(255,255,255,0.6)';
+            ctx.fillText(formatTimeShort(t), x, 16);
+        }
+    }
+    ctx.textAlign = 'left';
+}
+
+function drawBeatLines(ctx, data, W, H, laneTop, pps, startTime, endTime) {
+    const markers = data.tempo_markers || [];
+    if (markers.length === 0) return;
+
+    const resolution = (data.song || {}).resolution || 192;
+    const duration = data.duration_s || 30;
+
+    // Generate beat times from tempo markers
+    let currentBPM = markers[0].bpm;
+    let currentTick = 0;
+    let currentTime = 0;
+    let markerIdx = 0;
+
+    const beatInterval = 60.0 / currentBPM;
+    let nextBeat = 0;
+    let beatNum = 0;
+
+    while (nextBeat < duration) {
+        // Advance to next tempo marker if needed
+        while (markerIdx + 1 < markers.length) {
+            const nextMarker = markers[markerIdx + 1];
+            const nextMarkerTime = tickToTimeApprox(nextMarker.tick, markers, resolution);
+            if (nextBeat >= nextMarkerTime) {
+                currentBPM = nextMarker.bpm;
+                markerIdx++;
+            } else {
+                break;
+            }
+        }
+
+        if (nextBeat >= startTime && nextBeat <= endTime) {
+            const x = timeToX(nextBeat);
+            const isMeasure = beatNum % 4 === 0;
+
+            ctx.strokeStyle = isMeasure ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.04)';
+            ctx.lineWidth = isMeasure ? 1 : 0.5;
+            ctx.beginPath();
+            ctx.moveTo(x, laneTop);
+            ctx.lineTo(x, laneTop + NUM_LANES * LANE_HEIGHT);
+            ctx.stroke();
+        }
+
+        beatNum++;
+        nextBeat += 60.0 / currentBPM;
+
+        // Safety check
+        if (beatNum > 100000) break;
+    }
+}
+
+function tickToTimeApprox(tick, markers, resolution) {
+    if (!markers || markers.length === 0) return 0;
+    let time = 0;
+    let prevTick = 0;
+    let prevBPM = markers[0].bpm;
+
+    for (let i = 1; i < markers.length; i++) {
+        if (markers[i].tick > tick) break;
+        const dt = (markers[i].tick - prevTick) / resolution * (60.0 / prevBPM);
+        time += dt;
+        prevTick = markers[i].tick;
+        prevBPM = markers[i].bpm;
+    }
+
+    const remaining = (tick - prevTick) / resolution * (60.0 / prevBPM);
+    return time + remaining;
+}
+
+function drawStarPower(ctx, spSections, laneTop, pps, startTime, endTime) {
+    spSections.forEach(sp => {
+        const spStart = sp.time_s;
+        const spEnd = sp.end_time_s || (spStart + 5);
+        if (spEnd < startTime || spStart > endTime) return;
+
+        const x1 = timeToX(spStart);
+        const x2 = timeToX(spEnd);
+        const y = laneTop;
+        const h = NUM_LANES * LANE_HEIGHT;
+
+        ctx.fillStyle = 'rgba(52, 152, 219, 0.08)';
+        ctx.fillRect(x1, y, x2 - x1, h);
+
+        ctx.strokeStyle = 'rgba(52, 152, 219, 0.3)';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 4]);
+        ctx.strokeRect(x1, y, x2 - x1, h);
+        ctx.setLineDash([]);
+
+        // SP label
+        ctx.fillStyle = 'rgba(52, 152, 219, 0.5)';
+        ctx.font = 'bold 10px sans-serif';
+        ctx.fillText('⭐ SP', x1 + 4, y + 12);
+    });
+}
+
+function drawSections(ctx, sections, laneTop, pps, startTime, endTime, H) {
+    sections.forEach(sec => {
+        if (sec.time_s < startTime - 2 || sec.time_s > endTime + 2) return;
+        const x = timeToX(sec.time_s);
+
+        // Vertical line
+        ctx.strokeStyle = 'rgba(155, 89, 182, 0.5)';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([6, 3]);
+        ctx.beginPath();
+        ctx.moveTo(x, laneTop);
+        ctx.lineTo(x, laneTop + NUM_LANES * LANE_HEIGHT);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Label
+        ctx.save();
+        ctx.fillStyle = 'rgba(155, 89, 182, 0.8)';
+        ctx.font = 'bold 11px sans-serif';
+        ctx.translate(x + 3, laneTop + 14);
+        ctx.fillText(sec.value || '', 0, 0);
+        ctx.restore();
+    });
+}
+
+function drawNotes(ctx, notes, laneTop, pps, startTime, endTime) {
+    const margin = 2 / pps; // small margin in seconds
+
+    notes.forEach(note => {
+        const t = note.time_s;
+        const dur = note.duration || 0;
+        const endT = dur > 0 ? tickToTimeApprox(note.tick + dur,
+            STATE.chartData.tempo_markers || [{tick: 0, bpm: 120}],
+            (STATE.chartData.song || {}).resolution || 192) : t;
+
+        if (endT < startTime - margin || t > endTime + margin) return;
+
+        const lane = note.lane;
+        if (lane < 0 || lane > 4) return;
+
+        const x = timeToX(t);
+        const y = laneTop + lane * LANE_HEIGHT + LANE_HEIGHT / 2;
+        const color = LANE_COLORS[lane] || '#fff';
+        const glow = LANE_GLOW[lane] || 'rgba(255,255,255,0.3)';
+
+        // Sustain tail
+        if (dur > 0) {
+            const xEnd = timeToX(endT);
+            ctx.fillStyle = color;
+            ctx.globalAlpha = 0.35;
+            ctx.fillRect(x, y - SUSTAIN_HEIGHT / 2, xEnd - x, SUSTAIN_HEIGHT);
+            ctx.globalAlpha = 1.0;
+        }
+
+        // Note head
+        ctx.beginPath();
+        ctx.arc(x, y, NOTE_RADIUS, 0, Math.PI * 2);
+
+        // Glow
+        const gradient = ctx.createRadialGradient(x, y, NOTE_RADIUS * 0.3, x, y, NOTE_RADIUS * 1.8);
+        gradient.addColorStop(0, color);
+        gradient.addColorStop(0.6, color);
+        gradient.addColorStop(1, 'transparent');
+        ctx.fillStyle = gradient;
+        ctx.fill();
+
+        // Fill
+        ctx.beginPath();
+        ctx.arc(x, y, NOTE_RADIUS - 1, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.fill();
+
+        // Border
+        ctx.beginPath();
+        ctx.arc(x, y, NOTE_RADIUS, 0, Math.PI * 2);
+        ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+
+        // HOPO marker (white dot)
+        if (note.is_hopo) {
+            ctx.beginPath();
+            ctx.arc(x, y, 4, 0, Math.PI * 2);
+            ctx.fillStyle = '#fff';
+            ctx.fill();
+        }
+
+        // TAP marker (T)
+        if (note.is_tap) {
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 9px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('T', x, y + 3);
+            ctx.textAlign = 'left';
+        }
+    });
+}
+
+function drawLyrics(ctx, lyrics, laneTop, pps, startTime, endTime, H) {
+    const lyricY = laneTop + NUM_LANES * LANE_HEIGHT + 14;
+
+    let phraseActive = false;
+    let phraseX = 0;
+    let phraseWords = [];
+
+    lyrics.forEach(evt => {
+        if (evt.time_s < startTime - 5 || evt.time_s > endTime + 5) return;
+
+        const x = timeToX(evt.time_s);
+
+        if (evt.type === 'phrase_start') {
+            phraseActive = true;
+            phraseX = x;
+            phraseWords = [];
+        } else if (evt.type === 'lyric' && phraseActive) {
+            phraseWords.push({ word: evt.value, x: x });
+        } else if (evt.type === 'phrase_end') {
+            // Draw the phrase
+            if (phraseWords.length > 0) {
+                ctx.font = '12px sans-serif';
+                ctx.fillStyle = 'rgba(236, 240, 241, 0.7)';
+                phraseWords.forEach(pw => {
+                    if (pw.x > -100 && pw.x < STATE.canvasWidth + 100) {
+                        ctx.fillText(pw.word, pw.x, lyricY);
+                    }
+                });
+            }
+            phraseActive = false;
+        } else if (evt.type === 'lyric' && !phraseActive) {
+            // Standalone lyric
+            ctx.font = '12px sans-serif';
+            ctx.fillStyle = 'rgba(236, 240, 241, 0.5)';
+            if (x > -100 && x < STATE.canvasWidth + 100) {
+                ctx.fillText(evt.value || '', x, lyricY);
+            }
+        }
+    });
+}
+
+function drawTooltip(ctx, note) {
+    const x = timeToX(note.time_s);
+    const laneTop = HEADER_HEIGHT;
+    const y = laneTop + note.lane * LANE_HEIGHT + LANE_HEIGHT / 2;
+
+    const text = `${LANE_NAMES[note.lane] || 'Lane ' + note.lane} | Tick: ${note.tick} | ${formatTime(note.time_s)}${note.is_hopo ? ' | HOPO' : ''}${note.duration > 0 ? ' | Sustain: ' + note.duration : ''}`;
+
+    ctx.font = '12px Consolas, Monaco, monospace';
+    const metrics = ctx.measureText(text);
+    const tw = metrics.width + 16;
+    const th = 24;
+
+    let tx = x - tw / 2;
+    let ty = y - NOTE_RADIUS - th - 6;
+    if (tx < 4) tx = 4;
+    if (tx + tw > STATE.canvasWidth - 4) tx = STATE.canvasWidth - tw - 4;
+    if (ty < HEADER_HEIGHT) ty = y + NOTE_RADIUS + 6;
+
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+    ctx.beginPath();
+    ctx.roundRect(tx, ty, tw, th, 4);
+    ctx.fill();
+
+    ctx.strokeStyle = LANE_COLORS[note.lane] || '#fff';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(tx, ty, tw, th, 4);
+    ctx.stroke();
+
+    ctx.fillStyle = '#ecf0f1';
+    ctx.textAlign = 'left';
+    ctx.fillText(text, tx + 8, ty + 16);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Scrollbar
+// ═══════════════════════════════════════════════════════════════════════════
+function updateScrollbar() {
+    if (!STATE.chartData) return;
+
+    const pps = STATE.pixelsPerSecond * STATE.zoom;
+    const duration = STATE.chartData.duration_s || 30;
+    const totalWidth = duration * pps;
+    const viewWidth = STATE.canvasWidth;
+
+    const thumb = document.getElementById('scrollbarThumb');
+    const track = document.getElementById('scrollbarTrack');
+    const trackWidth = track.clientWidth;
+
+    const thumbWidth = Math.max(30, (viewWidth / totalWidth) * trackWidth);
+    const thumbLeft = (STATE.scrollX / totalWidth) * trackWidth;
+
+    thumb.style.width = thumbWidth + 'px';
+    thumb.style.left = Math.min(thumbLeft, trackWidth - thumbWidth) + 'px';
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Zoom
+// ═══════════════════════════════════════════════════════════════════════════
+function zoomIn() {
+    STATE.zoom = Math.min(10, STATE.zoom * 1.3);
+    document.getElementById('zoomLevel').textContent = Math.round(STATE.zoom * 100) + '%';
+    redrawChart();
+}
+
+function zoomOut() {
+    STATE.zoom = Math.max(0.1, STATE.zoom / 1.3);
+    document.getElementById('zoomLevel').textContent = Math.round(STATE.zoom * 100) + '%';
+    redrawChart();
+}
+
+function zoomReset() {
+    STATE.zoom = 1.0;
+    STATE.scrollX = 0;
+    document.getElementById('zoomLevel').textContent = '100%';
+    redrawChart();
+}
+
+function scrollToTime(timeS) {
+    const pps = STATE.pixelsPerSecond * STATE.zoom;
+    STATE.scrollX = Math.max(0, timeS * pps - STATE.canvasWidth / 4);
+    redrawChart();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Position Bar
+// ═══════════════════════════════════════════════════════════════════════════
+function updatePositionBar(viewStartTime) {
+    const data = STATE.chartData;
+    if (!data) return;
+
+    const mouseTime = xToTime(STATE.mouseX);
+    document.getElementById('positionTime').textContent = formatTimePrecise(Math.max(0, mouseTime));
+
+    // Approximate tick
+    const markers = data.tempo_markers || [];
+    const resolution = (data.song || {}).resolution || 192;
+    if (markers.length > 0) {
+        let tick = 0;
+        let prevTime = 0;
+        let prevBPM = markers[0].bpm;
+        for (let i = 1; i < markers.length; i++) {
+            const mTime = tickToTimeApprox(markers[i].tick, markers, resolution);
+            if (mTime > mouseTime) break;
+            tick = markers[i].tick;
+            prevTime = mTime;
+            prevBPM = markers[i].bpm;
+        }
+        const remaining = mouseTime - prevTime;
+        tick += Math.round(remaining / (60.0 / prevBPM) * resolution);
+        document.getElementById('positionTick').textContent = `Tick: ${Math.max(0, tick)}`;
+        document.getElementById('positionBPM').textContent = `BPM: ${prevBPM}`;
+    }
+
+    // Current section
+    const sections = data.sections || [];
+    let currentSection = '—';
+    for (let i = sections.length - 1; i >= 0; i--) {
+        if (sections[i].time_s <= mouseTime) {
+            currentSection = sections[i].value;
+            break;
+        }
+    }
+    document.getElementById('positionSection').textContent = `Section: ${currentSection}`;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Lyrics Panel
+// ═══════════════════════════════════════════════════════════════════════════
+function buildLyricsPanel(data) {
+    const panel = document.getElementById('lyricsPanel');
+    const content = document.getElementById('lyricsContent');
+
+    const lyrics = data.lyrics || [];
+    if (!data.has_lyrics || lyrics.length === 0) {
+        panel.style.display = 'none';
+        return;
+    }
+
+    panel.style.display = 'block';
+    content.innerHTML = '';
+
+    // Group lyrics into phrases
+    let currentPhrase = [];
+    let phrases = [];
+    let sections = data.sections || [];
+    let sectionIdx = 0;
+
+    lyrics.forEach(evt => {
+        // Check if we need a section header
+        while (sectionIdx < sections.length && sections[sectionIdx].time_s <= evt.time_s) {
+            if (currentPhrase.length > 0) {
+                phrases.push({ words: [...currentPhrase], section: null });
+                currentPhrase = [];
+            }
+            phrases.push({ words: [], section: sections[sectionIdx].value });
+            sectionIdx++;
+        }
+
+        if (evt.type === 'phrase_start') {
+            currentPhrase = [];
+        } else if (evt.type === 'lyric') {
+            currentPhrase.push({ word: evt.value, time: evt.time_s });
+        } else if (evt.type === 'phrase_end') {
+            if (currentPhrase.length > 0) {
+                phrases.push({ words: [...currentPhrase], section: null });
+                currentPhrase = [];
+            }
+        }
+    });
+    if (currentPhrase.length > 0) {
+        phrases.push({ words: currentPhrase, section: null });
+    }
+
+    phrases.forEach(p => {
+        if (p.section) {
+            const label = document.createElement('span');
+            label.className = 'lyric-section-label';
+            label.textContent = `[${p.section}]`;
+            content.appendChild(label);
+        }
+        if (p.words.length > 0) {
+            const line = document.createElement('span');
+            line.className = 'lyric-line';
+            // Handle hyphenated syllables
+            let text = '';
+            p.words.forEach(w => {
+                if (w.word.endsWith('-')) {
+                    text += w.word.slice(0, -1);
+                } else if (text.length > 0 && !text.endsWith(' ')) {
+                    text += ' ' + w.word;
+                } else {
+                    text += w.word;
+                }
+            });
+            line.textContent = text;
+            line.title = formatTime(p.words[0].time);
+            line.onclick = () => scrollToTime(p.words[0].time);
+            content.appendChild(line);
+        }
+    });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Stats Panel
+// ═══════════════════════════════════════════════════════════════════════════
+function buildStatsPanel(data) {
+    const grid = document.getElementById('statsGrid');
+    grid.innerHTML = '';
+
+    const diff = data.difficulty || {};
+    const available = data.available_difficulties || {};
+    const markers = data.tempo_markers || [];
+    const sections = data.sections || [];
+    const lyrics = (data.lyrics || []).filter(l => l.type === 'lyric');
+
+    const stats = [
+        { value: formatTime(data.duration_s || 0), label: 'Duration' },
+        { value: markers.length > 0 ? markers[0].bpm : '—', label: 'Primary BPM' },
+        { value: markers.length, label: 'Tempo Changes' },
+        { value: sections.length, label: 'Sections' },
+        { value: diff.total_notes || 0, label: `${(diff.name || 'Expert')} Notes` },
+        { value: (diff.star_power || []).length, label: 'Star Power' },
+        { value: lyrics.length, label: 'Lyric Words' },
+        { value: Object.keys(available).length, label: 'Difficulties' },
+    ];
+
+    // Per-difficulty note counts
+    for (const [dName, dInfo] of Object.entries(available)) {
+        stats.push({
+            value: dInfo.note_count || 0,
+            label: dName.charAt(0).toUpperCase() + dName.slice(1) + ' Notes',
+        });
+    }
+
+    stats.forEach(s => {
+        const card = document.createElement('div');
+        card.className = 'stat-card';
+        card.innerHTML = `<div class="stat-card-value">${s.value}</div><div class="stat-card-label">${s.label}</div>`;
+        grid.appendChild(card);
+    });
+
+    // Lane legend
+    const legend = document.createElement('div');
+    legend.className = 'lane-legend';
+    LANE_NAMES.forEach((name, i) => {
+        legend.innerHTML += `<span class="lane-swatch"><span class="lane-swatch-dot" style="background:${LANE_COLORS[i]}"></span>${name}</span>`;
+    });
+    grid.parentElement.appendChild(legend);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Event Handlers
+// ═══════════════════════════════════════════════════════════════════════════
+function setupEventHandlers() {
+    const canvas = document.getElementById('chartCanvas');
+
+    // Mouse move — hover tooltip + position tracking
+    canvas.addEventListener('mousemove', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        STATE.mouseX = e.clientX - rect.left;
+        STATE.mouseY = e.clientY - rect.top;
+
+        // Check for hovered note
+        STATE.hoveredNote = findNoteAt(STATE.mouseX, STATE.mouseY);
+
+        if (STATE.isDragging) {
+            const dx = e.clientX - STATE.dragStartX;
+            STATE.scrollX = STATE.dragScrollStart - dx;
+            redrawChart();
+        } else {
+            redrawChart();
+        }
+    });
+
+    // Mouse down — start drag
+    canvas.addEventListener('mousedown', (e) => {
+        STATE.isDragging = true;
+        STATE.dragStartX = e.clientX;
+        STATE.dragScrollStart = STATE.scrollX;
+        canvas.style.cursor = 'grabbing';
+    });
+
+    // Mouse up — stop drag
+    window.addEventListener('mouseup', () => {
+        if (STATE.isDragging) {
+            STATE.isDragging = false;
+            document.getElementById('chartCanvas').style.cursor = 'crosshair';
+        }
+    });
+
+    // Mouse wheel — zoom or scroll
+    canvas.addEventListener('wheel', (e) => {
+        e.preventDefault();
+
+        if (e.ctrlKey || e.metaKey) {
+            // Zoom
+            const zoomFactor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
+            const mouseTime = xToTime(STATE.mouseX);
+            STATE.zoom = Math.max(0.1, Math.min(10, STATE.zoom * zoomFactor));
+            // Keep mouse position anchored
+            const pps = STATE.pixelsPerSecond * STATE.zoom;
+            STATE.scrollX = mouseTime * pps - STATE.mouseX;
+            document.getElementById('zoomLevel').textContent = Math.round(STATE.zoom * 100) + '%';
+        } else {
+            // Horizontal scroll
+            STATE.scrollX += e.deltaY * 2;
+        }
+
+        redrawChart();
+    }, { passive: false });
+
+    // Scrollbar drag
+    const thumb = document.getElementById('scrollbarThumb');
+    const track = document.getElementById('scrollbarTrack');
+    let scrollbarDragging = false;
+    let scrollbarStartX = 0;
+    let scrollbarStartLeft = 0;
+
+    thumb.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        scrollbarDragging = true;
+        scrollbarStartX = e.clientX;
+        scrollbarStartLeft = parseFloat(thumb.style.left) || 0;
+        thumb.style.cursor = 'grabbing';
+    });
+
+    window.addEventListener('mousemove', (e) => {
+        if (!scrollbarDragging || !STATE.chartData) return;
+        const dx = e.clientX - scrollbarStartX;
+        const trackWidth = track.clientWidth;
+        const pps = STATE.pixelsPerSecond * STATE.zoom;
+        const totalWidth = (STATE.chartData.duration_s || 30) * pps;
+
+        const newLeft = scrollbarStartLeft + dx;
+        STATE.scrollX = (newLeft / trackWidth) * totalWidth;
+        redrawChart();
+    });
+
+    window.addEventListener('mouseup', () => {
+        if (scrollbarDragging) {
+            scrollbarDragging = false;
+            thumb.style.cursor = 'grab';
+        }
+    });
+
+    // Click on scrollbar track to jump
+    track.addEventListener('click', (e) => {
+        if (!STATE.chartData) return;
+        const rect = track.getBoundingClientRect();
+        const clickX = e.clientX - rect.left;
+        const trackWidth = track.clientWidth;
+        const pps = STATE.pixelsPerSecond * STATE.zoom;
+        const totalWidth = (STATE.chartData.duration_s || 30) * pps;
+
+        STATE.scrollX = (clickX / trackWidth) * totalWidth - STATE.canvasWidth / 2;
+        redrawChart();
+    });
+
+    // Keyboard navigation
+    document.addEventListener('keydown', (e) => {
+        if (!STATE.chartData) return;
+        if (document.activeElement && document.activeElement.tagName === 'INPUT') return;
+
+        const step = STATE.canvasWidth * 0.3;
+        switch (e.key) {
+            case 'ArrowRight':
+                STATE.scrollX += step;
+                redrawChart();
+                e.preventDefault();
+                break;
+            case 'ArrowLeft':
+                STATE.scrollX = Math.max(0, STATE.scrollX - step);
+                redrawChart();
+                e.preventDefault();
+                break;
+            case 'Home':
+                STATE.scrollX = 0;
+                redrawChart();
+                e.preventDefault();
+                break;
+            case 'End':
+                const pps = STATE.pixelsPerSecond * STATE.zoom;
+                STATE.scrollX = (STATE.chartData.duration_s || 30) * pps - STATE.canvasWidth;
+                redrawChart();
+                e.preventDefault();
+                break;
+            case '+':
+            case '=':
+                zoomIn();
+                e.preventDefault();
+                break;
+            case '-':
+                zoomOut();
+                e.preventDefault();
+                break;
+            case '0':
+                zoomReset();
+                e.preventDefault();
+                break;
+        }
+    });
+
+    // Window resize
+    window.addEventListener('resize', () => {
+        resizeCanvas();
+        redrawChart();
+    });
+}
+
+function findNoteAt(mx, my) {
+    const data = STATE.chartData;
+    if (!data || !data.difficulty || !data.difficulty.notes) return null;
+
+    const laneTop = HEADER_HEIGHT;
+    const notes = data.difficulty.notes;
+
+    for (let i = notes.length - 1; i >= 0; i--) {
+        const note = notes[i];
+        if (note.lane < 0 || note.lane > 4) continue;
+
+        const nx = timeToX(note.time_s);
+        const ny = laneTop + note.lane * LANE_HEIGHT + LANE_HEIGHT / 2;
+
+        const dx = mx - nx;
+        const dy = my - ny;
+        if (dx * dx + dy * dy <= (NOTE_RADIUS + 4) * (NOTE_RADIUS + 4)) {
+            return note;
+        }
+    }
+    return null;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Utilities
+// ═══════════════════════════════════════════════════════════════════════════
+function formatTime(s) {
+    if (s == null || isNaN(s)) return '—';
+    const m = Math.floor(s / 60);
+    const sec = Math.floor(s % 60);
+    return `${m}:${sec.toString().padStart(2, '0')}`;
+}
+
+function formatTimeShort(s) {
+    if (s < 0) s = 0;
+    const m = Math.floor(s / 60);
+    const sec = Math.floor(s % 60);
+    return `${m}:${sec.toString().padStart(2, '0')}`;
+}
+
+function formatTimePrecise(s) {
+    if (s == null || isNaN(s)) return '0:00.000';
+    const m = Math.floor(s / 60);
+    const sec = (s % 60).toFixed(3);
+    return `${m}:${sec.padStart(6, '0')}`;
+}
+
+function showLoading(show) {
+    document.getElementById('loadingIndicator').style.display = show ? 'block' : 'none';
+}
+
+function showError(msg) {
+    const el = document.getElementById('errorDisplay');
+    el.textContent = '❌ ' + msg;
+    el.style.display = 'block';
+}
+
+function hideError() {
+    document.getElementById('errorDisplay').style.display = 'none';
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Initialisation
+// ═══════════════════════════════════════════════════════════════════════════
+document.addEventListener('DOMContentLoaded', () => {
+    setupEventHandlers();
+
+    {% if song_id %}
+    // Auto-load if song_id is provided
+    loadFromLibrary();
+    {% endif %}
+});
+</script>
+{% endblock %}

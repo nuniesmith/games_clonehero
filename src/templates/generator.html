@@ -1,107 +1,46 @@
 {% extends 'base.html' %} {% block title %}Song Generator - Clone Hero Manager{%
 endblock %} {% block content %}
 <div class="container">
-    <h1>🎵 Song Generator</h1>
-    <p>
-        Upload an audio file and generate a Clone Hero chart with auto-detected
-        tempo, beats, and note patterns. Generated songs are uploaded directly
-        to Nextcloud.
+    <h1>🎸 Song Generator</h1>
+    <p class="subtitle">
+        Drop an audio file to generate a Clone Hero chart. Metadata is
+        automatically detected from the filename and looked up online.
     </p>
 
     {% if not webdav_configured %}
     <div class="alert alert-warning">
-        ⚠️ <strong>Nextcloud not configured.</strong> Song generation requires a
-        configured Nextcloud connection because generated charts are uploaded to
-        Nextcloud. Set <code>NEXTCLOUD_URL</code>,
-        <code>NEXTCLOUD_USERNAME</code>, and <code>NEXTCLOUD_PASSWORD</code> in
-        your <code>.env</code> file.
+        ⚠️ <strong>Nextcloud not configured.</strong> Generated charts need
+        Nextcloud to be stored. Configure your <code>.env</code> file.
     </div>
     {% endif %}
 
     <!-- Generator Form -->
-    <div class="upload-section">
-        <h2>🎸 Generate a Chart</h2>
-
+    <div class="gen-card">
         <form id="generatorForm" enctype="multipart/form-data">
-            <div class="form-row">
-                <div class="form-group">
-                    <label for="songName">Song Name</label>
-                    <input
-                        type="text"
-                        id="songName"
-                        name="song_name"
-                        placeholder="Leave blank to use filename"
-                    />
-                </div>
-                <div class="form-group">
-                    <label for="artistName">Artist</label>
-                    <input
-                        type="text"
-                        id="artistName"
-                        name="artist"
-                        placeholder="Leave blank for 'Unknown Artist'"
-                    />
-                </div>
-            </div>
-
-            <div class="form-row">
-                <div class="form-group">
-                    <label for="difficulty">Difficulty</label>
-                    <select id="difficulty" name="difficulty">
-                        <option value="easy">🟢 Easy</option>
-                        <option value="medium">🟡 Medium</option>
-                        <option value="hard">🟠 Hard</option>
-                        <option value="expert" selected>🔴 Expert</option>
-                    </select>
-                </div>
-            </div>
-
-            <!-- Extra Generation Options -->
-            <div class="form-row">
-                <div class="form-group">
-                    <label>Extra Features</label>
-                    <div class="checkbox-group">
-                        <label class="checkbox-label" for="enableLyrics">
-                            <input
-                                type="checkbox"
-                                id="enableLyrics"
-                                name="enable_lyrics"
-                                value="true"
-                                checked
-                            />
-                            <span class="checkbox-icon">🎤</span> Generate
-                            Lyrics
-                            <small class="checkbox-hint"
-                                >Procedural lyrics timed to beats, displayed
-                                in-game</small
-                            >
-                        </label>
-                        <label class="checkbox-label" for="enableAlbumArt">
-                            <input
-                                type="checkbox"
-                                id="enableAlbumArt"
-                                name="enable_album_art"
-                                value="true"
-                                checked
-                            />
-                            <span class="checkbox-icon">🎨</span> Generate Album
-                            Art
-                            <small class="checkbox-hint"
-                                >Procedural cover art based on audio features
-                                &amp; genre</small
-                            >
-                        </label>
-                    </div>
-                </div>
-            </div>
-
             <!-- Drop Zone -->
             <div class="drop-zone" id="dropZone">
                 <div class="drop-zone-content" id="dropZoneContent">
-                    <div class="drop-zone-icon">🎶</div>
-                    <p class="drop-zone-text">Drag & drop an audio file here</p>
+                    <div class="drop-zone-icon">
+                        <svg
+                            width="48"
+                            height="48"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                        >
+                            <path d="M9 18V5l12-2v13" />
+                            <circle cx="6" cy="18" r="3" />
+                            <circle cx="18" cy="16" r="3" />
+                        </svg>
+                    </div>
+                    <p class="drop-zone-text">
+                        Drag &amp; drop an audio file here
+                    </p>
                     <p class="drop-zone-hint">
-                        or click to browse — MP3, WAV, OGG, FLAC, OPUS
+                        MP3 &bull; OGG &bull; FLAC &bull; WAV &bull; OPUS
                     </p>
                     <input
                         type="file"
@@ -117,15 +56,15 @@ endblock %} {% block content %}
                     id="filePreview"
                     style="display: none"
                 >
-                    <div class="preview-info">
-                        <span class="preview-icon" id="previewIcon">🎵</span>
+                    <div class="preview-card">
+                        <div class="preview-icon" id="previewIcon">🎵</div>
                         <div class="preview-details">
                             <span class="preview-name" id="previewName"></span>
                             <span class="preview-size" id="previewSize"></span>
                         </div>
                         <button
                             type="button"
-                            class="btn btn-danger btn-sm"
+                            class="preview-clear"
                             id="clearFileBtn"
                             title="Remove file"
                         >
@@ -135,258 +74,210 @@ endblock %} {% block content %}
                 </div>
             </div>
 
-            <div
-                id="generatorStatus"
-                class="status-message"
-                style="display: none"
-            ></div>
+            <!-- Metadata Fields (auto-populated) -->
+            <div class="meta-section" id="metaSection" style="display: none">
+                <div class="meta-header">
+                    <h3>📋 Song Details</h3>
+                    <div
+                        class="lookup-badge"
+                        id="lookupBadge"
+                        style="display: none"
+                    >
+                        <span class="lookup-dot"></span>
+                        <span id="lookupBadgeText">Looking up…</span>
+                    </div>
+                </div>
+
+                <div class="meta-grid">
+                    <div class="meta-field">
+                        <label for="songName">Song Name</label>
+                        <input
+                            type="text"
+                            id="songName"
+                            name="song_name"
+                            placeholder="Song title"
+                        />
+                    </div>
+                    <div class="meta-field">
+                        <label for="artistName">Artist</label>
+                        <input
+                            type="text"
+                            id="artistName"
+                            name="artist"
+                            placeholder="Artist name"
+                        />
+                    </div>
+                    <div class="meta-field">
+                        <label for="albumName">Album</label>
+                        <input
+                            type="text"
+                            id="albumName"
+                            name="album"
+                            placeholder="Auto-detected"
+                            readonly
+                        />
+                        <span class="field-hint" id="albumHint"></span>
+                    </div>
+                    <div class="meta-field meta-field-sm">
+                        <label for="yearField">Year</label>
+                        <input
+                            type="text"
+                            id="yearField"
+                            name="year"
+                            placeholder="—"
+                            readonly
+                        />
+                    </div>
+                    <div class="meta-field meta-field-sm">
+                        <label for="genreField">Genre</label>
+                        <input
+                            type="text"
+                            id="genreField"
+                            name="genre"
+                            placeholder="—"
+                            readonly
+                        />
+                    </div>
+                </div>
+
+                <!-- Cover Art Preview -->
+                <div
+                    class="cover-art-row"
+                    id="coverArtRow"
+                    style="display: none"
+                >
+                    <div class="cover-art-thumb" id="coverArtThumb"></div>
+                    <div class="cover-art-info">
+                        <span class="cover-art-label"
+                            >🎨 Album art found online</span
+                        >
+                        <span
+                            class="cover-art-detail"
+                            id="coverArtDetail"
+                        ></span>
+                    </div>
+                </div>
+
+                <!-- Options Row -->
+                <div class="options-row">
+                    <label class="option-toggle" for="enableLyrics">
+                        <input
+                            type="checkbox"
+                            id="enableLyrics"
+                            name="enable_lyrics"
+                            value="true"
+                            checked
+                        />
+                        <span class="toggle-track"
+                            ><span class="toggle-thumb"></span
+                        ></span>
+                        <span class="toggle-label">🎤 Lyrics</span>
+                    </label>
+                    <label class="option-toggle" for="enableAlbumArt">
+                        <input
+                            type="checkbox"
+                            id="enableAlbumArt"
+                            name="enable_album_art"
+                            value="true"
+                            checked
+                        />
+                        <span class="toggle-track"
+                            ><span class="toggle-thumb"></span
+                        ></span>
+                        <span class="toggle-label">🎨 Album Art</span>
+                    </label>
+                    <div class="option-select">
+                        <label for="difficulty">Difficulty</label>
+                        <select id="difficulty" name="difficulty">
+                            <option value="easy">🟢 Easy</option>
+                            <option value="medium">🟡 Medium</option>
+                            <option value="hard">🟠 Hard</option>
+                            <option value="expert" selected>🔴 Expert</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Generate Button -->
+                <div class="gen-actions">
+                    <button type="submit" class="btn-generate" id="generateBtn">
+                        <span class="btn-icon">🎸</span>
+                        <span class="btn-text">Generate Chart</span>
+                    </button>
+                </div>
+            </div>
 
             <!-- Progress -->
             <div
-                id="progressContainer"
-                class="progress-container"
+                id="progressSection"
+                class="progress-section"
                 style="display: none"
             >
-                <div class="progress-bar">
-                    <div
-                        class="progress-fill indeterminate"
-                        id="progressFill"
-                    ></div>
+                <div class="progress-ring-container">
+                    <div class="progress-ring" id="progressRing">
+                        <svg viewBox="0 0 80 80">
+                            <circle class="ring-bg" cx="40" cy="40" r="34" />
+                            <circle
+                                class="ring-fill"
+                                cx="40"
+                                cy="40"
+                                r="34"
+                                id="ringFill"
+                            />
+                        </svg>
+                        <span class="ring-icon" id="ringIcon">🎵</span>
+                    </div>
                 </div>
-                <span class="progress-text" id="progressText">⏳</span>
-            </div>
-
-            <div class="upload-actions">
-                <button type="submit" class="btn btn-primary" id="generateBtn">
-                    🎸 Generate Chart
-                </button>
-                <button type="reset" class="btn btn-secondary" id="resetBtn">
-                    🔄 Reset
-                </button>
+                <div class="progress-info">
+                    <span class="progress-title" id="progressTitle"
+                        >Analysing audio…</span
+                    >
+                    <span class="progress-detail" id="progressDetail"
+                        >Detecting tempo, beats, and rhythm patterns</span
+                    >
+                </div>
             </div>
         </form>
     </div>
 
     <!-- Result Section -->
-    <div id="resultSection" class="result-section" style="display: none">
-        <h3 id="resultTitle">✅ Chart Generated</h3>
+    <div id="resultSection" class="result-card" style="display: none">
+        <div class="result-header" id="resultHeader">
+            <span class="result-icon" id="resultIcon">✅</span>
+            <h3 id="resultTitle">Chart Generated!</h3>
+        </div>
         <div id="resultContent"></div>
-        <div class="result-actions">
-            <a href="/songs" class="btn btn-primary">📁 View Song Library</a>
-            <button
-                type="button"
-                class="btn btn-secondary"
-                onclick="resetGenerator()"
-            >
+        <div class="result-actions" id="resultActions">
+            <button class="btn btn-primary btn-sm" onclick="resetGenerator()">
                 🎵 Generate Another
             </button>
         </div>
     </div>
-
-    <!-- How It Works -->
-    <div class="info-section">
-        <h2>📖 How It Works</h2>
-
-        <h3>Step-by-Step Process</h3>
-        <ol>
-            <li>
-                <strong>Upload an Audio File</strong>
-                <ul>
-                    <li>Supported formats: MP3, WAV, OGG, FLAC, OPUS</li>
-                    <li>
-                        The file is analysed for tempo, beats, onsets, and
-                        rhythm patterns using <code>librosa</code>.
-                    </li>
-                </ul>
-            </li>
-            <li>
-                <strong>Automatic Chart Generation</strong>
-                <ul>
-                    <li>
-                        BPM (beats per minute) is detected and a stable sync
-                        track is generated.
-                    </li>
-                    <li>
-                        Note positions are mapped from onset events to create
-                        playable patterns.
-                    </li>
-                    <li>
-                        Section markers (Intro, Verse, Chorus, Bridge, etc.) are
-                        estimated via spectral analysis.
-                    </li>
-                    <li>
-                        HOPOs, chords, star power sections, and sustain notes
-                        are placed automatically.
-                    </li>
-                </ul>
-            </li>
-            <li>
-                <strong>🎤 Lyrics Generation <em>(optional)</em></strong>
-                <ul>
-                    <li>Procedural lyrics are generated and timed to beats.</li>
-                    <li>
-                        Themed word banks are selected based on genre (rock,
-                        pop, metal, electronic, chill, etc.).
-                    </li>
-                    <li>
-                        Chorus phrases repeat for a natural song feel; verses
-                        vary.
-                    </li>
-                    <li>Lyrics appear in Clone Hero's in-game lyric track.</li>
-                </ul>
-            </li>
-            <li>
-                <strong>🎨 Album Art Generation <em>(optional)</em></strong>
-                <ul>
-                    <li>
-                        A unique 512×512 <code>album.png</code> cover is
-                        generated procedurally.
-                    </li>
-                    <li>
-                        Colour palette is derived from tempo, energy, and genre.
-                    </li>
-                    <li>
-                        Art style is chosen per genre (geometric, waveform,
-                        vinyl, nebula, circuit).
-                    </li>
-                    <li>Song title and artist are rendered on the cover.</li>
-                </ul>
-            </li>
-            <li>
-                <strong>Song Folder Created</strong>
-                <ul>
-                    <li>
-                        A <code>notes.chart</code> file is generated with all
-                        four difficulty levels.
-                    </li>
-                    <li>
-                        A <code>song.ini</code> file is created with metadata
-                        you provide.
-                    </li>
-                    <li>The audio file is copied into the song folder.</li>
-                    <li>
-                        Everything is uploaded to Nextcloud and registered in
-                        your library.
-                    </li>
-                </ul>
-            </li>
-        </ol>
-
-        <h3>🔍 Features</h3>
-        <ul>
-            <li>
-                ✅ Automatic tempo detection and stable beat tracking
-                (milli-BPM)
-            </li>
-            <li>✅ Onset-based note placement for natural-feeling charts</li>
-            <li>
-                ✅ All 4 difficulty levels (Easy, Medium, Hard, Expert) with
-                tailored profiles
-            </li>
-            <li>✅ Structural section markers via spectral analysis</li>
-            <li>✅ HOPOs on close consecutive different-lane notes</li>
-            <li>✅ Chords on strong onsets (Hard/Expert)</li>
-            <li>✅ Star power sections distributed throughout the song</li>
-            <li>✅ Sustain notes on strong onsets with room</li>
-            <li>
-                ✅ 🎤 Procedural lyrics timed to beats with genre-themed word
-                banks
-            </li>
-            <li>✅ 🎨 Procedural album art derived from audio features</li>
-            <li>
-                ✅ Variable tempo support (only genuine tempo shifts, not
-                jitter)
-            </li>
-            <li>✅ UTF-8 BOM encoding for Clone Hero compatibility</li>
-        </ul>
-
-        <div class="alert alert-info">
-            💡 <strong>Tip:</strong> For best results, use high-quality audio
-            files. The generator works best with songs that have a clear
-            rhythmic structure. You can always edit the generated chart metadata
-            afterwards using the <a href="/songs">Song Library</a> editor.
-        </div>
-
-        <div class="alert alert-warning">
-            ⚠️ <strong>Note:</strong> Chart generation can take 15–60 seconds
-            depending on the length and complexity of the audio file. Please be
-            patient during processing.
-        </div>
-    </div>
 </div>
-{% endblock %} {% block extra_css %}
+
 <style>
-    /* Checkbox group for extra options */
-    .checkbox-group {
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-    }
-
-    .checkbox-label {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        padding: 10px 14px;
-        background: #fff;
-        border: 2px solid #e0e0e0;
-        border-radius: 8px;
-        cursor: pointer;
-        transition: all 0.2s ease;
-        flex-wrap: wrap;
-        font-weight: 500;
-        color: #2c3e50;
-    }
-
-    .checkbox-label:hover {
-        border-color: #3498db;
-        background: #f0f7ff;
-    }
-
-    .checkbox-label input[type="checkbox"] {
-        width: 18px;
-        height: 18px;
-        accent-color: #3498db;
-        cursor: pointer;
-        flex-shrink: 0;
-    }
-
-    .checkbox-label input[type="checkbox"]:checked + .checkbox-icon {
-        transform: scale(1.15);
-    }
-
-    .checkbox-icon {
-        font-size: 1.2em;
-        transition: transform 0.2s ease;
-        flex-shrink: 0;
-    }
-
-    .checkbox-hint {
-        display: block;
-        width: 100%;
-        margin-left: 50px;
-        margin-top: 2px;
-        font-size: 0.82em;
+    .subtitle {
         color: #7f8c8d;
-        font-weight: normal;
+        margin-bottom: 24px;
+        font-size: 1.05em;
     }
 
-    .form-row {
-        display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-        gap: 20px;
-        margin-bottom: 15px;
-    }
-
-    .drop-zone {
-        border: 3px dashed #bdc3c7;
+    /* ── Generator Card ── */
+    .gen-card {
+        background: #f8f9fa;
         border-radius: 12px;
-        padding: 40px 20px;
+        padding: 28px;
+        border: 1px solid #e9ecef;
+    }
+
+    /* ── Drop Zone ── */
+    .drop-zone {
+        border: 2px dashed #ced4da;
+        border-radius: 12px;
+        padding: 40px 24px;
         text-align: center;
         cursor: pointer;
         transition: all 0.3s ease;
-        background: #fafbfc;
-        margin-bottom: 20px;
+        background: white;
         position: relative;
     }
 
@@ -396,42 +287,45 @@ endblock %} {% block content %}
     }
 
     .drop-zone.drag-over {
-        border-color: #2ecc71;
-        background: #f0fff4;
+        border-color: #3498db;
+        background: #e8f4ff;
+        box-shadow: 0 0 0 4px rgba(52, 152, 219, 0.15);
         transform: scale(1.01);
-        box-shadow: 0 0 20px rgba(46, 204, 113, 0.15);
     }
 
     .drop-zone.has-file {
-        border-color: #3498db;
         border-style: solid;
-        background: #f0f7ff;
-        padding: 20px;
+        border-color: #27ae60;
+        background: #f0faf4;
+        padding: 16px 24px;
     }
 
     .drop-zone-icon {
-        font-size: 3em;
-        margin-bottom: 10px;
+        color: #bdc3c7;
+        margin-bottom: 12px;
+        transition: color 0.3s;
+    }
+
+    .drop-zone:hover .drop-zone-icon {
+        color: #3498db;
     }
 
     .drop-zone-text {
-        font-size: 1.2em;
-        font-weight: bold;
-        color: #2c3e50;
-        margin-bottom: 5px;
+        font-size: 1.1em;
+        color: #495057;
+        font-weight: 600;
+        margin-bottom: 6px;
     }
 
     .drop-zone-hint {
-        color: #7f8c8d;
-        font-size: 0.95em;
+        font-size: 0.88em;
+        color: #95a5a6;
+        letter-spacing: 1px;
     }
 
     .drop-zone-input {
         position: absolute;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
+        inset: 0;
         opacity: 0;
         cursor: pointer;
     }
@@ -440,327 +334,947 @@ endblock %} {% block content %}
         display: none;
     }
 
-    .drop-zone-preview {
-        width: 100%;
-    }
-
-    .preview-info {
+    /* ── File Preview ── */
+    .preview-card {
         display: flex;
         align-items: center;
-        gap: 15px;
-        padding: 10px;
-        background: white;
-        border-radius: 8px;
-        border: 1px solid #dee2e6;
+        gap: 14px;
     }
 
     .preview-icon {
         font-size: 2em;
+        flex-shrink: 0;
     }
 
     .preview-details {
         flex: 1;
         text-align: left;
+        min-width: 0;
     }
 
     .preview-name {
         display: block;
-        font-weight: bold;
+        font-weight: 700;
         color: #2c3e50;
         font-size: 1.05em;
-        word-break: break-all;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
     }
 
     .preview-size {
         display: block;
         color: #7f8c8d;
-        font-size: 0.9em;
+        font-size: 0.88em;
         margin-top: 2px;
     }
 
-    .progress-container {
-        margin: 20px 0;
+    .preview-clear {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        border: none;
+        background: rgba(231, 76, 60, 0.1);
+        color: #e74c3c;
+        font-size: 1em;
+        cursor: pointer;
+        flex-shrink: 0;
+        transition: all 0.2s;
         display: flex;
         align-items: center;
-        gap: 12px;
+        justify-content: center;
     }
 
-    .progress-bar {
-        flex: 1;
-        height: 24px;
-        background: #e9ecef;
-        border-radius: 12px;
-        overflow: hidden;
+    .preview-clear:hover {
+        background: #e74c3c;
+        color: white;
     }
 
-    .progress-fill {
-        height: 100%;
-        background: linear-gradient(90deg, #3498db, #2ecc71);
-        border-radius: 12px;
-        transition: width 0.3s ease;
-        width: 0%;
+    /* ── Metadata Section ── */
+    .meta-section {
+        margin-top: 24px;
+        animation: slideDown 0.35s ease-out;
     }
 
-    .progress-fill.indeterminate {
-        width: 100%;
-        animation: indeterminate 1.5s ease-in-out infinite;
-        background: linear-gradient(
-            90deg,
-            #3498db 0%,
-            #9b59b6 50%,
-            #3498db 100%
-        );
-        background-size: 200% 100%;
-    }
-
-    @keyframes indeterminate {
-        0% {
-            background-position: 200% 0;
+    @keyframes slideDown {
+        from {
+            opacity: 0;
+            transform: translateY(-12px);
         }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+
+    .meta-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 16px;
+    }
+
+    .meta-header h3 {
+        margin: 0;
+        font-size: 1.1em;
+        color: #2c3e50;
+    }
+
+    .lookup-badge {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 0.82em;
+        color: #3498db;
+        background: rgba(52, 152, 219, 0.08);
+        padding: 4px 12px;
+        border-radius: 20px;
+    }
+
+    .lookup-badge.found {
+        color: #27ae60;
+        background: rgba(39, 174, 96, 0.08);
+    }
+
+    .lookup-badge.not-found {
+        color: #95a5a6;
+        background: rgba(149, 165, 166, 0.08);
+    }
+
+    .lookup-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: currentColor;
+        animation: pulse 1.2s ease-in-out infinite;
+    }
+
+    .lookup-badge.found .lookup-dot,
+    .lookup-badge.not-found .lookup-dot {
+        animation: none;
+    }
+
+    @keyframes pulse {
+        0%,
         100% {
-            background-position: -200% 0;
+            opacity: 1;
+        }
+        50% {
+            opacity: 0.3;
         }
     }
 
-    .progress-text {
-        font-weight: bold;
-        color: #2c3e50;
-        min-width: 45px;
-        text-align: right;
-    }
-
-    .upload-actions {
-        display: flex;
-        gap: 12px;
-        margin-top: 10px;
-    }
-
-    .result-section {
-        background: #f8f9fa;
-        border: 2px solid #dee2e6;
-        border-radius: 8px;
-        padding: 25px;
-        margin-bottom: 30px;
-    }
-
-    .result-section.success {
-        background: #d4edda;
-        border-color: #c3e6cb;
-    }
-
-    .result-section.error {
-        background: #f8d7da;
-        border-color: #f5c6cb;
-    }
-
-    .result-section h3 {
-        margin-top: 0;
-        margin-bottom: 15px;
-    }
-
-    .result-actions {
-        display: flex;
-        gap: 10px;
-        margin-top: 20px;
-    }
-
-    .result-details {
+    .meta-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-        gap: 12px;
-        margin: 15px 0;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
     }
 
-    .result-detail-item {
-        background: white;
-        border: 1px solid #dee2e6;
-        border-radius: 8px;
-        padding: 14px 16px;
-        text-align: center;
+    .meta-field {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
     }
 
-    .result-detail-value {
-        display: block;
-        font-size: 1.6em;
-        font-weight: bold;
-        color: #2c3e50;
-        margin-bottom: 4px;
-    }
-
-    .result-detail-label {
-        display: block;
-        font-size: 0.85em;
+    .meta-field label {
+        font-size: 0.82em;
+        font-weight: 600;
         color: #7f8c8d;
         text-transform: uppercase;
         letter-spacing: 0.5px;
     }
 
-    .result-file-info {
+    .meta-field input,
+    .meta-field select {
+        padding: 10px 12px;
+        border: 2px solid #e9ecef;
+        border-radius: 8px;
+        font-size: 0.95em;
+        color: #2c3e50;
         background: white;
-        border: 1px solid #dee2e6;
-        border-radius: 6px;
-        padding: 12px 16px;
-        margin-top: 12px;
+        transition: border-color 0.2s;
     }
 
-    .result-file-info p {
-        margin: 6px 0;
+    .meta-field input:focus {
+        outline: none;
+        border-color: #3498db;
+    }
+
+    .meta-field input[readonly] {
+        background: #f8f9fa;
+        color: #7f8c8d;
+        cursor: default;
+    }
+
+    .meta-field input.auto-filled {
+        border-color: #27ae60;
+        background: #f0faf4;
+        color: #2c3e50;
+    }
+
+    .meta-field-sm {
+        grid-column: auto;
+    }
+
+    .field-hint {
+        font-size: 0.78em;
+        color: #95a5a6;
+        min-height: 1em;
+    }
+
+    /* ── Cover Art Preview ── */
+    .cover-art-row {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        margin-top: 14px;
+        padding: 12px 14px;
+        background: rgba(39, 174, 96, 0.06);
+        border: 1px solid rgba(39, 174, 96, 0.15);
+        border-radius: 10px;
+        animation: slideDown 0.3s ease-out;
+    }
+
+    .cover-art-thumb {
+        width: 56px;
+        height: 56px;
+        border-radius: 8px;
+        background: #e9ecef;
+        overflow: hidden;
+        flex-shrink: 0;
+    }
+
+    .cover-art-thumb img {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+    }
+
+    .cover-art-info {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+    }
+
+    .cover-art-label {
+        font-weight: 600;
+        font-size: 0.9em;
+        color: #27ae60;
+    }
+
+    .cover-art-detail {
+        font-size: 0.82em;
+        color: #7f8c8d;
+    }
+
+    /* ── Options Row ── */
+    .options-row {
+        display: flex;
+        align-items: center;
+        gap: 20px;
+        margin-top: 20px;
+        padding-top: 18px;
+        border-top: 1px solid #e9ecef;
+        flex-wrap: wrap;
+    }
+
+    .option-toggle {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        cursor: pointer;
+        font-size: 0.92em;
         color: #495057;
+        user-select: none;
     }
 
-    .result-file-info code {
+    .option-toggle input {
+        display: none;
+    }
+
+    .toggle-track {
+        width: 36px;
+        height: 20px;
+        background: #ced4da;
+        border-radius: 10px;
+        position: relative;
+        transition: background 0.2s;
+    }
+
+    .toggle-thumb {
+        position: absolute;
+        top: 2px;
+        left: 2px;
+        width: 16px;
+        height: 16px;
+        background: white;
+        border-radius: 50%;
+        transition: transform 0.2s;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+    }
+
+    .option-toggle input:checked + .toggle-track {
+        background: #27ae60;
+    }
+
+    .option-toggle input:checked + .toggle-track .toggle-thumb {
+        transform: translateX(16px);
+    }
+
+    .toggle-label {
+        font-weight: 500;
+    }
+
+    .option-select {
+        margin-left: auto;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 0.92em;
+    }
+
+    .option-select label {
+        color: #7f8c8d;
+        font-weight: 600;
+        font-size: 0.85em;
+        text-transform: uppercase;
+    }
+
+    .option-select select {
+        padding: 6px 10px;
+        border: 2px solid #e9ecef;
+        border-radius: 6px;
+        background: white;
+        font-size: 0.95em;
+        color: #2c3e50;
+    }
+
+    /* ── Generate Button ── */
+    .gen-actions {
+        margin-top: 20px;
+    }
+
+    .btn-generate {
+        width: 100%;
+        padding: 16px;
+        border: none;
+        border-radius: 10px;
+        background: linear-gradient(135deg, #3498db 0%, #2980b9 100%);
+        color: white;
+        font-size: 1.1em;
+        font-weight: 700;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        transition: all 0.3s;
+        box-shadow: 0 4px 14px rgba(52, 152, 219, 0.3);
+    }
+
+    .btn-generate:hover:not(:disabled) {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 20px rgba(52, 152, 219, 0.4);
+    }
+
+    .btn-generate:active:not(:disabled) {
+        transform: translateY(0);
+    }
+
+    .btn-generate:disabled {
+        opacity: 0.7;
+        cursor: wait;
+    }
+
+    .btn-generate .btn-icon {
+        font-size: 1.2em;
+    }
+
+    /* ── Progress Section ── */
+    .progress-section {
+        display: flex;
+        align-items: center;
+        gap: 20px;
+        margin-top: 24px;
+        padding: 20px 24px;
+        background: white;
+        border-radius: 10px;
+        border: 1px solid #e9ecef;
+        animation: slideDown 0.3s ease-out;
+    }
+
+    .progress-ring-container {
+        flex-shrink: 0;
+    }
+
+    .progress-ring {
+        width: 64px;
+        height: 64px;
+        position: relative;
+    }
+
+    .progress-ring svg {
+        transform: rotate(-90deg);
+    }
+
+    .ring-bg {
+        fill: none;
+        stroke: #e9ecef;
+        stroke-width: 4;
+    }
+
+    .ring-fill {
+        fill: none;
+        stroke: #3498db;
+        stroke-width: 4;
+        stroke-dasharray: 213.6;
+        stroke-dashoffset: 213.6;
+        stroke-linecap: round;
+        transition: stroke-dashoffset 0.5s ease;
+    }
+
+    .ring-fill.indeterminate {
+        animation: ring-spin 1.4s linear infinite;
+        stroke-dashoffset: 160;
+    }
+
+    @keyframes ring-spin {
+        0% {
+            transform: rotate(0deg);
+        }
+        100% {
+            transform: rotate(360deg);
+        }
+    }
+
+    .ring-icon {
+        position: absolute;
+        inset: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.4em;
+    }
+
+    .progress-info {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .progress-title {
+        font-weight: 700;
+        color: #2c3e50;
+        font-size: 1em;
+    }
+
+    .progress-detail {
+        color: #7f8c8d;
+        font-size: 0.88em;
+    }
+
+    /* ── Result Card ── */
+    .result-card {
+        margin-top: 20px;
+        background: white;
+        border-radius: 12px;
+        padding: 24px;
+        border: 2px solid #27ae60;
+        box-shadow: 0 4px 16px rgba(39, 174, 96, 0.12);
+        animation: slideDown 0.35s ease-out;
+    }
+
+    .result-card.error {
+        border-color: #e74c3c;
+        box-shadow: 0 4px 16px rgba(231, 76, 60, 0.12);
+    }
+
+    .result-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 16px;
+    }
+
+    .result-icon {
+        font-size: 1.6em;
+    }
+
+    .result-header h3 {
+        margin: 0;
+        color: #27ae60;
+        font-size: 1.2em;
+    }
+
+    .result-card.error .result-header h3 {
+        color: #e74c3c;
+    }
+
+    .result-stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+        gap: 12px;
+        margin-bottom: 16px;
+    }
+
+    .stat-box {
+        text-align: center;
+        padding: 12px 8px;
+        background: #f8f9fa;
+        border-radius: 8px;
+    }
+
+    .stat-val {
+        display: block;
+        font-size: 1.4em;
+        font-weight: 700;
+        color: #3498db;
+    }
+
+    .stat-lbl {
+        display: block;
+        font-size: 0.78em;
+        color: #95a5a6;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-top: 2px;
+    }
+
+    .result-info {
+        font-size: 0.92em;
+        color: #495057;
+        line-height: 1.7;
+    }
+
+    .result-info strong {
+        color: #2c3e50;
+    }
+
+    .result-info code {
         background: #e9ecef;
         padding: 2px 6px;
-        border-radius: 3px;
+        border-radius: 4px;
         font-size: 0.9em;
     }
 
+    .result-actions {
+        margin-top: 16px;
+        padding-top: 14px;
+        border-top: 1px solid #e9ecef;
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+
+    /* ── Responsive ── */
     @media (max-width: 768px) {
-        .form-row {
+        .gen-card {
+            padding: 18px;
+        }
+        .meta-grid {
             grid-template-columns: 1fr;
         }
-
-        .drop-zone {
-            padding: 30px 15px;
-        }
-
-        .drop-zone-icon {
-            font-size: 2.5em;
-        }
-
-        .upload-actions,
-        .result-actions {
+        .options-row {
             flex-direction: column;
+            align-items: flex-start;
         }
-
-        .upload-actions .btn,
-        .result-actions .btn {
-            width: 100%;
+        .option-select {
+            margin-left: 0;
+        }
+        .progress-section {
+            flex-direction: column;
             text-align: center;
         }
-
-        .result-details {
+        .result-stats {
             grid-template-columns: repeat(2, 1fr);
         }
     }
 </style>
 {% endblock %} {% block extra_js %}
 <script>
+    // ── DOM refs ──
     const dropZone = document.getElementById("dropZone");
     const fileInput = document.getElementById("fileInput");
     const filePreview = document.getElementById("filePreview");
     const dropZoneContent = document.getElementById("dropZoneContent");
     const clearFileBtn = document.getElementById("clearFileBtn");
+    const metaSection = document.getElementById("metaSection");
     const generatorForm = document.getElementById("generatorForm");
     const generateBtn = document.getElementById("generateBtn");
-    const statusDiv = document.getElementById("generatorStatus");
-    const progressContainer = document.getElementById("progressContainer");
-    const progressFill = document.getElementById("progressFill");
-    const progressText = document.getElementById("progressText");
+    const progressSection = document.getElementById("progressSection");
+    const progressTitle = document.getElementById("progressTitle");
+    const progressDetail = document.getElementById("progressDetail");
+    const ringFill = document.getElementById("ringFill");
+    const ringIcon = document.getElementById("ringIcon");
     const resultSection = document.getElementById("resultSection");
     const resultTitle = document.getElementById("resultTitle");
+    const resultIcon = document.getElementById("resultIcon");
     const resultContent = document.getElementById("resultContent");
+    const lookupBadge = document.getElementById("lookupBadge");
+    const lookupBadgeText = document.getElementById("lookupBadgeText");
 
-    // File size formatter
+    // ── Helpers ──
     function formatFileSize(bytes) {
-        if (bytes === 0) return "0 Bytes";
+        if (bytes === 0) return "0 B";
         const k = 1024;
-        const sizes = ["Bytes", "KB", "MB", "GB"];
+        const sizes = ["B", "KB", "MB", "GB"];
         const i = Math.floor(Math.log(bytes) / Math.log(k));
-        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
     }
 
-    // Format duration
     function formatDuration(seconds) {
         const mins = Math.floor(seconds / 60);
         const secs = Math.round(seconds % 60);
         return `${mins}:${secs.toString().padStart(2, "0")}`;
     }
 
-    // Show file preview
-    function showFilePreview(file) {
-        document.getElementById("previewIcon").textContent = "🎵";
+    // ── Smart Filename Parsing (client-side fallback) ──
+    function parseFilenameLocal(filename) {
+        let stem = filename.replace(/\.[^/.]+$/, ""); // remove extension
+
+        // Common separators: "Artist - Title", "Artist — Title", "Artist – Title"
+        const seps = [" - ", " – ", " — ", " _ "];
+        let artist = "";
+        let title = stem;
+
+        for (const sep of seps) {
+            if (stem.includes(sep)) {
+                const parts = stem.split(sep);
+                if (parts.length >= 2) {
+                    const candidateArtist = parts[0].trim();
+                    const candidateTitle = parts.slice(1).join(sep).trim();
+                    // Skip if "artist" is just a track number
+                    if (/^\d{1,3}$/.test(candidateArtist)) {
+                        title = candidateTitle;
+                    } else {
+                        artist = candidateArtist;
+                        title = candidateTitle;
+                    }
+                    break;
+                }
+            }
+        }
+
+        // Strip track number prefix: "01. Title" or "01 Title"
+        if (!artist) {
+            const m = title.match(/^\d{1,3}\.?\s+(.+)$/);
+            if (m) title = m[1];
+        }
+
+        // Clean: replace _ and isolated - with spaces, collapse whitespace
+        title = cleanName(title);
+        artist = cleanName(artist);
+
+        return { song_name: title, artist: artist };
+    }
+
+    function cleanName(raw) {
+        let text = raw.trim();
+        // Strip common video/audio tags
+        const stripPatterns = [
+            /\(Official\s*(Music\s*)?Video\)/gi,
+            /\(Official\s*Audio\)/gi,
+            /\(Lyric\s*Video\)/gi,
+            /\(Audio\)/gi,
+            /\(Visualizer\)/gi,
+            /\[Official\s*(Music\s*)?Video\]/gi,
+            /\[Official\s*Audio\]/gi,
+            /\[Lyric\s*Video\]/gi,
+            /\[Audio\]/gi,
+            /\[Visualizer\]/gi,
+            /\(feat\.?\s*[^)]+\)/gi,
+            /\[feat\.?\s*[^\]]+\]/gi,
+            /\(ft\.?\s*[^)]+\)/gi,
+            /\d{3,4}\s*kbps/gi,
+            /\(\d{4}\)/g,
+            /\[\d{4}\]/g,
+        ];
+        for (const pat of stripPatterns) {
+            text = text.replace(pat, "");
+        }
+        // Replace _ and isolated dashes with spaces
+        text = text.replace(/_/g, " ");
+        text = text.replace(/\s*-\s+|\s+-\s*/g, " ");
+        // Collapse whitespace
+        text = text.replace(/\s+/g, " ").trim();
+        // Smart title case
+        text = smartTitleCase(text);
+        return text;
+    }
+
+    const lowercaseWords = new Set([
+        "a",
+        "an",
+        "the",
+        "and",
+        "but",
+        "or",
+        "nor",
+        "for",
+        "yet",
+        "so",
+        "in",
+        "on",
+        "at",
+        "to",
+        "by",
+        "of",
+        "up",
+        "as",
+        "is",
+        "if",
+        "it",
+        "vs",
+        "vs.",
+    ]);
+
+    function smartTitleCase(text) {
+        const words = text.split(" ");
+        return words
+            .map((word, i) => {
+                // Preserve all-caps acronyms (2+ chars)
+                if (
+                    word.length >= 2 &&
+                    word === word.toUpperCase() &&
+                    /[A-Z]/.test(word)
+                ) {
+                    return word;
+                }
+                // First/last word always capitalized
+                if (i === 0 || i === words.length - 1) {
+                    return (
+                        word.charAt(0).toUpperCase() +
+                        word.slice(1).toLowerCase()
+                    );
+                }
+                // Articles/prepositions lowercase
+                if (lowercaseWords.has(word.toLowerCase())) {
+                    return word.toLowerCase();
+                }
+                return (
+                    word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
+                );
+            })
+            .join(" ");
+    }
+
+    // ── Debounce ──
+    let lookupTimeout = null;
+
+    // ── File Selection ──
+    function onFileSelected(file) {
+        // Show preview
         document.getElementById("previewName").textContent = file.name;
         document.getElementById("previewSize").textContent = formatFileSize(
             file.size,
         );
-
         dropZoneContent.style.display = "none";
         filePreview.style.display = "block";
         dropZone.classList.add("has-file");
 
-        // Auto-fill song name from filename if empty
-        const songNameInput = document.getElementById("songName");
-        if (!songNameInput.value.trim()) {
-            const nameWithoutExt = file.name.replace(/\.[^/.]+$/, "");
-            songNameInput.value = nameWithoutExt;
+        // Parse filename
+        const parsed = parseFilenameLocal(file.name);
+
+        const songInput = document.getElementById("songName");
+        const artistInput = document.getElementById("artistName");
+
+        songInput.value = parsed.song_name;
+        artistInput.value = parsed.artist;
+
+        // Clear album/year/genre
+        document.getElementById("albumName").value = "";
+        document.getElementById("yearField").value = "";
+        document.getElementById("genreField").value = "";
+        document.getElementById("albumHint").textContent = "";
+        document.getElementById("coverArtRow").style.display = "none";
+
+        // Show meta section
+        metaSection.style.display = "block";
+
+        // Also call the backend parser for better results, then lookup
+        callBackendParse(file.name).then(() => {
+            triggerMetadataLookup();
+        });
+
+        // Scroll meta into view
+        setTimeout(() => {
+            metaSection.scrollIntoView({
+                behavior: "smooth",
+                block: "nearest",
+            });
+        }, 100);
+    }
+
+    async function callBackendParse(filename) {
+        try {
+            const resp = await fetch("/api/parse-filename", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ filename: filename }),
+            });
+            if (resp.ok) {
+                const data = await resp.json();
+                const songInput = document.getElementById("songName");
+                const artistInput = document.getElementById("artistName");
+                if (data.song_name) songInput.value = data.song_name;
+                if (data.artist) artistInput.value = data.artist;
+            }
+        } catch (e) {
+            // Silently fall back to client-side parsing
+            console.debug("Backend parse failed, using client-side:", e);
         }
     }
 
-    // Clear file selection
+    function triggerMetadataLookup() {
+        if (lookupTimeout) clearTimeout(lookupTimeout);
+        lookupTimeout = setTimeout(doMetadataLookup, 300);
+    }
+
+    async function doMetadataLookup() {
+        const title = document.getElementById("songName").value.trim();
+        const artist = document.getElementById("artistName").value.trim();
+
+        if (!title) return;
+
+        // Show badge
+        lookupBadge.style.display = "flex";
+        lookupBadge.className = "lookup-badge";
+        lookupBadgeText.textContent = "Looking up…";
+
+        try {
+            const resp = await fetch("/api/lookup-metadata", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ title, artist }),
+            });
+
+            if (!resp.ok) throw new Error("HTTP " + resp.status);
+            const data = await resp.json();
+
+            if (data.found) {
+                lookupBadge.className = "lookup-badge found";
+                lookupBadgeText.textContent = "Metadata found";
+
+                // Fill in fields
+                if (data.album) {
+                    const albumInput = document.getElementById("albumName");
+                    albumInput.value = data.album;
+                    albumInput.classList.add("auto-filled");
+                }
+                if (data.year) {
+                    const yearInput = document.getElementById("yearField");
+                    yearInput.value = data.year;
+                    yearInput.classList.add("auto-filled");
+                }
+                if (data.genre) {
+                    const genreInput = document.getElementById("genreField");
+                    genreInput.value = data.genre;
+                    genreInput.classList.add("auto-filled");
+                }
+                if (
+                    data.artist &&
+                    !document.getElementById("artistName").value.trim()
+                ) {
+                    document.getElementById("artistName").value = data.artist;
+                }
+
+                // Show that cover art will be available
+                if (data.release_mbid || data.release_group_mbid) {
+                    document.getElementById("coverArtRow").style.display =
+                        "flex";
+                    document.getElementById("coverArtDetail").textContent =
+                        `From "${data.album || "Unknown Album"}"${data.year ? " (" + data.year + ")" : ""}`;
+                    // We don't have the actual image URL yet (fetched during generation)
+                    document.getElementById("coverArtThumb").innerHTML =
+                        '<div style="width:100%;height:100%;background:#27ae60;display:flex;align-items:center;justify-content:center;color:white;font-size:1.5em;border-radius:8px;">🎨</div>';
+                }
+
+                // Update album hint
+                const source = data.lookup_source || "musicbrainz";
+                document.getElementById("albumHint").textContent =
+                    `via ${source}`;
+            } else {
+                lookupBadge.className = "lookup-badge not-found";
+                lookupBadgeText.textContent = "No match found";
+            }
+        } catch (e) {
+            lookupBadge.className = "lookup-badge not-found";
+            lookupBadgeText.textContent = "Lookup unavailable";
+            console.debug("Metadata lookup error:", e);
+        }
+    }
+
     function clearFile() {
         fileInput.value = "";
         dropZoneContent.style.display = "block";
         filePreview.style.display = "none";
         dropZone.classList.remove("has-file");
+        metaSection.style.display = "none";
+        lookupBadge.style.display = "none";
+
+        // Clear fields
+        document.getElementById("songName").value = "";
+        document.getElementById("artistName").value = "";
+        document.getElementById("albumName").value = "";
+        document.getElementById("yearField").value = "";
+        document.getElementById("genreField").value = "";
+        document.getElementById("albumName").classList.remove("auto-filled");
+        document.getElementById("yearField").classList.remove("auto-filled");
+        document.getElementById("genreField").classList.remove("auto-filled");
+        document.getElementById("coverArtRow").style.display = "none";
     }
 
-    // Drag and drop events
-    ["dragenter", "dragover"].forEach((eventName) => {
-        dropZone.addEventListener(eventName, function (e) {
+    // ── Drag and Drop ──
+    ["dragenter", "dragover"].forEach((evt) => {
+        dropZone.addEventListener(evt, (e) => {
             e.preventDefault();
             e.stopPropagation();
             dropZone.classList.add("drag-over");
         });
     });
 
-    ["dragleave", "drop"].forEach((eventName) => {
-        dropZone.addEventListener(eventName, function (e) {
+    ["dragleave", "drop"].forEach((evt) => {
+        dropZone.addEventListener(evt, (e) => {
             e.preventDefault();
             e.stopPropagation();
             dropZone.classList.remove("drag-over");
         });
     });
 
-    dropZone.addEventListener("drop", function (e) {
+    dropZone.addEventListener("drop", (e) => {
         const files = e.dataTransfer.files;
         if (files.length > 0) {
             fileInput.files = files;
-            showFilePreview(files[0]);
+            onFileSelected(files[0]);
         }
     });
 
-    // File input change
     fileInput.addEventListener("change", function () {
         if (this.files.length > 0) {
-            showFilePreview(this.files[0]);
+            onFileSelected(this.files[0]);
         }
     });
 
-    // Clear file button
-    clearFileBtn.addEventListener("click", function (e) {
+    clearFileBtn.addEventListener("click", (e) => {
         e.stopPropagation();
         clearFile();
     });
 
-    // Reset form
-    generatorForm.addEventListener("reset", function () {
-        setTimeout(function () {
-            clearFile();
-            statusDiv.style.display = "none";
-            progressContainer.style.display = "none";
-            resultSection.style.display = "none";
-        }, 0);
-    });
+    // Re-lookup when user edits song name or artist
+    document
+        .getElementById("songName")
+        .addEventListener("input", triggerMetadataLookup);
+    document
+        .getElementById("artistName")
+        .addEventListener("input", triggerMetadataLookup);
 
-    // Form submission
+    // ── Form Submission ──
     generatorForm.addEventListener("submit", async function (e) {
         e.preventDefault();
 
         if (!fileInput.files || fileInput.files.length === 0) {
-            statusDiv.innerHTML =
-                '<div class="alert alert-danger">❌ Please select an audio file.</div>';
-            statusDiv.style.display = "block";
+            alert("Please select an audio file first.");
             return;
         }
 
@@ -768,38 +1282,52 @@ endblock %} {% block content %}
         const songName = document.getElementById("songName").value.trim();
         const artist = document.getElementById("artistName").value.trim();
         const difficulty = document.getElementById("difficulty").value;
-
-        // Disable form during processing
-        generateBtn.disabled = true;
-        generateBtn.textContent = "⏳ Analysing audio...";
-
-        // Show indeterminate progress
-        progressContainer.style.display = "flex";
-        progressFill.style.width = "";
-        progressFill.classList.add("indeterminate");
-        progressText.textContent = "⏳";
-
-        statusDiv.innerHTML =
-            '<div class="alert alert-info">🎵 Uploading audio and analysing tempo, beats, and rhythm patterns... This can take 15–60 seconds.</div>';
-        statusDiv.style.display = "block";
-        resultSection.style.display = "none";
-
         const enableLyrics = document.getElementById("enableLyrics").checked;
         const enableAlbumArt =
             document.getElementById("enableAlbumArt").checked;
 
+        // Disable form
+        generateBtn.disabled = true;
+        generateBtn.querySelector(".btn-text").textContent = "Generating…";
+
+        // Show progress
+        progressSection.style.display = "flex";
+        ringFill.classList.add("indeterminate");
+        ringIcon.textContent = "🎵";
+        progressTitle.textContent = "Analysing audio…";
+        progressDetail.textContent =
+            "Detecting tempo, beats, and rhythm patterns. This can take 15–60 seconds.";
+        resultSection.style.display = "none";
+
+        // Build form data
         const formData = new FormData();
         formData.append("file", file);
         if (songName) formData.append("song_name", songName);
         if (artist) formData.append("artist", artist);
         formData.append("difficulty", difficulty);
+        formData.append("enable_lyrics", enableLyrics ? "true" : "false");
+        formData.append("enable_album_art", enableAlbumArt ? "true" : "false");
+        formData.append("auto_lookup", "true");
 
         try {
-            formData.append("enable_lyrics", enableLyrics ? "true" : "false");
-            formData.append(
-                "enable_album_art",
-                enableAlbumArt ? "true" : "false",
-            );
+            // Update progress
+            setTimeout(() => {
+                if (generateBtn.disabled) {
+                    progressTitle.textContent = "Generating chart…";
+                    progressDetail.textContent =
+                        "Building note patterns, HOPO markers, and star power sections";
+                    ringIcon.textContent = "🎸";
+                }
+            }, 5000);
+
+            setTimeout(() => {
+                if (generateBtn.disabled) {
+                    progressTitle.textContent = "Uploading to Nextcloud…";
+                    progressDetail.textContent =
+                        "Almost done — uploading chart and audio files";
+                    ringIcon.textContent = "☁️";
+                }
+            }, 15000);
 
             const response = await fetch("/api/generate", {
                 method: "POST",
@@ -808,103 +1336,91 @@ endblock %} {% block content %}
 
             const result = await response.json();
 
-            // Hide progress and status
-            progressContainer.style.display = "none";
-            statusDiv.style.display = "none";
+            // Hide progress
+            progressSection.style.display = "none";
 
             if (response.ok && !result.error) {
-                // Success
-                resultSection.classList.remove("error");
-                resultSection.classList.add("success");
-                resultSection.style.display = "block";
-
-                resultTitle.textContent = "✅ Chart Generated Successfully!";
-
-                let html = "";
-                const featuresHtml = [];
-                if (result.has_lyrics) featuresHtml.push("🎤 Lyrics");
-                if (result.has_album_art) featuresHtml.push("🎨 Album Art");
-
-                // Stats grid
-                html += '<div class="result-details">';
-                html += `<div class="result-detail-item">
-                <span class="result-detail-value">${result.tempo || "?"}</span>
-                <span class="result-detail-label">BPM</span>
-            </div>`;
-                html += `<div class="result-detail-item">
-                <span class="result-detail-value">${result.duration ? formatDuration(result.duration) : "?"}</span>
-                <span class="result-detail-label">Duration</span>
-            </div>`;
-                html += `<div class="result-detail-item">
-                <span class="result-detail-value">${result.total_notes || result.total_beats || "?"}</span>
-                <span class="result-detail-label">Notes</span>
-            </div>`;
-                html += `<div class="result-detail-item">
-                <span class="result-detail-value">${(result.difficulty || difficulty).charAt(0).toUpperCase() + (result.difficulty || difficulty).slice(1)}</span>
-                <span class="result-detail-label">Difficulty</span>
-            </div>`;
-                if (featuresHtml.length > 0) {
-                    html += `<div class="result-detail-item">
-                    <span class="result-detail-value">${featuresHtml.join(" ")}</span>
-                    <span class="result-detail-label">Features</span>
-                </div>`;
-                }
-                html += "</div>";
-
-                // File details
-                html += '<div class="result-file-info">';
-                html += `<p><strong>🎵 Song:</strong> ${result.song_name || songName || file.name}</p>`;
-                html += `<p><strong>🎤 Artist:</strong> ${result.artist || artist || "Unknown Artist"}</p>`;
-                if (result.notes_chart) {
-                    html += `<p><strong>📄 Chart File:</strong> <code>${result.notes_chart}</code></p>`;
-                }
-                if (result.output_dir) {
-                    html += `<p><strong>📂 Song Folder:</strong> <code>${result.output_dir}</code></p>`;
-                }
-                if (result.id) {
-                    html += `<p><strong>🆔 Database ID:</strong> ${result.id}
-                    — <a href="/songs/${result.id}/edit" class="btn btn-primary btn-sm">✏️ Edit Metadata</a></p>`;
-                }
-                html += "</div>";
-
-                resultContent.innerHTML = html;
+                showSuccess(result, songName, artist, difficulty);
             } else {
-                // Error
-                resultSection.classList.remove("success");
-                resultSection.classList.add("error");
-                resultSection.style.display = "block";
-
-                const errMsg =
-                    result.detail || result.error || "Chart generation failed";
-                resultTitle.textContent = "❌ Generation Failed";
-                resultContent.innerHTML = `<div class="alert alert-danger">${errMsg}</div>`;
+                showError(
+                    result.detail || result.error || "Chart generation failed",
+                );
             }
         } catch (error) {
-            progressContainer.style.display = "none";
-            statusDiv.style.display = "none";
-
-            resultSection.classList.remove("success");
-            resultSection.classList.add("error");
-            resultSection.style.display = "block";
-
-            resultTitle.textContent = "❌ Generation Failed";
-            resultContent.innerHTML = `<div class="alert alert-danger">Network error: ${error.message}</div>`;
+            progressSection.style.display = "none";
+            showError("Network error: " + error.message);
         } finally {
             generateBtn.disabled = false;
-            generateBtn.textContent = "🎸 Generate Chart";
+            generateBtn.querySelector(".btn-text").textContent =
+                "Generate Chart";
         }
 
         resultSection.scrollIntoView({ behavior: "smooth", block: "nearest" });
     });
 
+    function showSuccess(result, songName, artist, difficulty) {
+        resultSection.className = "result-card";
+        resultSection.style.display = "block";
+        resultIcon.textContent = "✅";
+        resultTitle.textContent = "Chart Generated!";
+
+        const features = [];
+        if (result.has_lyrics) features.push("🎤 Lyrics");
+        if (result.has_album_art) features.push("🎨 Art");
+        if (result.lookup_source) features.push("🔍 Metadata");
+
+        let html = '<div class="result-stats">';
+        html += `<div class="stat-box"><span class="stat-val">${result.tempo ? Math.round(result.tempo) : "?"}</span><span class="stat-lbl">BPM</span></div>`;
+        html += `<div class="stat-box"><span class="stat-val">${result.duration ? formatDuration(result.duration) : "?"}</span><span class="stat-lbl">Duration</span></div>`;
+        html += `<div class="stat-box"><span class="stat-val">${result.total_notes || "?"}</span><span class="stat-lbl">Notes</span></div>`;
+        html += `<div class="stat-box"><span class="stat-val">${(result.difficulty || difficulty).charAt(0).toUpperCase() + (result.difficulty || difficulty).slice(1)}</span><span class="stat-lbl">Difficulty</span></div>`;
+        if (features.length > 0) {
+            html += `<div class="stat-box"><span class="stat-val" style="font-size:1em">${features.join(" ")}</span><span class="stat-lbl">Features</span></div>`;
+        }
+        html += "</div>";
+
+        html += '<div class="result-info">';
+        html += `<p><strong>🎵</strong> ${result.song_name || songName || "Unknown"}</p>`;
+        html += `<p><strong>🎤</strong> ${result.artist || artist || "Unknown Artist"}</p>`;
+        if (result.album && result.album !== "Generated") {
+            html += `<p><strong>💿</strong> ${result.album}${result.year ? " (" + result.year + ")" : ""}</p>`;
+        }
+        if (result.genre && result.genre !== "Generated") {
+            html += `<p><strong>🏷️</strong> ${result.genre}</p>`;
+        }
+        if (result.id) {
+            html += `<p><strong>🆔</strong> Song #${result.id} — <a href="/songs/${result.id}/edit" class="btn btn-primary btn-sm">✏️ Edit</a></p>`;
+        }
+        html += "</div>";
+
+        resultContent.innerHTML = html;
+
+        // Update result actions
+        const actionsHtml = [
+            '<button class="btn btn-primary btn-sm" onclick="resetGenerator()">🎵 Generate Another</button>',
+        ];
+        if (result.id) {
+            actionsHtml.push(
+                `<a href="/chart-viewer?song_id=${result.id}" class="btn btn-secondary btn-sm">📊 View Chart</a>`,
+            );
+        }
+        document.getElementById("resultActions").innerHTML =
+            actionsHtml.join("");
+    }
+
+    function showError(message) {
+        resultSection.className = "result-card error";
+        resultSection.style.display = "block";
+        resultIcon.textContent = "❌";
+        resultTitle.textContent = "Generation Failed";
+        resultContent.innerHTML = `<div class="alert alert-danger">${message}</div>`;
+    }
+
     function resetGenerator() {
         generatorForm.reset();
         clearFile();
-        statusDiv.style.display = "none";
-        progressContainer.style.display = "none";
-        progressFill.classList.remove("indeterminate");
+        progressSection.style.display = "none";
         resultSection.style.display = "none";
-        resultSection.classList.remove("success", "error");
         window.scrollTo({ top: 0, behavior: "smooth" });
     }
 </script>

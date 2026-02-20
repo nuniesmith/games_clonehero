@@ -48,6 +48,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     unrar-free \
     p7zip-full \
     fonts-dejavu-core \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy the virtual environment from builder stage

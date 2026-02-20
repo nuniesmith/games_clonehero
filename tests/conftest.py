@@ -286,7 +286,7 @@ def filename_test_cases() -> List[Dict[str, str]]:
 # ---------------------------------------------------------------------------
 
 SAMPLE_CHART_VALID = """\
-\ufeff[Song]
+[Song]
 {
   Name = "Test Song"
   Artist = "Test Artist"
@@ -369,7 +369,7 @@ SAMPLE_CHART_MALFORMED = """\
 """
 
 SAMPLE_CHART_NO_MUSIC_STREAM = """\
-\ufeff[Song]
+[Song]
 {
   Name = "No Audio"
   Artist = "Nobody"
@@ -389,7 +389,7 @@ SAMPLE_CHART_NO_MUSIC_STREAM = """\
 """
 
 SAMPLE_CHART_UNSTABLE_BPM = """\
-\ufeff[Song]
+[Song]
 {
   Name = "Unstable BPM"
   Artist = "Jittery"

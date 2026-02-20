@@ -198,7 +198,7 @@ LOGIN_PAGE_HTML = """\
             display: flex;
             align-items: center;
             justify-content: center;
-            background: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%);
+            background: linear-gradient(135deg, #0f0c29 0%%, #302b63 50%%, #24243e 100%%);
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             color: #ecf0f1;
         }

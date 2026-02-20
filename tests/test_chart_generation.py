@@ -18,6 +18,7 @@ Tests for the song_generator module's chart output. Validates:
 - Edge cases: very short songs, very fast/slow tempos, no onsets, no segments
 """
 
+import random
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
@@ -26,6 +27,7 @@ import numpy as np
 import pytest
 
 from src.services.song_generator import (
+    DIFFICULTY_PROFILES,
     _bpm_to_chart_value,
     _compute_stable_tempo_map,
     _compute_star_power_sections,
@@ -827,7 +829,7 @@ class TestHelperFunctions:
         interval = 60.0 / tempo
         beats = [i * interval for i in range(100)]
 
-        result = _compute_stable_tempo_map(beats, tempo, 192)
+        result = _compute_stable_tempo_map(tempo, beats, 192)
         # Should have at least 1 entry (the initial BPM)
         assert len(result) >= 1
         # Should NOT have hundreds of jittery entries
@@ -844,50 +846,76 @@ class TestHelperFunctions:
         beats_150 = [25.0 + i * 0.4 for i in range(50)]  # next part at 150 BPM
         all_beats = beats_120 + beats_150
 
-        result = _compute_stable_tempo_map(all_beats, 120.0, 192)
+        result = _compute_stable_tempo_map(120.0, all_beats, 192)
         # Should have at least 2 entries for the tempo change
         assert len(result) >= 2, "Should detect the tempo change"
 
     def test_select_note_returns_valid_range(self):
-        """_select_note should return a note number in 0-4."""
-        rng = np.random.RandomState(42)
-        for _ in range(100):
-            onset_strength = rng.uniform(0.0, 1.0)
-            note = _select_note(onset_strength, 0.5, "expert")
-            assert 0 <= note <= 4, f"Note {note} out of range for expert"
+        """_select_note should return lane indices in 0-4."""
+        rng = random.Random(42)
+        profile = DIFFICULTY_PROFILES["expert"]
+        for i in range(100):
+            onset_strength = i / 100.0
+            lanes = _select_note(i, onset_strength, "expert", 0, rng, profile)
+            assert isinstance(lanes, list)
+            for lane in lanes:
+                assert 0 <= lane <= 4, f"Lane {lane} out of range for expert"
 
     def test_select_note_easy_fewer_frets(self):
         """Easy difficulty should tend to use fewer fret numbers (0-2)."""
-        rng = np.random.RandomState(42)
-        notes = []
-        for _ in range(200):
-            note = _select_note(rng.uniform(0.0, 1.0), 0.5, "easy")
-            notes.append(note)
-        # Easy should mostly use notes 0-2
-        high_notes = sum(1 for n in notes if n > 2)
-        # Allow some high notes but they should be the minority
-        assert high_notes < len(notes) * 0.5, (
-            f"Easy difficulty using too many high frets: {high_notes}/{len(notes)}"
+        rng = random.Random(42)
+        profile = DIFFICULTY_PROFILES["easy"]
+        all_lanes = []
+        for i in range(200):
+            lanes = _select_note(i, 0.5, "easy", 0, rng, profile)
+            all_lanes.extend(lanes)
+        # Easy should mostly use notes 0-max_lane (which is 2 for easy)
+        max_lane = profile["max_lane"]
+        high_notes = sum(1 for n in all_lanes if n > max_lane)
+        assert high_notes == 0, (
+            f"Easy difficulty should not exceed max_lane={max_lane}: "
+            f"found {high_notes} notes above it"
         )
 
     def test_compute_sustain_non_negative(self):
         """_compute_sustain should always return non-negative values."""
-        result = _compute_sustain(0.5, 120.0, 192, "expert")
+        rng = random.Random(42)
+        profile = DIFFICULTY_PROFILES["expert"]
+        result = _compute_sustain(0, 384, 0.8, profile, rng)
         assert result >= 0
 
-    def test_compute_sustain_short_onset_zero(self):
-        """Very short intervals shouldn't produce sustains."""
-        result = _compute_sustain(0.05, 120.0, 192, "expert")
+    def test_compute_sustain_no_next_note(self):
+        """Sustain with no next note should still return non-negative."""
+        rng = random.Random(42)
+        profile = DIFFICULTY_PROFILES["expert"]
+        result = _compute_sustain(0, None, 0.9, profile, rng)
         assert result >= 0
+
+    def test_compute_sustain_weak_onset_zero(self):
+        """Weak onsets shouldn't produce sustains."""
+        rng = random.Random(42)
+        profile = DIFFICULTY_PROFILES["expert"]
+        result = _compute_sustain(0, 384, 0.2, profile, rng)
+        assert result == 0
 
     def test_compute_star_power_sections_returns_list(self):
-        """_compute_star_power_sections should return a list of (start, end) tuples."""
-        onset_times = [i * 0.5 for i in range(100)]
-        result = _compute_star_power_sections(onset_times, 120.0, 50.0)
+        """_compute_star_power_sections should return a list of (start, duration) tuples."""
+        # onset_ticks is a list of tick positions (ints)
+        onset_ticks = [i * 192 for i in range(100)]
+        total_ticks = onset_ticks[-1] + 192
+        result = _compute_star_power_sections(onset_ticks, total_ticks)
         assert isinstance(result, list)
         for item in result:
             assert len(item) == 2
-            assert item[0] < item[1], "Star power start must be before end"
+            start_tick, duration = item
+            assert duration > 0, "Star power duration must be positive"
+
+    def test_compute_star_power_sections_too_few_notes(self):
+        """With fewer than 20 notes, no star power should be placed."""
+        onset_ticks = [i * 192 for i in range(10)]
+        total_ticks = onset_ticks[-1] + 192
+        result = _compute_star_power_sections(onset_ticks, total_ticks)
+        assert result == []
 
 
 # ---------------------------------------------------------------------------

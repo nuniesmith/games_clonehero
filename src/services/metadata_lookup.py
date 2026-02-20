@@ -57,6 +57,7 @@ _STRIP_PATTERNS = [
     (r"\(feat\.?\s*[^)]+\)", ""),  # (feat. Someone)
     (r"\[feat\.?\s*[^\]]+\]", ""),  # [feat. Someone]
     (r"\(ft\.?\s*[^)]+\)", ""),  # (ft. Someone)
+    (r"\[ft\.?\s*[^\]]+\]", ""),  # [ft. Someone]
     (r"\d{3,4}\s*kbps", ""),  # bitrate tags
     (r"\(\d{4}\)", ""),  # (2023) year tags
     (r"\[\d{4}\]", ""),  # [2023] year tags

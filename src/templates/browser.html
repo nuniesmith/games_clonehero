@@ -134,16 +134,13 @@
                     </td>
                     <td class="col-actions">
                         {% if item.is_directory %}
-                        <button type="button" class="btn btn-primary btn-sm" onclick="importFolder('{{ item.path }}')" title="Import this folder as a song">
-                            ⬇️ Import
+                        <button type="button" class="btn btn-primary btn-sm" onclick="importFolder('{{ item.path }}')" title="Import this folder's metadata into the song library">
+                            📥 Import
                         </button>
                         <button type="button" class="btn btn-danger btn-sm" onclick="deleteRemote('{{ item.path }}', '{{ item.name }}', true)" title="Delete folder">
                             🗑️
                         </button>
                         {% else %}
-                        <button type="button" class="btn btn-primary btn-sm" onclick="downloadAndImport('{{ item.path }}')" title="Download and import this file">
-                            ⬇️ Import
-                        </button>
                         <button type="button" class="btn btn-danger btn-sm" onclick="deleteRemote('{{ item.path }}', '{{ item.name }}', false)" title="Delete file">
                             🗑️
                         </button>
@@ -876,57 +873,20 @@ async function doCloudUpload() {
 }
 
 // Download and import a file from Nextcloud
-async function downloadAndImport(remotePath) {
-    const filename = remotePath.split('/').pop();
-    if (!confirm(`Download and import "${filename}" from Nextcloud?\n\nThe file will be downloaded, processed, and added to your local library.`)) {
-        return;
-    }
-
-    showBrowserStatus('⬇️ Downloading and importing from Nextcloud...', 'info');
-
-    try {
-        const response = await fetch('/api/webdav/download', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                remote_path: remotePath,
-                content_type: 'songs'
-            }),
-        });
-
-        const result = await response.json();
-
-        if (response.ok) {
-            let msg = '✅ Import successful!';
-            if (result.songs && result.songs.length > 0) {
-                msg += ` Imported ${result.songs.length} song(s).`;
-            } else if (result.message) {
-                msg += ' ' + result.message;
-            }
-            showBrowserStatus(msg, 'success');
-            showNotification('File imported successfully!', 'success');
-        } else {
-            showBrowserStatus('❌ Import failed: ' + (result.detail || result.error || 'Unknown error'), 'danger');
-        }
-    } catch (error) {
-        showBrowserStatus('❌ Error: ' + error.message, 'danger');
-    }
-}
-
-// Import a folder from Nextcloud (sync-from-nextcloud)
+// Import a folder's metadata into the local song library (song stays on Nextcloud)
 async function importFolder(remotePath) {
     const folderName = remotePath.split('/').filter(Boolean).pop() || remotePath;
-    if (!confirm(`Import folder "${folderName}" from Nextcloud?\n\nAll files in this folder will be downloaded. The folder must contain a song.ini file.`)) {
+    if (!confirm(`Import "${folderName}" into the song library?\n\nThe song stays on Nextcloud — only its metadata (from song.ini) is cached locally.`)) {
         return;
     }
 
-    showBrowserStatus('⬇️ Downloading folder from Nextcloud...', 'info');
+    showBrowserStatus('📥 Importing song metadata from Nextcloud…', 'info');
 
     try {
         const formData = new FormData();
         formData.append('remote_path', remotePath);
 
-        const response = await fetch('/api/webdav/sync-from-nextcloud', {
+        const response = await fetch('/api/webdav/import', {
             method: 'POST',
             body: formData,
         });
@@ -934,12 +894,12 @@ async function importFolder(remotePath) {
         const result = await response.json();
 
         if (response.ok) {
-            let msg = `✅ Imported "${result.message || folderName}" successfully!`;
+            let msg = `✅ ${result.message || 'Song imported!'}`;
             if (result.song_id) {
                 msg += ` <a href="/songs/${result.song_id}/edit" class="btn btn-primary btn-sm" style="margin-left: 10px;">✏️ Edit Song</a>`;
             }
             showBrowserStatus(msg, 'success');
-            showNotification('Folder imported from Nextcloud!', 'success');
+            showNotification('Song imported into library!', 'success');
         } else {
             showBrowserStatus('❌ Import failed: ' + (result.detail || result.error || 'Unknown error'), 'danger');
         }

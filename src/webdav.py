@@ -6,8 +6,14 @@ on a Nextcloud instance via the WebDAV protocol.
 
 Uses httpx for async HTTP operations with Basic Auth against the
 Nextcloud WebDAV endpoint.
+
+The song library lives entirely on Nextcloud.  This module provides the
+low-level WebDAV primitives **plus** higher-level helpers for recursive
+directory walking and remote song.ini parsing that the rest of the
+application relies on.
 """
 
+import configparser
 import io
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
@@ -20,8 +26,10 @@ from loguru import logger
 
 from src.config import (
     NEXTCLOUD_PASSWORD,
+    NEXTCLOUD_SONGS_PATH,
     NEXTCLOUD_URL,
     NEXTCLOUD_USERNAME,
+    OPTIONAL_SONG_FIELDS,
     WEBDAV_BASE_URL,
 )
 
@@ -496,7 +504,7 @@ async def move_remote(source_path: str, dest_path: str) -> bool:
                 source_url,
                 headers={
                     "Destination": dest_url,
-                    "Overwrite": "F",
+                    "Overwrite": "T",
                 },
             )
             if response.status_code in (200, 201, 204):
@@ -558,3 +566,245 @@ async def get_file_info(remote_path: str) -> Optional[WebDAVItem]:
 def is_configured() -> bool:
     """Public check for whether Nextcloud WebDAV is configured."""
     return _is_configured()
+
+
+# ---------------------------------------------------------------------------
+# Higher-level helpers – recursive walk & song discovery
+# ---------------------------------------------------------------------------
+
+
+async def walk_directory(remote_path: str = "/") -> List[WebDAVItem]:
+    """
+    Recursively list *all* files and directories under *remote_path*.
+
+    Returns a flat list of :class:`WebDAVItem` objects.  Directories
+    themselves are included in the results so callers can distinguish
+    them if needed.
+    """
+    if not _is_configured():
+        logger.warning("⚠️ Nextcloud WebDAV not configured, returning empty walk")
+        return []
+
+    all_items: List[WebDAVItem] = []
+    dirs_to_visit: List[str] = [remote_path]
+
+    while dirs_to_visit:
+        current = dirs_to_visit.pop()
+        items = await list_directory(current)
+        for item in items:
+            all_items.append(item)
+            if item.is_directory:
+                dirs_to_visit.append(item.path)
+
+    return all_items
+
+
+async def find_song_folders(root: Optional[str] = None) -> List[str]:
+    """
+    Walk the Nextcloud songs directory and return a list of remote
+    directory paths that contain a ``song.ini`` file.
+
+    Each returned path is the *folder* containing the ``song.ini``,
+    e.g. ``/songs/Artist/Title_abc123``.
+    """
+    root = root or NEXTCLOUD_SONGS_PATH
+    all_items = await walk_directory(root)
+
+    song_ini_files = [
+        item
+        for item in all_items
+        if not item.is_directory and item.name.lower() == "song.ini"
+    ]
+
+    # Return the parent directory of each song.ini
+    folders: List[str] = []
+    for item in song_ini_files:
+        parent = str(PurePosixPath(item.path).parent)
+        if parent not in folders:
+            folders.append(parent)
+
+    logger.info(
+        "🔍 Found {} song folder(s) on Nextcloud under {}",
+        len(folders),
+        root,
+    )
+    return folders
+
+
+async def parse_remote_song_ini(remote_path: str) -> Optional[Dict[str, Any]]:
+    """
+    Download and parse a ``song.ini`` file from Nextcloud.
+
+    *remote_path* should point to the **folder** containing the
+    ``song.ini`` (the ``/song.ini`` suffix is appended automatically if
+    the path doesn't already end with it).
+
+    Returns a dict with ``title``, ``artist``, ``album``, ``metadata``
+    keys on success, or ``None`` if the file cannot be downloaded /
+    parsed or is missing required fields.
+    """
+    ini_remote = remote_path.rstrip("/")
+    if not ini_remote.lower().endswith("/song.ini"):
+        ini_remote = f"{ini_remote}/song.ini"
+
+    content = await download_file(ini_remote)
+    if content is None:
+        logger.warning("⚠️ Could not download song.ini from {}", ini_remote)
+        return None
+
+    config = configparser.ConfigParser(strict=False)
+    try:
+        config.read_string(content.decode("utf-8-sig"))
+    except Exception as e:
+        logger.error("❌ Failed to parse song.ini from {}: {}", ini_remote, e)
+        return None
+
+    if not config.has_section("song"):
+        logger.warning("⚠️ Missing [song] section in {}", ini_remote)
+        return None
+
+    name = config.get("song", "name", fallback=None)
+    artist = config.get("song", "artist", fallback=None)
+    album = config.get("song", "album", fallback=None)
+
+    if not name or not artist:
+        logger.warning("⚠️ Missing required fields (name/artist) in {}", ini_remote)
+        return None
+
+    metadata: Dict[str, Any] = {}
+    for field_name in OPTIONAL_SONG_FIELDS:
+        if config.has_option("song", field_name):
+            value = config.get("song", field_name, fallback=None)
+            if value is not None:
+                metadata[field_name] = value.strip()
+
+    return {
+        "title": name.strip(),
+        "artist": artist.strip(),
+        "album": album.strip() if album else "Unknown",
+        "metadata": metadata,
+    }
+
+
+async def upload_song_folder(
+    local_dir: str,
+    remote_base: Optional[str] = None,
+    artist: str = "Unknown",
+    title: str = "Unknown",
+    suffix: str = "",
+) -> Optional[str]:
+    """
+    Upload an entire local song folder to Nextcloud.
+
+    Creates the remote directory structure under *remote_base* (defaults
+    to :data:`NEXTCLOUD_SONGS_PATH`) and uploads every file found in
+    *local_dir*.
+
+    Returns the remote folder path on success, or ``None`` on failure.
+    """
+    if not _is_configured():
+        logger.warning("⚠️ Nextcloud not configured – cannot upload song folder")
+        return None
+
+    from pathlib import Path
+
+    local_path = Path(local_dir)
+    if not local_path.is_dir():
+        logger.error("❌ Local directory does not exist: {}", local_dir)
+        return None
+
+    base = remote_base or NEXTCLOUD_SONGS_PATH
+    safe_artist = _safe_name(artist)
+    safe_title = _safe_name(title)
+    folder_name = f"{safe_title}_{suffix}" if suffix else safe_title
+    remote_dir = f"{base.rstrip('/')}/{safe_artist}/{folder_name}"
+
+    await mkdir(remote_dir)
+
+    uploaded = 0
+    for local_file in local_path.rglob("*"):
+        if not local_file.is_file():
+            continue
+        relative = local_file.relative_to(local_path).as_posix()
+        remote_file = f"{remote_dir}/{relative}"
+        try:
+            data = local_file.read_bytes()
+            ok = await upload_file(remote_file, data)
+            if ok:
+                uploaded += 1
+            else:
+                logger.warning("⚠️ Failed to upload {}", remote_file)
+        except Exception as e:
+            logger.error("❌ Error uploading {} → {}: {}", local_file, remote_file, e)
+
+    if uploaded == 0:
+        logger.error("❌ No files were uploaded for {}", remote_dir)
+        return None
+
+    logger.info("⬆️ Uploaded {} file(s) to {}", uploaded, remote_dir)
+    return remote_dir
+
+
+async def write_remote_song_ini(remote_folder: str, song_data: Dict[str, Any]) -> bool:
+    """
+    Write (overwrite) a ``song.ini`` on Nextcloud from *song_data*.
+
+    *song_data* should contain ``title``, ``artist``, ``album`` and
+    optionally a ``metadata`` dict.
+    """
+    config = configparser.ConfigParser()
+    config.add_section("song")
+
+    config.set("song", "name", song_data.get("title", ""))
+    config.set("song", "artist", song_data.get("artist", ""))
+    config.set("song", "album", song_data.get("album", ""))
+
+    metadata = song_data.get("metadata", {})
+    if isinstance(metadata, str):
+        import json
+
+        try:
+            metadata = json.loads(metadata)
+        except (json.JSONDecodeError, TypeError):
+            metadata = {}
+
+    for key, value in metadata.items():
+        if value is not None:
+            config.set("song", key, str(value))
+
+    buf = io.StringIO()
+    config.write(buf)
+    ini_bytes = buf.getvalue().encode("utf-8")
+
+    remote_ini = f"{remote_folder.rstrip('/')}/song.ini"
+    return await upload_file(remote_ini, ini_bytes, "text/plain; charset=utf-8")
+
+
+async def list_song_folder_files(remote_folder: str) -> List[WebDAVItem]:
+    """
+    List the files inside a single song folder on Nextcloud.
+
+    Returns only files (not sub-directories).
+    """
+    items = await list_directory(remote_folder)
+    return [i for i in items if not i.is_directory]
+
+
+def _safe_name(value: str) -> str:
+    """Sanitise a string for use as a remote directory name."""
+    replacements = {
+        "/": "_",
+        "\\": "_",
+        ":": "-",
+        "*": "",
+        "?": "",
+        '"': "",
+        "<": "",
+        ">": "",
+        "|": "",
+    }
+    result = value
+    for old, new in replacements.items():
+        result = result.replace(old, new)
+    result = result.strip(" .")
+    return result or "unknown"

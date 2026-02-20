@@ -4,7 +4,8 @@
     <h1>🎸 Welcome to Clone Hero Manager</h1>
     <p>
         Your single-container content management system for Clone Hero with
-        Nextcloud integration.
+        Nextcloud-powered storage. Fully stateless — everything lives on
+        Nextcloud.
     </p>
 
     <!-- Stats Bar -->
@@ -14,14 +15,117 @@
             <span class="stat-label">Songs in Library</span>
         </div>
         <div class="stat-item">
-            <span class="stat-number"
-                >{% if webdav_configured %}✅{% else %}❌{% endif %}</span
-            >
-            <span class="stat-label">Nextcloud Connected</span>
+            {% if webdav_configured and webdav_connected %}
+            <span class="stat-number stat-ok">✅ Connected</span>
+            {% elif webdav_configured %}
+            <span class="stat-number stat-warn">⚠️ Configured</span>
+            {% else %}
+            <span class="stat-number stat-err">❌ Not Set Up</span>
+            {% endif %}
+            <span class="stat-label">Nextcloud</span>
         </div>
         <div class="stat-item">
             <span class="stat-number">v{{ version }}</span>
             <span class="stat-label">Version</span>
+        </div>
+    </div>
+
+    <!-- Quick Actions -->
+    {% if webdav_configured and webdav_connected %}
+    <div class="quick-actions">
+        <button
+            id="sync-library-btn"
+            class="btn btn-primary"
+            onclick="syncLibrarySSE()"
+        >
+            🔄 Refresh Song Library from Nextcloud
+        </button>
+    </div>
+
+    <!-- Sync Progress Panel (hidden until sync starts) -->
+    <div id="sync-panel" class="sync-panel" style="display: none">
+        <div class="sync-panel-header">
+            <div class="sync-panel-title">
+                <span class="sync-spinner" id="sync-spinner"></span>
+                <strong id="sync-panel-heading">Library Sync</strong>
+            </div>
+            <div class="sync-panel-stats" id="sync-panel-stats"></div>
+        </div>
+
+        <div class="sync-progress-bar-container">
+            <div class="sync-progress-bar" id="sync-progress-bar">
+                <div class="sync-progress-fill" id="sync-progress-fill"></div>
+            </div>
+            <span class="sync-progress-pct" id="sync-progress-pct"></span>
+        </div>
+
+        <div class="sync-log-wrapper">
+            <div class="sync-log" id="sync-log"></div>
+        </div>
+
+        <div class="sync-summary" id="sync-summary" style="display: none"></div>
+
+        <div
+            class="sync-panel-actions"
+            id="sync-panel-actions"
+            style="display: none"
+        >
+            <button
+                class="btn btn-primary btn-sm"
+                onclick="window.location.reload()"
+            >
+                🔄 Reload Page
+            </button>
+            <button class="btn btn-secondary btn-sm" onclick="closeSyncPanel()">
+                ✕ Dismiss
+            </button>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- System Status Panel -->
+    <div class="system-status-panel" id="system-status-panel">
+        <h2>📊 System Status</h2>
+        <div class="status-grid">
+            <div class="status-card" id="status-card-uptime">
+                <div class="status-card-icon">⏱️</div>
+                <div class="status-card-body">
+                    <div class="status-card-label">Uptime</div>
+                    <div class="status-card-value" id="status-uptime">—</div>
+                </div>
+            </div>
+            <div class="status-card" id="status-card-db">
+                <div class="status-card-icon">🗄️</div>
+                <div class="status-card-body">
+                    <div class="status-card-label">Database</div>
+                    <div class="status-card-value" id="status-db">—</div>
+                    <div class="status-card-detail" id="status-db-detail"></div>
+                </div>
+            </div>
+            <div class="status-card" id="status-card-dbsync">
+                <div class="status-card-icon">☁️</div>
+                <div class="status-card-body">
+                    <div class="status-card-label">DB → Nextcloud</div>
+                    <div class="status-card-value" id="status-dbsync">—</div>
+                    <div
+                        class="status-card-detail"
+                        id="status-dbsync-detail"
+                    ></div>
+                </div>
+            </div>
+            <div class="status-card" id="status-card-libsync">
+                <div class="status-card-icon">🔄</div>
+                <div class="status-card-body">
+                    <div class="status-card-label">Library Sync</div>
+                    <div class="status-card-value" id="status-libsync">
+                        Idle
+                    </div>
+                    <div
+                        class="status-card-detail"
+                        id="status-libsync-detail"
+                    ></div>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -30,8 +134,9 @@
         <div class="feature-card">
             <h2>📁 Song Library</h2>
             <p>
-                Browse, search, and manage your Clone Hero song collection. View
-                metadata, edit song.ini files, and organize your library.
+                Browse, search, and manage your Clone Hero song collection.
+                Songs are stored on Nextcloud and metadata is cached locally for
+                fast searching.
             </p>
             <a href="/songs" class="btn btn-primary">Browse Songs</a>
         </div>
@@ -40,7 +145,8 @@
             <h2>📤 Upload Content</h2>
             <p>
                 Upload .zip or .rar archives containing Clone Hero songs.
-                Archives are automatically extracted and cataloged.
+                Archives are automatically extracted, cataloged, and uploaded to
+                Nextcloud.
             </p>
             <a href="/upload" class="btn btn-primary">Upload Songs</a>
         </div>
@@ -49,7 +155,8 @@
             <h2>🎵 Song Generator</h2>
             <p>
                 Process audio files (MP3, WAV, OGG, FLAC) into Clone Hero format
-                with auto-detected tempo and generated note charts.
+                with auto-detected tempo and generated note charts. Output is
+                uploaded directly to Nextcloud.
             </p>
             <a href="/generator" class="btn btn-primary">Generate Charts</a>
         </div>
@@ -57,8 +164,8 @@
         <div class="feature-card">
             <h2>☁️ Nextcloud Browser</h2>
             <p>
-                Browse and sync songs with your Nextcloud instance via WebDAV.
-                Centralize your content across devices.
+                Browse your Nextcloud file storage via WebDAV. View, upload, and
+                manage files directly on your cloud instance.
             </p>
             <a href="/browser" class="btn btn-primary">Open Browser</a>
         </div>
@@ -69,37 +176,53 @@
         <h2>📖 How It Works</h2>
         <ol>
             <li>
-                <strong>Upload or Import:</strong> Add songs by uploading
-                archives, generating from audio files, or syncing from
-                Nextcloud.
+                <strong>Upload or Generate:</strong> Add songs by uploading
+                archives or generating charts from audio files. Content is
+                automatically uploaded to Nextcloud.
             </li>
             <li>
                 <strong>Automatic Processing:</strong> Archives are extracted,
                 song.ini files are parsed, and metadata is indexed in the local
-                database.
+                cache.
             </li>
             <li>
                 <strong>Edit &amp; Review:</strong> Use the song editor to
-                update metadata, review generated charts, and manage your
-                library.
+                update metadata. Changes are synced back to the song.ini on
+                Nextcloud.
             </li>
             <li>
-                <strong>Sync with Nextcloud:</strong> Push songs to Nextcloud
-                for centralized storage and access from any device.
+                <strong>Refresh Library:</strong> Hit "Refresh Library" to scan
+                Nextcloud for any songs added outside this app. Stale entries
+                are automatically cleaned up.
             </li>
             <li>
-                <strong>Play!</strong> Your content is organized and ready for
-                Clone Hero.
+                <strong>Play!</strong> Point Clone Hero at your Nextcloud sync
+                folder and your songs are ready to go.
             </li>
         </ol>
 
         {% if not webdav_configured %}
         <div class="alert alert-warning">
-            ⚠️ <strong>Nextcloud not configured.</strong> To enable cloud sync,
-            set <code>NEXTCLOUD_URL</code>, <code>NEXTCLOUD_USERNAME</code>, and
-            <code>NEXTCLOUD_PASSWORD</code> in your <code>.env</code> file.
+            ⚠️ <strong>Nextcloud not configured.</strong> Songs are stored
+            entirely on Nextcloud via WebDAV. Set <code>NEXTCLOUD_URL</code>,
+            <code>NEXTCLOUD_USERNAME</code>, and
+            <code>NEXTCLOUD_PASSWORD</code> in your <code>.env</code> file to
+            enable the song library.
+        </div>
+        {% elif not webdav_connected %}
+        <div class="alert alert-warning">
+            ⚠️ <strong>Nextcloud configured but not reachable.</strong> Check
+            that your Nextcloud instance is running and that the credentials in
+            your <code>.env</code> file are correct.
         </div>
         {% endif %}
+
+        <div class="alert alert-info">
+            💡 <strong>Nextcloud songs path:</strong>
+            <code>{{ nextcloud_songs_path | default('/Songs') }}</code> — all
+            uploaded and generated songs are stored under this directory on your
+            Nextcloud instance.
+        </div>
 
         <div class="alert alert-info">
             💡 <strong>API Documentation:</strong> Interactive API docs are
@@ -108,4 +231,755 @@
         </div>
     </div>
 </div>
+{% endblock %} {% block extra_css %}
+<style>
+    .stat-ok {
+        color: #27ae60;
+    }
+    .stat-warn {
+        color: #f39c12;
+    }
+    .stat-err {
+        color: #e74c3c;
+    }
+
+    .quick-actions {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        margin-bottom: 24px;
+        flex-wrap: wrap;
+    }
+
+    /* ── System Status Panel ── */
+    .system-status-panel {
+        margin-bottom: 30px;
+    }
+
+    .system-status-panel h2 {
+        margin-bottom: 16px;
+    }
+
+    .status-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+        gap: 14px;
+    }
+
+    .status-card {
+        display: flex;
+        gap: 14px;
+        align-items: flex-start;
+        background: #f8f9fa;
+        border: 1px solid #dee2e6;
+        border-radius: 8px;
+        padding: 16px;
+        transition: all 0.3s ease;
+    }
+
+    .status-card:hover {
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+        transform: translateY(-1px);
+    }
+
+    .status-card.active {
+        border-color: #3498db;
+        background: #eaf4fd;
+    }
+
+    .status-card.ok {
+        border-color: #27ae60;
+    }
+
+    .status-card.warn {
+        border-color: #f39c12;
+    }
+
+    .status-card.error {
+        border-color: #e74c3c;
+    }
+
+    .status-card-icon {
+        font-size: 1.8em;
+        flex-shrink: 0;
+        line-height: 1;
+    }
+
+    .status-card-body {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .status-card-label {
+        font-size: 0.82em;
+        color: #7f8c8d;
+        text-transform: uppercase;
+        letter-spacing: 0.3px;
+        margin-bottom: 2px;
+    }
+
+    .status-card-value {
+        font-size: 1.15em;
+        font-weight: bold;
+        color: #2c3e50;
+        word-break: break-word;
+    }
+
+    .status-card-detail {
+        font-size: 0.82em;
+        color: #95a5a6;
+        margin-top: 2px;
+    }
+
+    /* ── Sync Panel (shared with songs page) ── */
+    .sync-panel {
+        background: #f8f9fa;
+        border: 2px solid #3498db;
+        border-radius: 8px;
+        padding: 20px;
+        margin-bottom: 24px;
+        animation: slideDown 0.3s ease-out;
+    }
+
+    @keyframes slideDown {
+        from {
+            opacity: 0;
+            transform: translateY(-10px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+
+    .sync-panel.complete {
+        border-color: #27ae60;
+    }
+    .sync-panel.has-errors {
+        border-color: #f39c12;
+    }
+    .sync-panel.error {
+        border-color: #e74c3c;
+    }
+
+    .sync-panel-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 12px;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+
+    .sync-panel-title {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 1.1em;
+    }
+
+    .sync-spinner {
+        display: inline-block;
+        width: 18px;
+        height: 18px;
+        border: 3px solid #dee2e6;
+        border-top-color: #3498db;
+        border-radius: 50%;
+        animation: spin 0.8s linear infinite;
+    }
+
+    .sync-spinner.done {
+        animation: none;
+        border-color: #27ae60;
+        border-top-color: #27ae60;
+        background: #27ae60;
+    }
+
+    .sync-spinner.error {
+        animation: none;
+        border-color: #e74c3c;
+        border-top-color: #e74c3c;
+        background: #e74c3c;
+    }
+
+    @keyframes spin {
+        to {
+            transform: rotate(360deg);
+        }
+    }
+
+    .sync-panel-stats {
+        font-size: 0.88em;
+        color: #7f8c8d;
+        display: flex;
+        gap: 14px;
+        flex-wrap: wrap;
+    }
+
+    .sync-panel-stats .stat {
+        white-space: nowrap;
+    }
+    .sync-panel-stats .stat-val {
+        font-weight: bold;
+        color: #2c3e50;
+    }
+
+    .sync-progress-bar-container {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 10px;
+    }
+
+    .sync-progress-bar {
+        flex: 1;
+        height: 8px;
+        background: #dee2e6;
+        border-radius: 4px;
+        overflow: hidden;
+    }
+
+    .sync-progress-fill {
+        height: 100%;
+        background: linear-gradient(90deg, #3498db, #2ecc71);
+        border-radius: 4px;
+        width: 0%;
+        transition: width 0.3s ease;
+    }
+
+    .sync-progress-pct {
+        font-size: 0.85em;
+        font-weight: bold;
+        color: #2c3e50;
+        min-width: 40px;
+        text-align: right;
+    }
+
+    .sync-log-wrapper {
+        max-height: 220px;
+        overflow-y: auto;
+        border: 1px solid #dee2e6;
+        border-radius: 5px;
+        background: #fff;
+        scrollbar-width: thin;
+    }
+
+    .sync-log {
+        padding: 8px 12px;
+        font-family: "Consolas", "Fira Code", "Monaco", monospace;
+        font-size: 0.82em;
+        line-height: 1.6;
+    }
+
+    .sync-log-entry {
+        display: flex;
+        gap: 8px;
+        align-items: baseline;
+        padding: 2px 0;
+        border-bottom: 1px solid #f1f2f3;
+        animation: fadeIn 0.2s ease;
+    }
+
+    .sync-log-entry:last-child {
+        border-bottom: none;
+    }
+
+    @keyframes fadeIn {
+        from {
+            opacity: 0;
+            transform: translateY(-4px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+
+    .sync-log-icon {
+        flex-shrink: 0;
+        width: 20px;
+        text-align: center;
+    }
+
+    .sync-log-msg {
+        flex: 1;
+        color: #2c3e50;
+        word-break: break-word;
+    }
+    .sync-log-entry.error .sync-log-msg {
+        color: #e74c3c;
+    }
+    .sync-log-entry.success .sync-log-msg {
+        color: #27ae60;
+    }
+    .sync-log-entry.info .sync-log-msg {
+        color: #3498db;
+    }
+    .sync-log-entry.dim .sync-log-msg {
+        color: #95a5a6;
+    }
+
+    .sync-log-counter {
+        flex-shrink: 0;
+        font-size: 0.9em;
+        color: #95a5a6;
+        min-width: 50px;
+        text-align: right;
+    }
+
+    .sync-summary {
+        margin-top: 12px;
+        padding: 12px 16px;
+        border-radius: 5px;
+        background: #d4edda;
+        border: 1px solid #c3e6cb;
+        color: #155724;
+        font-size: 0.95em;
+    }
+
+    .sync-summary.has-errors {
+        background: #fff3cd;
+        border-color: #ffeaa7;
+        color: #856404;
+    }
+
+    .sync-panel-actions {
+        display: flex;
+        gap: 8px;
+        margin-top: 12px;
+    }
+
+    @media (max-width: 768px) {
+        .status-grid {
+            grid-template-columns: 1fr;
+        }
+
+        .sync-panel-header {
+            flex-direction: column;
+            align-items: flex-start;
+        }
+
+        .sync-log-wrapper {
+            max-height: 160px;
+        }
+    }
+</style>
+{% endblock %} {% block extra_js %}
+<script>
+    // ── System Status Panel ──
+    (function () {
+        const STATUS_POLL_INTERVAL = 5000;
+
+        function formatUptime(seconds) {
+            if (seconds == null) return "—";
+            var h = Math.floor(seconds / 3600);
+            var m = Math.floor((seconds % 3600) / 60);
+            var s = Math.round(seconds % 60);
+            if (h > 0) return h + "h " + m + "m";
+            if (m > 0) return m + "m " + s + "s";
+            return s + "s";
+        }
+
+        function formatBytes(bytes) {
+            if (!bytes || bytes === 0) return "0 B";
+            var k = 1024;
+            var sizes = ["B", "KB", "MB", "GB"];
+            var i = Math.floor(Math.log(bytes) / Math.log(k));
+            return (
+                parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i]
+            );
+        }
+
+        function formatAgo(seconds) {
+            if (seconds == null) return "never";
+            if (seconds < 60) return Math.round(seconds) + "s ago";
+            if (seconds < 3600) return Math.round(seconds / 60) + "m ago";
+            return Math.round(seconds / 3600) + "h ago";
+        }
+
+        async function pollSystemStatus() {
+            try {
+                var resp = await fetch("/api/system/status");
+                if (!resp.ok) return;
+                var data = await resp.json();
+
+                // Uptime
+                var uptimeEl = document.getElementById("status-uptime");
+                var uptimeCard = document.getElementById("status-card-uptime");
+                uptimeEl.textContent = formatUptime(data.uptime_seconds);
+                uptimeCard.className = "status-card ok";
+
+                // Database
+                var dbEl = document.getElementById("status-db");
+                var dbDetail = document.getElementById("status-db-detail");
+                var dbCard = document.getElementById("status-card-db");
+                if (data.database && data.database.exists) {
+                    dbEl.textContent = formatBytes(data.database.size_bytes);
+                    dbDetail.textContent = data.total_songs + " songs cached";
+                    dbCard.className = "status-card ok";
+                } else {
+                    dbEl.textContent = "Not found";
+                    dbDetail.textContent = "";
+                    dbCard.className = "status-card warn";
+                }
+
+                // DB Sync to Nextcloud
+                var dbsyncEl = document.getElementById("status-dbsync");
+                var dbsyncDetail = document.getElementById(
+                    "status-dbsync-detail",
+                );
+                var dbsyncCard = document.getElementById("status-card-dbsync");
+                if (data.db_sync) {
+                    if (data.db_sync.last_upload_ago != null) {
+                        dbsyncEl.textContent = formatAgo(
+                            data.db_sync.last_upload_ago,
+                        );
+                        dbsyncDetail.textContent =
+                            "Interval: every " +
+                            Math.round(data.db_sync.interval_seconds / 60) +
+                            "m";
+                        dbsyncCard.className =
+                            data.db_sync.last_upload_ago <
+                            data.db_sync.interval_seconds * 2
+                                ? "status-card ok"
+                                : "status-card warn";
+                    } else {
+                        dbsyncEl.textContent = "Pending";
+                        dbsyncDetail.textContent =
+                            "First upload in ~" +
+                            Math.round(data.db_sync.interval_seconds / 60) +
+                            "m";
+                        dbsyncCard.className = "status-card";
+                    }
+                }
+
+                // Library Sync
+                var libsyncEl = document.getElementById("status-libsync");
+                var libsyncDetail = document.getElementById(
+                    "status-libsync-detail",
+                );
+                var libsyncCard = document.getElementById(
+                    "status-card-libsync",
+                );
+                var sync = data.library_sync || {};
+
+                if (sync.running) {
+                    libsyncCard.className = "status-card active";
+                    var phase = sync.phase || "running";
+
+                    if (phase === "discovering") {
+                        libsyncEl.textContent = "Scanning…";
+                        libsyncDetail.textContent = "Looking for song folders";
+                    } else if (phase === "parsing") {
+                        var processed = sync.processed || 0;
+                        var total = sync.total_folders || 0;
+                        libsyncEl.textContent = processed + " / " + total;
+                        libsyncDetail.textContent =
+                            sync.last_synced_song || "Parsing songs…";
+                    } else if (phase === "purging") {
+                        libsyncEl.textContent = "Cleaning up";
+                        libsyncDetail.textContent = "Removing stale entries…";
+                    } else if (phase === "done") {
+                        libsyncEl.textContent = "Complete";
+                        libsyncDetail.textContent =
+                            sync.synced + " synced, " + sync.failed + " failed";
+                    } else {
+                        libsyncEl.textContent = "Running";
+                        libsyncDetail.textContent = "";
+                    }
+                } else {
+                    libsyncEl.textContent = "Idle";
+                    libsyncCard.className = "status-card";
+                    if (sync.synced > 0 || sync.failed > 0) {
+                        libsyncDetail.textContent =
+                            "Last: " +
+                            sync.synced +
+                            " synced, " +
+                            sync.failed +
+                            " failed";
+                    } else {
+                        libsyncDetail.textContent = "No recent sync";
+                    }
+                }
+            } catch (e) {
+                // Silently ignore errors
+            }
+        }
+
+        // Poll immediately and then on interval
+        pollSystemStatus();
+        setInterval(pollSystemStatus, STATUS_POLL_INTERVAL);
+    })();
+
+    // ── SSE-powered Library Sync (same logic as songs page) ──
+
+    var syncEventSource = null;
+
+    function syncLibrarySSE() {
+        var btn = document.getElementById("sync-library-btn");
+        var panel = document.getElementById("sync-panel");
+        var heading = document.getElementById("sync-panel-heading");
+        var statsEl = document.getElementById("sync-panel-stats");
+        var progressFill = document.getElementById("sync-progress-fill");
+        var progressPct = document.getElementById("sync-progress-pct");
+        var log = document.getElementById("sync-log");
+        var summaryEl = document.getElementById("sync-summary");
+        var actions = document.getElementById("sync-panel-actions");
+        var spinner = document.getElementById("sync-spinner");
+
+        if (!btn || !panel) return;
+
+        // Reset UI
+        btn.disabled = true;
+        btn.textContent = "⏳ Syncing…";
+        panel.style.display = "block";
+        panel.className = "sync-panel";
+        heading.textContent = "Starting sync…";
+        statsEl.innerHTML = "";
+        progressFill.style.width = "0%";
+        progressPct.textContent = "";
+        log.innerHTML = "";
+        summaryEl.style.display = "none";
+        summaryEl.innerHTML = "";
+        actions.style.display = "none";
+        spinner.className = "sync-spinner";
+
+        panel.scrollIntoView({ behavior: "smooth", block: "start" });
+
+        var synced = 0;
+        var failed = 0;
+        var total = 0;
+
+        function addLogEntry(icon, msg, cssClass) {
+            var entry = document.createElement("div");
+            entry.className = "sync-log-entry " + (cssClass || "");
+
+            var iconSpan = document.createElement("span");
+            iconSpan.className = "sync-log-icon";
+            iconSpan.textContent = icon;
+
+            var msgSpan = document.createElement("span");
+            msgSpan.className = "sync-log-msg";
+            msgSpan.textContent = msg;
+
+            entry.appendChild(iconSpan);
+            entry.appendChild(msgSpan);
+
+            if (total > 0 && (cssClass === "success" || cssClass === "error")) {
+                var counter = document.createElement("span");
+                counter.className = "sync-log-counter";
+                counter.textContent = synced + failed + "/" + total;
+                entry.appendChild(counter);
+            }
+
+            log.appendChild(entry);
+            var wrapper = log.parentElement;
+            wrapper.scrollTop = wrapper.scrollHeight;
+        }
+
+        function updateStats() {
+            var html = "";
+            if (total > 0)
+                html +=
+                    '<span class="stat">📂 <span class="stat-val">' +
+                    total +
+                    "</span> found</span>";
+            if (synced > 0)
+                html +=
+                    '<span class="stat">✅ <span class="stat-val">' +
+                    synced +
+                    "</span> synced</span>";
+            if (failed > 0)
+                html +=
+                    '<span class="stat">❌ <span class="stat-val">' +
+                    failed +
+                    "</span> failed</span>";
+            statsEl.innerHTML = html;
+        }
+
+        function finishSync(isError) {
+            btn.disabled = false;
+            btn.textContent = "🔄 Refresh Song Library from Nextcloud";
+            actions.style.display = "flex";
+
+            if (isError) {
+                spinner.className = "sync-spinner error";
+                panel.classList.add("error");
+            } else if (failed > 0) {
+                spinner.className = "sync-spinner done";
+                panel.classList.add("complete", "has-errors");
+            } else {
+                spinner.className = "sync-spinner done";
+                panel.classList.add("complete");
+            }
+
+            if (window._refreshActivityIndicator) {
+                window._refreshActivityIndicator();
+            }
+        }
+
+        if (syncEventSource) {
+            syncEventSource.close();
+            syncEventSource = null;
+        }
+
+        addLogEntry("🔄", "Connecting to server…", "info");
+
+        syncEventSource = new EventSource("/api/library/sync/stream");
+
+        syncEventSource.onmessage = function (event) {
+            var data;
+            try {
+                data = JSON.parse(event.data);
+            } catch (e) {
+                return;
+            }
+
+            var type = data.type;
+
+            switch (type) {
+                case "start":
+                    heading.textContent = "Library Sync";
+                    addLogEntry("🚀", data.message, "info");
+                    break;
+
+                case "discovering":
+                    heading.textContent = "Scanning Nextcloud…";
+                    addLogEntry("🔍", data.message, "info");
+                    break;
+
+                case "discovered":
+                    total = data.total || 0;
+                    heading.textContent =
+                        "Found " + total + " song" + (total !== 1 ? "s" : "");
+                    addLogEntry("📂", data.message, "success");
+                    updateStats();
+                    break;
+
+                case "parsing":
+                    {
+                        var pct =
+                            total > 0
+                                ? Math.round((data.index / total) * 100)
+                                : 0;
+                        progressFill.style.width = pct + "%";
+                        progressPct.textContent = pct + "%";
+                        heading.textContent =
+                            "Parsing " + data.index + "/" + total;
+                        addLogEntry("📄", data.message, "dim");
+                        updateStats();
+                    }
+                    break;
+
+                case "parsed":
+                    synced++;
+                    {
+                        var pct2 =
+                            total > 0
+                                ? Math.round((data.index / total) * 100)
+                                : 0;
+                        progressFill.style.width = pct2 + "%";
+                        progressPct.textContent = pct2 + "%";
+                        heading.textContent =
+                            "Syncing " + data.index + "/" + total;
+                        var label = data.artist
+                            ? data.artist + " — " + data.title
+                            : data.title || "?";
+                        addLogEntry("✅", label, "success");
+                        updateStats();
+                    }
+                    break;
+
+                case "parse_error":
+                    failed++;
+                    addLogEntry("❌", data.message, "error");
+                    updateStats();
+                    break;
+
+                case "purging":
+                    heading.textContent = "Cleaning up…";
+                    progressFill.style.width = "100%";
+                    progressPct.textContent = "100%";
+                    addLogEntry("🧹", data.message, "info");
+                    break;
+
+                case "purged":
+                    addLogEntry("🗑️", data.message, "info");
+                    break;
+
+                case "complete":
+                    heading.textContent = "Sync Complete";
+                    progressFill.style.width = "100%";
+                    progressPct.textContent = "100%";
+
+                    synced = data.synced || synced;
+                    failed = data.failed || failed;
+                    var purged = data.purged || 0;
+
+                    addLogEntry("🏁", data.message, "success");
+                    updateStats();
+
+                    var summaryParts = [];
+                    summaryParts.push(
+                        synced +
+                            " song" +
+                            (synced !== 1 ? "s" : "") +
+                            " synced",
+                    );
+                    if (purged > 0) summaryParts.push(purged + " removed");
+                    if (failed > 0) summaryParts.push(failed + " failed");
+                    summaryParts.push(
+                        data.total_on_nextcloud + " total on Nextcloud",
+                    );
+
+                    summaryEl.textContent = "✅ " + summaryParts.join(" · ");
+                    summaryEl.className =
+                        "sync-summary" + (failed > 0 ? " has-errors" : "");
+                    summaryEl.style.display = "block";
+
+                    showNotification(
+                        "Library sync complete: " + summaryParts.join(", "),
+                        failed > 0 ? "warning" : "success",
+                    );
+
+                    syncEventSource.close();
+                    syncEventSource = null;
+                    finishSync(false);
+                    break;
+
+                case "error":
+                    heading.textContent = "Sync Error";
+                    addLogEntry("💥", data.message, "error");
+
+                    summaryEl.textContent = "❌ " + data.message;
+                    summaryEl.className = "sync-summary has-errors";
+                    summaryEl.style.display = "block";
+
+                    showNotification("Sync error: " + data.message, "danger");
+
+                    syncEventSource.close();
+                    syncEventSource = null;
+                    finishSync(true);
+                    break;
+            }
+        };
+
+        syncEventSource.onerror = function () {
+            if (syncEventSource) {
+                syncEventSource.close();
+                syncEventSource = null;
+                if (actions.style.display === "none") {
+                    heading.textContent = "Connection Lost";
+                    addLogEntry("⚠️", "Connection to server was lost", "error");
+                    finishSync(true);
+                }
+            }
+        };
+    }
+
+    function closeSyncPanel() {
+        var panel = document.getElementById("sync-panel");
+        if (panel) panel.style.display = "none";
+    }
+</script>
 {% endblock %}

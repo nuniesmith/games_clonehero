@@ -21,6 +21,9 @@ httpx
 librosa
 numpy
 
+# Image generation (album art)
+Pillow
+
 # Archive extraction
 rarfile
 

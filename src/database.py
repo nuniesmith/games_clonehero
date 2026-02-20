@@ -3,6 +3,11 @@ Clone Hero Content Manager - SQLite Database
 
 Replaces the multi-container PostgreSQL setup with an embedded SQLite database.
 Uses aiosqlite for async operations within FastAPI and plain sqlite3 for sync helpers.
+
+The `remote_path` column stores the Nextcloud WebDAV path for each song
+(e.g. ``/songs/Artist/Title_abc123``).  The legacy `file_path` column is
+kept for backwards compatibility but is no longer the primary identifier —
+`remote_path` is now the canonical location of a song.
 """
 
 import sqlite3
@@ -23,8 +28,10 @@ CREATE TABLE IF NOT EXISTS songs (
     title TEXT NOT NULL,
     artist TEXT NOT NULL,
     album TEXT,
-    file_path TEXT UNIQUE NOT NULL,
+    file_path TEXT DEFAULT '',
+    remote_path TEXT UNIQUE NOT NULL,
     metadata TEXT DEFAULT '{}',
+    synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -32,6 +39,7 @@ CREATE TABLE IF NOT EXISTS songs (
 CREATE INDEX IF NOT EXISTS idx_songs_title ON songs(title COLLATE NOCASE);
 CREATE INDEX IF NOT EXISTS idx_songs_artist ON songs(artist COLLATE NOCASE);
 CREATE INDEX IF NOT EXISTS idx_songs_album ON songs(album COLLATE NOCASE);
+CREATE INDEX IF NOT EXISTS idx_songs_remote_path ON songs(remote_path);
 
 CREATE TRIGGER IF NOT EXISTS update_songs_timestamp
     AFTER UPDATE ON songs
@@ -41,17 +49,56 @@ BEGIN
 END;
 """
 
+# ---------------------------------------------------------------------------
+# Migration helpers
+# ---------------------------------------------------------------------------
+_MIGRATIONS = [
+    # Migration 1: Add remote_path column if it doesn't exist (upgrade from
+    #              the local-only schema).
+    {
+        "check": "SELECT COUNT(*) FROM pragma_table_info('songs') WHERE name='remote_path'",
+        "apply": [
+            "ALTER TABLE songs ADD COLUMN remote_path TEXT DEFAULT ''",
+            "UPDATE songs SET remote_path = file_path WHERE remote_path = ''",
+            "CREATE INDEX IF NOT EXISTS idx_songs_remote_path ON songs(remote_path)",
+        ],
+        "description": "Add remote_path column",
+    },
+    # Migration 2: Add synced_at column
+    {
+        "check": "SELECT COUNT(*) FROM pragma_table_info('songs') WHERE name='synced_at'",
+        "apply": [
+            "ALTER TABLE songs ADD COLUMN synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+        ],
+        "description": "Add synced_at column",
+    },
+]
+
+
+def _run_migrations(conn: sqlite3.Connection) -> None:
+    """Run any pending schema migrations."""
+    for migration in _MIGRATIONS:
+        cursor = conn.execute(migration["check"])
+        (count,) = cursor.fetchone()
+        if count == 0:
+            logger.info("🔄 Running migration: {}", migration["description"])
+            for stmt in migration["apply"]:
+                conn.execute(stmt)
+            conn.commit()
+            logger.success("✅ Migration applied: {}", migration["description"])
+
 
 # ---------------------------------------------------------------------------
 # Initialization
 # ---------------------------------------------------------------------------
 def init_db() -> None:
-    """Initialize the SQLite database and create tables if needed."""
+    """Initialize the SQLite database, create tables, and run migrations."""
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     try:
         with sqlite3.connect(str(DB_PATH)) as conn:
             conn.executescript(SCHEMA_SQL)
             conn.commit()
+            _run_migrations(conn)
         logger.success(f"✅ Database initialized at {DB_PATH}")
     except Exception as e:
         logger.critical(f"❌ Failed to initialize database: {e}")
@@ -103,43 +150,82 @@ async def insert_song(
     title: str,
     artist: str,
     album: Optional[str],
-    file_path: str,
+    remote_path: str,
     metadata: str = "{}",
+    file_path: str = "",
 ) -> int:
-    """Insert a song and return its id. Returns existing id on duplicate file_path."""
+    """Insert a song and return its id. Returns existing id on duplicate remote_path."""
     async with get_async_connection() as db:
-        # Check for duplicate by file_path
+        # Check for duplicate by remote_path
         cursor = await db.execute(
-            "SELECT id FROM songs WHERE file_path = ?", (file_path,)
+            "SELECT id FROM songs WHERE remote_path = ?", (remote_path,)
         )
         existing = await cursor.fetchone()
         if existing:
-            logger.warning(f"⚠️ Duplicate file_path, skipping insert: {file_path}")
-            return existing["id"]
-
-        # Check for duplicate by title + artist + album
-        cursor = await db.execute(
-            "SELECT id FROM songs WHERE title = ? AND artist = ? AND album = ?",
-            (title, artist, album),
-        )
-        existing = await cursor.fetchone()
-        if existing:
-            logger.warning(
-                f"⚠️ Duplicate song detected (title/artist/album), skipping: {title} - {artist}"
-            )
+            logger.warning(f"⚠️ Duplicate remote_path, skipping insert: {remote_path}")
             return existing["id"]
 
         cursor = await db.execute(
             """
-            INSERT INTO songs (title, artist, album, file_path, metadata)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO songs (title, artist, album, file_path, remote_path, metadata, synced_at)
+            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             """,
-            (title, artist, album, file_path, metadata),
+            (title, artist, album, file_path, remote_path, metadata),
         )
         await db.commit()
         song_id = cursor.lastrowid or 0
         logger.success(f"✅ Song added (id={song_id}): {title} - {artist}")
         return song_id
+
+
+async def upsert_song(
+    title: str,
+    artist: str,
+    album: Optional[str],
+    remote_path: str,
+    metadata: str = "{}",
+    file_path: str = "",
+) -> int:
+    """
+    Insert or update a song keyed by *remote_path*.
+
+    If a row with the same ``remote_path`` already exists its metadata
+    fields are updated; otherwise a new row is created.
+
+    Returns the song id.
+    """
+    async with get_async_connection() as db:
+        cursor = await db.execute(
+            "SELECT id FROM songs WHERE remote_path = ?", (remote_path,)
+        )
+        existing = await cursor.fetchone()
+
+        if existing:
+            song_id = existing["id"]
+            await db.execute(
+                """
+                UPDATE songs
+                SET title = ?, artist = ?, album = ?, file_path = ?,
+                    metadata = ?, synced_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (title, artist, album, file_path, metadata, song_id),
+            )
+            await db.commit()
+            logger.info(f"🔄 Song updated (id={song_id}): {title} - {artist}")
+            return song_id
+        else:
+            cursor = await db.execute(
+                """
+                INSERT INTO songs (title, artist, album, file_path, remote_path, metadata, synced_at)
+                VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                (title, artist, album, file_path, remote_path, metadata),
+            )
+            await db.commit()
+            song_id = cursor.lastrowid or 0
+            logger.success(f"✅ Song added (id={song_id}): {title} - {artist}")
+            return song_id
 
 
 async def get_songs(
@@ -177,12 +263,30 @@ async def get_song_by_id(song_id: int) -> Optional[Dict[str, Any]]:
         return row_to_dict(row) if row else None
 
 
+async def get_song_by_remote_path(remote_path: str) -> Optional[Dict[str, Any]]:
+    """Fetch a single song by its Nextcloud remote path."""
+    async with get_async_connection() as db:
+        cursor = await db.execute(
+            "SELECT * FROM songs WHERE remote_path = ?", (remote_path,)
+        )
+        row = await cursor.fetchone()
+        return row_to_dict(row) if row else None
+
+
+async def get_all_remote_paths() -> List[str]:
+    """Return a list of all remote_path values currently in the database."""
+    async with get_async_connection() as db:
+        cursor = await db.execute("SELECT remote_path FROM songs ORDER BY id")
+        rows = await cursor.fetchall()
+        return [r["remote_path"] for r in rows]
+
+
 async def update_song(song_id: int, **fields) -> bool:
     """Update specific fields of a song. Returns True if a row was modified."""
     if not fields:
         return False
 
-    allowed = {"title", "artist", "album", "file_path", "metadata"}
+    allowed = {"title", "artist", "album", "file_path", "remote_path", "metadata"}
     filtered = {k: v for k, v in fields.items() if k in allowed}
     if not filtered:
         return False
@@ -209,9 +313,22 @@ async def delete_song(song_id: int) -> bool:
         await db.commit()
         deleted = cursor.rowcount > 0
         if deleted:
-            logger.info(f"🗑️ Song id={song_id} deleted")
+            logger.info(f"🗑️ Song id={song_id} deleted from database")
         else:
             logger.warning(f"⚠️ Song id={song_id} not found for deletion")
+        return deleted
+
+
+async def delete_song_by_remote_path(remote_path: str) -> bool:
+    """Delete a song by its remote_path. Returns True if a row was deleted."""
+    async with get_async_connection() as db:
+        cursor = await db.execute(
+            "DELETE FROM songs WHERE remote_path = ?", (remote_path,)
+        )
+        await db.commit()
+        deleted = cursor.rowcount > 0
+        if deleted:
+            logger.info(f"🗑️ Song deleted (remote_path={remote_path})")
         return deleted
 
 
@@ -233,6 +350,39 @@ async def count_songs(search: Optional[str] = None) -> int:
         return row["cnt"] if row else 0
 
 
+async def purge_stale_songs(valid_remote_paths: List[str]) -> int:
+    """
+    Remove songs whose ``remote_path`` is **not** in *valid_remote_paths*.
+
+    This is used during a library sync to clean up songs that have been
+    deleted from Nextcloud.  Returns the number of rows removed.
+    """
+    if not valid_remote_paths:
+        return 0
+
+    async with get_async_connection() as db:
+        # Fetch all current remote_paths
+        cursor = await db.execute("SELECT id, remote_path FROM songs")
+        rows = await cursor.fetchall()
+
+        valid_set = set(valid_remote_paths)
+        ids_to_delete = [r["id"] for r in rows if r["remote_path"] not in valid_set]
+
+        if not ids_to_delete:
+            return 0
+
+        placeholders = ", ".join("?" for _ in ids_to_delete)
+        await db.execute(
+            f"DELETE FROM songs WHERE id IN ({placeholders})",
+            ids_to_delete,
+        )
+        await db.commit()
+        logger.info(
+            "🗑️ Purged {} stale song(s) no longer on Nextcloud", len(ids_to_delete)
+        )
+        return len(ids_to_delete)
+
+
 # ---------------------------------------------------------------------------
 # Sync CRUD helpers (for use in non-async service code)
 # ---------------------------------------------------------------------------
@@ -240,36 +390,71 @@ def insert_song_sync(
     title: str,
     artist: str,
     album: Optional[str],
-    file_path: str,
+    remote_path: str,
     metadata: str = "{}",
+    file_path: str = "",
 ) -> int:
     """Synchronous version of insert_song for use in service-layer code."""
     with get_connection() as conn:
-        cursor = conn.execute("SELECT id FROM songs WHERE file_path = ?", (file_path,))
-        existing = cursor.fetchone()
-        if existing:
-            logger.warning(f"⚠️ Duplicate file_path, skipping insert: {file_path}")
-            return existing["id"]
-
         cursor = conn.execute(
-            "SELECT id FROM songs WHERE title = ? AND artist = ? AND album = ?",
-            (title, artist, album),
+            "SELECT id FROM songs WHERE remote_path = ?", (remote_path,)
         )
         existing = cursor.fetchone()
         if existing:
-            logger.warning(
-                f"⚠️ Duplicate song (title/artist/album), skipping: {title} - {artist}"
-            )
+            logger.warning(f"⚠️ Duplicate remote_path, skipping insert: {remote_path}")
             return existing["id"]
 
         cursor = conn.execute(
             """
-            INSERT INTO songs (title, artist, album, file_path, metadata)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO songs (title, artist, album, file_path, remote_path, metadata, synced_at)
+            VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
             """,
-            (title, artist, album, file_path, metadata),
+            (title, artist, album, file_path, remote_path, metadata),
         )
         conn.commit()
         song_id = cursor.lastrowid or 0
         logger.success(f"✅ Song added (id={song_id}): {title} - {artist}")
         return song_id
+
+
+def upsert_song_sync(
+    title: str,
+    artist: str,
+    album: Optional[str],
+    remote_path: str,
+    metadata: str = "{}",
+    file_path: str = "",
+) -> int:
+    """Synchronous upsert keyed by *remote_path*."""
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "SELECT id FROM songs WHERE remote_path = ?", (remote_path,)
+        )
+        existing = cursor.fetchone()
+
+        if existing:
+            song_id = existing["id"]
+            conn.execute(
+                """
+                UPDATE songs
+                SET title = ?, artist = ?, album = ?, file_path = ?,
+                    metadata = ?, synced_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (title, artist, album, file_path, metadata, song_id),
+            )
+            conn.commit()
+            logger.info(f"🔄 Song updated (id={song_id}): {title} - {artist}")
+            return song_id
+        else:
+            cursor = conn.execute(
+                """
+                INSERT INTO songs (title, artist, album, file_path, remote_path, metadata, synced_at)
+                VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                (title, artist, album, file_path, remote_path, metadata),
+            )
+            conn.commit()
+            song_id = cursor.lastrowid or 0
+            logger.success(f"✅ Song added (id={song_id}): {title} - {artist}")
+            return song_id

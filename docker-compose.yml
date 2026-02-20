@@ -11,8 +11,6 @@ services:
             PYTHONPATH: "/app"
         ports:
             - "${APP_PORT:-8000}:8000"
-        volumes:
-            - ./data:/app/data
         healthcheck:
             test:
                 [
@@ -24,7 +22,3 @@ services:
             retries: 3
             start_period: 15s
         restart: unless-stopped
-
-volumes:
-    data:
-        driver: local

@@ -13,6 +13,107 @@
             href="{{ url_for('static', path='assets/ch_icon.png') }}"
             type="image/png"
         />
+        <style>
+            /* ── Sidebar Activity Indicator ── */
+            .sidebar-activity {
+                margin-top: 12px;
+                padding: 10px 12px;
+                background: rgba(255, 255, 255, 0.06);
+                border-radius: 6px;
+                font-size: 0.82em;
+                line-height: 1.45;
+                color: #bdc3c7;
+                transition: background 0.3s;
+            }
+            .sidebar-activity.has-activity {
+                background: rgba(52, 152, 219, 0.15);
+            }
+            .sidebar-activity-title {
+                display: flex;
+                align-items: center;
+                gap: 6px;
+                font-weight: bold;
+                color: #ecf0f1;
+                margin-bottom: 6px;
+                font-size: 0.92em;
+            }
+            .activity-dot {
+                width: 8px;
+                height: 8px;
+                border-radius: 50%;
+                background: #27ae60;
+                display: inline-block;
+                flex-shrink: 0;
+            }
+            .activity-dot.busy {
+                background: #3498db;
+                animation: pulse-dot 1.2s ease-in-out infinite;
+            }
+            .activity-dot.warn {
+                background: #f39c12;
+            }
+            .activity-dot.error {
+                background: #e74c3c;
+            }
+            @keyframes pulse-dot {
+                0%,
+                100% {
+                    opacity: 1;
+                    transform: scale(1);
+                }
+                50% {
+                    opacity: 0.5;
+                    transform: scale(1.4);
+                }
+            }
+            .activity-row {
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                padding: 2px 0;
+                gap: 6px;
+            }
+            .activity-label {
+                color: #95a5a6;
+                white-space: nowrap;
+            }
+            .activity-value {
+                color: #ecf0f1;
+                text-align: right;
+                word-break: break-word;
+                max-width: 140px;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+            .activity-value.syncing {
+                color: #3498db;
+                font-weight: bold;
+            }
+            .activity-progress-bar {
+                width: 100%;
+                height: 4px;
+                background: rgba(255, 255, 255, 0.1);
+                border-radius: 2px;
+                margin: 6px 0 2px 0;
+                overflow: hidden;
+            }
+            .activity-progress-fill {
+                height: 100%;
+                background: #3498db;
+                border-radius: 2px;
+                transition: width 0.3s ease;
+                width: 0%;
+            }
+            .activity-current-song {
+                color: #3498db;
+                font-size: 0.9em;
+                margin-top: 4px;
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+        </style>
         {% block extra_css %}{% endblock %}
     </head>
     <body>
@@ -75,7 +176,45 @@
 
             <div class="sidebar-footer">
                 <hr />
-                <p>🛠️ <strong>Clone Hero Manager</strong></p>
+                <!-- Activity Indicator -->
+                <div class="sidebar-activity" id="sidebar-activity">
+                    <div class="sidebar-activity-title">
+                        <span class="activity-dot" id="activity-dot"></span>
+                        <span id="activity-title">System Idle</span>
+                    </div>
+                    <div class="activity-row">
+                        <span class="activity-label">Songs:</span>
+                        <span class="activity-value" id="activity-songs"
+                            >—</span
+                        >
+                    </div>
+                    <div class="activity-row">
+                        <span class="activity-label">DB Sync:</span>
+                        <span class="activity-value" id="activity-db">—</span>
+                    </div>
+                    <div class="activity-row">
+                        <span class="activity-label">Nextcloud:</span>
+                        <span class="activity-value" id="activity-webdav"
+                            >—</span
+                        >
+                    </div>
+                    <!-- Shown only during library sync -->
+                    <div id="activity-sync-section" style="display: none">
+                        <div class="activity-progress-bar">
+                            <div
+                                class="activity-progress-fill"
+                                id="activity-sync-progress"
+                            ></div>
+                        </div>
+                        <div
+                            class="activity-current-song"
+                            id="activity-sync-detail"
+                        ></div>
+                    </div>
+                </div>
+                <p style="margin-top: 10px">
+                    🛠️ <strong>Clone Hero Manager</strong>
+                </p>
                 <p>v{{ version | default('2.0.0') }}</p>
             </div>
         </div>
@@ -95,6 +234,165 @@
 
         <!-- Scripts -->
         <script src="{{ url_for('static', path='js/main.js') }}"></script>
+        <script>
+            // ── Global Activity Indicator ──
+            // Polls /api/system/status every few seconds and updates the sidebar.
+            (function () {
+                const POLL_INTERVAL_IDLE = 8000; // 8s when idle
+                const POLL_INTERVAL_BUSY = 1500; // 1.5s when sync is running
+
+                const dot = document.getElementById("activity-dot");
+                const title = document.getElementById("activity-title");
+                const songsEl = document.getElementById("activity-songs");
+                const dbEl = document.getElementById("activity-db");
+                const webdavEl = document.getElementById("activity-webdav");
+                const container = document.getElementById("sidebar-activity");
+                const syncSection = document.getElementById(
+                    "activity-sync-section",
+                );
+                const syncProgress = document.getElementById(
+                    "activity-sync-progress",
+                );
+                const syncDetail = document.getElementById(
+                    "activity-sync-detail",
+                );
+
+                let currentInterval = POLL_INTERVAL_IDLE;
+                let pollTimer = null;
+
+                function formatAgo(seconds) {
+                    if (seconds == null) return "never";
+                    if (seconds < 60) return Math.round(seconds) + "s ago";
+                    if (seconds < 3600)
+                        return Math.round(seconds / 60) + "m ago";
+                    return Math.round(seconds / 3600) + "h ago";
+                }
+
+                async function pollStatus() {
+                    try {
+                        const resp = await fetch("/api/system/status");
+                        if (!resp.ok) return;
+                        const data = await resp.json();
+
+                        // Song count
+                        songsEl.textContent =
+                            data.total_songs != null ? data.total_songs : "—";
+
+                        // Nextcloud
+                        webdavEl.textContent = data.webdav_configured
+                            ? "✅ configured"
+                            : "❌ not set";
+
+                        // DB sync
+                        if (
+                            data.db_sync &&
+                            data.db_sync.last_upload_ago != null
+                        ) {
+                            dbEl.textContent =
+                                "✅ " + formatAgo(data.db_sync.last_upload_ago);
+                        } else {
+                            dbEl.textContent = "pending";
+                        }
+
+                        // Library sync state
+                        const sync = data.library_sync || {};
+                        const isRunning = sync.running === true;
+
+                        if (isRunning) {
+                            container.classList.add("has-activity");
+                            dot.className = "activity-dot busy";
+                            syncSection.style.display = "block";
+
+                            const phase = sync.phase || "";
+                            const processed = sync.processed || 0;
+                            const total = sync.total_folders || 0;
+
+                            if (phase === "discovering") {
+                                title.textContent = "Scanning Nextcloud…";
+                                syncProgress.style.width = "0%";
+                                syncDetail.textContent =
+                                    "Looking for song folders…";
+                            } else if (phase === "parsing" && total > 0) {
+                                const pct = Math.round(
+                                    (processed / total) * 100,
+                                );
+                                title.textContent =
+                                    "Syncing " + processed + "/" + total;
+                                syncProgress.style.width = pct + "%";
+                                if (sync.last_synced_song) {
+                                    syncDetail.textContent =
+                                        "🎵 " + sync.last_synced_song;
+                                } else if (sync.current_folder) {
+                                    const name =
+                                        sync.current_folder
+                                            .split("/")
+                                            .filter(Boolean)
+                                            .pop() || "";
+                                    syncDetail.textContent = "📂 " + name;
+                                } else {
+                                    syncDetail.textContent = "";
+                                }
+                            } else if (phase === "purging") {
+                                title.textContent = "Cleaning up…";
+                                syncProgress.style.width = "100%";
+                                syncDetail.textContent =
+                                    "Removing stale entries…";
+                            } else if (phase === "done") {
+                                title.textContent = "Sync Complete";
+                                syncProgress.style.width = "100%";
+                                syncDetail.textContent =
+                                    sync.synced +
+                                    " synced, " +
+                                    sync.purged +
+                                    " removed, " +
+                                    sync.failed +
+                                    " failed";
+                            } else {
+                                title.textContent = "Syncing…";
+                                syncDetail.textContent = "";
+                            }
+
+                            // Poll faster during activity
+                            if (currentInterval !== POLL_INTERVAL_BUSY) {
+                                currentInterval = POLL_INTERVAL_BUSY;
+                                schedulePoll();
+                            }
+                        } else {
+                            container.classList.remove("has-activity");
+                            dot.className = "activity-dot";
+                            title.textContent = "System Idle";
+                            syncSection.style.display = "none";
+                            syncDetail.textContent = "";
+
+                            // Slow down polling when idle
+                            if (currentInterval !== POLL_INTERVAL_IDLE) {
+                                currentInterval = POLL_INTERVAL_IDLE;
+                                schedulePoll();
+                            }
+                        }
+                    } catch (e) {
+                        // Silently ignore poll errors — the indicator just stays stale
+                        dot.className = "activity-dot warn";
+                        title.textContent = "Status unavailable";
+                    }
+                }
+
+                function schedulePoll() {
+                    if (pollTimer) clearTimeout(pollTimer);
+                    pollTimer = setTimeout(async function tick() {
+                        await pollStatus();
+                        pollTimer = setTimeout(tick, currentInterval);
+                    }, currentInterval);
+                }
+
+                // Initial poll immediately, then schedule
+                pollStatus();
+                schedulePoll();
+
+                // Expose for other scripts to trigger an immediate refresh
+                window._refreshActivityIndicator = pollStatus;
+            })();
+        </script>
         {% block extra_js %}{% endblock %}
     </body>
 </html>

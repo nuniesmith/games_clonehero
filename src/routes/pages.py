@@ -4,6 +4,9 @@ Clone Hero Content Manager - Page Routes
 Serves HTML pages using Jinja2 templates. These routes handle all the
 browser-facing views: home, songs browser, song editor, upload page,
 song generator, and the Nextcloud WebDAV file browser.
+
+Songs are stored on Nextcloud via WebDAV.  The local SQLite database is
+a metadata cache that is refreshed by the library sync process.
 """
 
 import json
@@ -13,7 +16,7 @@ from fastapi import APIRouter, Query, Request
 from fastapi.responses import HTMLResponse
 from loguru import logger
 
-from src.config import APP_VERSION, CONTENT_FOLDERS
+from src.config import APP_VERSION, CONTENT_FOLDERS, NEXTCLOUD_SONGS_PATH
 from src.database import count_songs, get_song_by_id, get_songs
 from src.webdav import check_connection, is_configured, list_directory
 
@@ -63,13 +66,20 @@ def _paginate(page: int, total: int, page_size: int = PAGE_SIZE) -> dict:
 async def home(request: Request):
     """Landing page / dashboard."""
     total = await count_songs()
-    webdav_ok = is_configured()
+    webdav_configured = is_configured()
+    webdav_connected = False
+
+    if webdav_configured:
+        status = await check_connection()
+        webdav_connected = status.get("connected", False)
 
     context = {
         "request": request,
         "page_title": "Home",
         "total_songs": total,
-        "webdav_configured": webdav_ok,
+        "webdav_configured": webdav_configured,
+        "webdav_connected": webdav_connected,
+        "nextcloud_songs_path": NEXTCLOUD_SONGS_PATH,
         "version": APP_VERSION,
         "content_types": list(CONTENT_FOLDERS.keys()),
     }
@@ -85,7 +95,7 @@ async def songs_page(
     search: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
 ):
-    """Browse and search songs stored in the local database."""
+    """Browse and search songs stored in the local metadata cache."""
     search_query = search.strip() if search else None
 
     total = await count_songs(search=search_query)
@@ -107,6 +117,8 @@ async def songs_page(
         "songs": songs,
         "search_query": search_query or "",
         "pagination": pag,
+        "webdav_configured": is_configured(),
+        "nextcloud_songs_path": NEXTCLOUD_SONGS_PATH,
     }
     return request.app.state.templates.TemplateResponse("songs.html", context)
 
@@ -133,6 +145,7 @@ async def song_editor(request: Request, song_id: int):
         "request": request,
         "page_title": f"Edit: {song.get('title', 'Song')}",
         "song": song,
+        "webdav_configured": is_configured(),
     }
     return request.app.state.templates.TemplateResponse("editor.html", context)
 
@@ -147,6 +160,7 @@ async def upload_page(request: Request):
         "request": request,
         "page_title": "Upload Content",
         "content_types": ["songs", "backgrounds", "colors", "highways"],
+        "webdav_configured": is_configured(),
     }
     return request.app.state.templates.TemplateResponse("upload.html", context)
 
@@ -160,6 +174,7 @@ async def generator_page(request: Request):
     context = {
         "request": request,
         "page_title": "Song Generator",
+        "webdav_configured": is_configured(),
     }
     return request.app.state.templates.TemplateResponse("generator.html", context)
 
@@ -213,5 +228,6 @@ async def browser_page(
         "current_path": path,
         "parent_path": parent_path,
         "breadcrumbs": breadcrumbs,
+        "nextcloud_songs_path": NEXTCLOUD_SONGS_PATH,
     }
     return request.app.state.templates.TemplateResponse("browser.html", context)

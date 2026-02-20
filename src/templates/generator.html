@@ -1,11 +1,22 @@
-{% extends 'base.html' %}
-
-{% block title %}Song Generator - Clone Hero Manager{% endblock %}
-
-{% block content %}
+{% extends 'base.html' %} {% block title %}Song Generator - Clone Hero Manager{%
+endblock %} {% block content %}
 <div class="container">
     <h1>🎵 Song Generator</h1>
-    <p>Upload an audio file and generate a Clone Hero chart with auto-detected tempo, beats, and note patterns.</p>
+    <p>
+        Upload an audio file and generate a Clone Hero chart with auto-detected
+        tempo, beats, and note patterns. Generated songs are uploaded directly
+        to Nextcloud.
+    </p>
+
+    {% if not webdav_configured %}
+    <div class="alert alert-warning">
+        ⚠️ <strong>Nextcloud not configured.</strong> Song generation requires a
+        configured Nextcloud connection because generated charts are uploaded to
+        Nextcloud. Set <code>NEXTCLOUD_URL</code>,
+        <code>NEXTCLOUD_USERNAME</code>, and <code>NEXTCLOUD_PASSWORD</code> in
+        your <code>.env</code> file.
+    </div>
+    {% endif %}
 
     <!-- Generator Form -->
     <div class="upload-section">
@@ -15,11 +26,21 @@
             <div class="form-row">
                 <div class="form-group">
                     <label for="songName">Song Name</label>
-                    <input type="text" id="songName" name="song_name" placeholder="Leave blank to use filename">
+                    <input
+                        type="text"
+                        id="songName"
+                        name="song_name"
+                        placeholder="Leave blank to use filename"
+                    />
                 </div>
                 <div class="form-group">
                     <label for="artistName">Artist</label>
-                    <input type="text" id="artistName" name="artist" placeholder="Leave blank for 'Unknown Artist'">
+                    <input
+                        type="text"
+                        id="artistName"
+                        name="artist"
+                        placeholder="Leave blank for 'Unknown Artist'"
+                    />
                 </div>
             </div>
 
@@ -35,57 +56,136 @@
                 </div>
             </div>
 
+            <!-- Extra Generation Options -->
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Extra Features</label>
+                    <div class="checkbox-group">
+                        <label class="checkbox-label" for="enableLyrics">
+                            <input
+                                type="checkbox"
+                                id="enableLyrics"
+                                name="enable_lyrics"
+                                value="true"
+                                checked
+                            />
+                            <span class="checkbox-icon">🎤</span> Generate
+                            Lyrics
+                            <small class="checkbox-hint"
+                                >Procedural lyrics timed to beats, displayed
+                                in-game</small
+                            >
+                        </label>
+                        <label class="checkbox-label" for="enableAlbumArt">
+                            <input
+                                type="checkbox"
+                                id="enableAlbumArt"
+                                name="enable_album_art"
+                                value="true"
+                                checked
+                            />
+                            <span class="checkbox-icon">🎨</span> Generate Album
+                            Art
+                            <small class="checkbox-hint"
+                                >Procedural cover art based on audio features
+                                &amp; genre</small
+                            >
+                        </label>
+                    </div>
+                </div>
+            </div>
+
             <!-- Drop Zone -->
             <div class="drop-zone" id="dropZone">
                 <div class="drop-zone-content" id="dropZoneContent">
                     <div class="drop-zone-icon">🎶</div>
                     <p class="drop-zone-text">Drag & drop an audio file here</p>
-                    <p class="drop-zone-hint">or click to browse — MP3, WAV, OGG, FLAC, OPUS</p>
-                    <input type="file" id="fileInput" name="file" class="drop-zone-input"
-                           accept=".mp3,.ogg,.wav,.flac,.opus" required>
+                    <p class="drop-zone-hint">
+                        or click to browse — MP3, WAV, OGG, FLAC, OPUS
+                    </p>
+                    <input
+                        type="file"
+                        id="fileInput"
+                        name="file"
+                        class="drop-zone-input"
+                        accept=".mp3,.ogg,.wav,.flac,.opus"
+                        required
+                    />
                 </div>
-                <div class="drop-zone-preview" id="filePreview" style="display:none;">
+                <div
+                    class="drop-zone-preview"
+                    id="filePreview"
+                    style="display: none"
+                >
                     <div class="preview-info">
                         <span class="preview-icon" id="previewIcon">🎵</span>
                         <div class="preview-details">
                             <span class="preview-name" id="previewName"></span>
                             <span class="preview-size" id="previewSize"></span>
                         </div>
-                        <button type="button" class="btn btn-danger btn-sm" id="clearFileBtn" title="Remove file">✕</button>
+                        <button
+                            type="button"
+                            class="btn btn-danger btn-sm"
+                            id="clearFileBtn"
+                            title="Remove file"
+                        >
+                            ✕
+                        </button>
                     </div>
                 </div>
             </div>
 
-            <div id="generatorStatus" class="status-message" style="display:none;"></div>
+            <div
+                id="generatorStatus"
+                class="status-message"
+                style="display: none"
+            ></div>
 
             <!-- Progress -->
-            <div id="progressContainer" class="progress-container" style="display:none;">
+            <div
+                id="progressContainer"
+                class="progress-container"
+                style="display: none"
+            >
                 <div class="progress-bar">
-                    <div class="progress-fill indeterminate" id="progressFill"></div>
+                    <div
+                        class="progress-fill indeterminate"
+                        id="progressFill"
+                    ></div>
                 </div>
                 <span class="progress-text" id="progressText">⏳</span>
             </div>
 
             <div class="upload-actions">
-                <button type="submit" class="btn btn-primary" id="generateBtn">🎸 Generate Chart</button>
-                <button type="reset" class="btn btn-secondary" id="resetBtn">🔄 Reset</button>
+                <button type="submit" class="btn btn-primary" id="generateBtn">
+                    🎸 Generate Chart
+                </button>
+                <button type="reset" class="btn btn-secondary" id="resetBtn">
+                    🔄 Reset
+                </button>
             </div>
         </form>
     </div>
 
     <!-- Result Section -->
-    <div id="resultSection" class="result-section" style="display:none;">
+    <div id="resultSection" class="result-section" style="display: none">
         <h3 id="resultTitle">✅ Chart Generated</h3>
         <div id="resultContent"></div>
         <div class="result-actions">
             <a href="/songs" class="btn btn-primary">📁 View Song Library</a>
-            <button type="button" class="btn btn-secondary" onclick="resetGenerator()">🎵 Generate Another</button>
+            <button
+                type="button"
+                class="btn btn-secondary"
+                onclick="resetGenerator()"
+            >
+                🎵 Generate Another
+            </button>
         </div>
     </div>
 
     <!-- How It Works -->
     <div class="info-section">
-        <h2></h2>📖 How It Works</h2>
+        <h2>📖 How It Works</h2>
 
         <h3>Step-by-Step Process</h3>
         <ol>
@@ -93,54 +193,184 @@
                 <strong>Upload an Audio File</strong>
                 <ul>
                     <li>Supported formats: MP3, WAV, OGG, FLAC, OPUS</li>
-                    <li>The file is analysed for tempo, beats, onsets, and rhythm patterns using <code>librosa</code>.</li>
+                    <li>
+                        The file is analysed for tempo, beats, onsets, and
+                        rhythm patterns using <code>librosa</code>.
+                    </li>
                 </ul>
             </li>
             <li>
-                <strong></strong>Automatic Chart Generation</strong>
+                <strong>Automatic Chart Generation</strong>
                 <ul>
-                    <li>BPM (beats per minute) is detected and a sync track is generated.</li>
-                    <li>Note positions are mapped from onset events to create playable patterns.</li>
-                    <li>Section markers (Intro, Verse, Chorus, etc.) are estimated automatically.</li>
+                    <li>
+                        BPM (beats per minute) is detected and a stable sync
+                        track is generated.
+                    </li>
+                    <li>
+                        Note positions are mapped from onset events to create
+                        playable patterns.
+                    </li>
+                    <li>
+                        Section markers (Intro, Verse, Chorus, Bridge, etc.) are
+                        estimated via spectral analysis.
+                    </li>
+                    <li>
+                        HOPOs, chords, star power sections, and sustain notes
+                        are placed automatically.
+                    </li>
+                </ul>
+            </li>
+            <li>
+                <strong>🎤 Lyrics Generation <em>(optional)</em></strong>
+                <ul>
+                    <li>Procedural lyrics are generated and timed to beats.</li>
+                    <li>
+                        Themed word banks are selected based on genre (rock,
+                        pop, metal, electronic, chill, etc.).
+                    </li>
+                    <li>
+                        Chorus phrases repeat for a natural song feel; verses
+                        vary.
+                    </li>
+                    <li>Lyrics appear in Clone Hero's in-game lyric track.</li>
+                </ul>
+            </li>
+            <li>
+                <strong>🎨 Album Art Generation <em>(optional)</em></strong>
+                <ul>
+                    <li>
+                        A unique 512×512 <code>album.png</code> cover is
+                        generated procedurally.
+                    </li>
+                    <li>
+                        Colour palette is derived from tempo, energy, and genre.
+                    </li>
+                    <li>
+                        Art style is chosen per genre (geometric, waveform,
+                        vinyl, nebula, circuit).
+                    </li>
+                    <li>Song title and artist are rendered on the cover.</li>
                 </ul>
             </li>
             <li>
                 <strong>Song Folder Created</strong>
                 <ul>
-                    <li>A <code>notes.chart</code> file is generated in Clone Hero format.</li>
-                    <li>A <code>song.ini</code> file is created with metadata you provide.</li>
+                    <li>
+                        A <code>notes.chart</code> file is generated with all
+                        four difficulty levels.
+                    </li>
+                    <li>
+                        A <code>song.ini</code> file is created with metadata
+                        you provide.
+                    </li>
                     <li>The audio file is copied into the song folder.</li>
-                    <li>The song is registered in your local database and ready to play!</li>
+                    <li>
+                        Everything is uploaded to Nextcloud and registered in
+                        your library.
+                    </li>
                 </ul>
             </li>
         </ol>
 
         <h3>🔍 Features</h3>
         <ul>
-            <li>✅ Automatic tempo detection and beat tracking</li>
+            <li>
+                ✅ Automatic tempo detection and stable beat tracking
+                (milli-BPM)
+            </li>
             <li>✅ Onset-based note placement for natural-feeling charts</li>
-            <li>✅ Multiple difficulty levels (Easy, Medium, Hard, Expert)</li>
-            <li>✅ Section markers for song structure</li>
-            <li>✅ Variable tempo support</li>
-            <li>✅ Full song.ini and notes.chart output</li>
+            <li>
+                ✅ All 4 difficulty levels (Easy, Medium, Hard, Expert) with
+                tailored profiles
+            </li>
+            <li>✅ Structural section markers via spectral analysis</li>
+            <li>✅ HOPOs on close consecutive different-lane notes</li>
+            <li>✅ Chords on strong onsets (Hard/Expert)</li>
+            <li>✅ Star power sections distributed throughout the song</li>
+            <li>✅ Sustain notes on strong onsets with room</li>
+            <li>
+                ✅ 🎤 Procedural lyrics timed to beats with genre-themed word
+                banks
+            </li>
+            <li>✅ 🎨 Procedural album art derived from audio features</li>
+            <li>
+                ✅ Variable tempo support (only genuine tempo shifts, not
+                jitter)
+            </li>
+            <li>✅ UTF-8 BOM encoding for Clone Hero compatibility</li>
         </ul>
 
         <div class="alert alert-info">
-            💡 <strong>Tip:</strong> For best results, use high-quality audio files. The generator works best with songs
-            that have a clear rhythmic structure. You can always edit the generated chart metadata afterwards using the
-            <a href="/songs">Song Library</a> editor.
+            💡 <strong>Tip:</strong> For best results, use high-quality audio
+            files. The generator works best with songs that have a clear
+            rhythmic structure. You can always edit the generated chart metadata
+            afterwards using the <a href="/songs">Song Library</a> editor.
         </div>
 
         <div class="alert alert-warning">
-            ⚠️ <strong>Note:</strong> Chart generation can take 15–60 seconds depending on the length and complexity
-            of the audio file. Please be patient during processing.
+            ⚠️ <strong>Note:</strong> Chart generation can take 15–60 seconds
+            depending on the length and complexity of the audio file. Please be
+            patient during processing.
         </div>
     </div>
 </div>
-{% endblock %}
-
-{% block extra_css %}
+{% endblock %} {% block extra_css %}
 <style>
+    /* Checkbox group for extra options */
+    .checkbox-group {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+    }
+
+    .checkbox-label {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 14px;
+        background: #fff;
+        border: 2px solid #e0e0e0;
+        border-radius: 8px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        flex-wrap: wrap;
+        font-weight: 500;
+        color: #2c3e50;
+    }
+
+    .checkbox-label:hover {
+        border-color: #3498db;
+        background: #f0f7ff;
+    }
+
+    .checkbox-label input[type="checkbox"] {
+        width: 18px;
+        height: 18px;
+        accent-color: #3498db;
+        cursor: pointer;
+        flex-shrink: 0;
+    }
+
+    .checkbox-label input[type="checkbox"]:checked + .checkbox-icon {
+        transform: scale(1.15);
+    }
+
+    .checkbox-icon {
+        font-size: 1.2em;
+        transition: transform 0.2s ease;
+        flex-shrink: 0;
+    }
+
+    .checkbox-hint {
+        display: block;
+        width: 100%;
+        margin-left: 50px;
+        margin-top: 2px;
+        font-size: 0.82em;
+        color: #7f8c8d;
+        font-weight: normal;
+    }
+
     .form-row {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
@@ -274,13 +504,22 @@
     .progress-fill.indeterminate {
         width: 100%;
         animation: indeterminate 1.5s ease-in-out infinite;
-        background: linear-gradient(90deg, #3498db 0%, #9b59b6 50%, #3498db 100%);
+        background: linear-gradient(
+            90deg,
+            #3498db 0%,
+            #9b59b6 50%,
+            #3498db 100%
+        );
         background-size: 200% 100%;
     }
 
     @keyframes indeterminate {
-        0% { background-position: 200% 0; }
-        100% { background-position: -200% 0; }
+        0% {
+            background-position: 200% 0;
+        }
+        100% {
+            background-position: -200% 0;
+        }
     }
 
     .progress-text {
@@ -405,249 +644,268 @@
         }
     }
 </style>
-{% endblock %}
-
-{% block extra_js %}
+{% endblock %} {% block extra_js %}
 <script>
-const dropZone = document.getElementById('dropZone');
-const fileInput = document.getElementById('fileInput');
-const filePreview = document.getElementById('filePreview');
-const dropZoneContent = document.getElementById('dropZoneContent');
-const clearFileBtn = document.getElementById('clearFileBtn');
-const generatorForm = document.getElementById('generatorForm');
-const generateBtn = document.getElementById('generateBtn');
-const statusDiv = document.getElementById('generatorStatus');
-const progressContainer = document.getElementById('progressContainer');
-const progressFill = document.getElementById('progressFill');
-const progressText = document.getElementById('progressText');
-const resultSection = document.getElementById('resultSection');
-const resultTitle = document.getElementById('resultTitle');
-const resultContent = document.getElementById('resultContent');
+    const dropZone = document.getElementById("dropZone");
+    const fileInput = document.getElementById("fileInput");
+    const filePreview = document.getElementById("filePreview");
+    const dropZoneContent = document.getElementById("dropZoneContent");
+    const clearFileBtn = document.getElementById("clearFileBtn");
+    const generatorForm = document.getElementById("generatorForm");
+    const generateBtn = document.getElementById("generateBtn");
+    const statusDiv = document.getElementById("generatorStatus");
+    const progressContainer = document.getElementById("progressContainer");
+    const progressFill = document.getElementById("progressFill");
+    const progressText = document.getElementById("progressText");
+    const resultSection = document.getElementById("resultSection");
+    const resultTitle = document.getElementById("resultTitle");
+    const resultContent = document.getElementById("resultContent");
 
-// File size formatter
-function formatFileSize(bytes) {
-    if (bytes === 0) return '0 Bytes';
-    const k = 1024;
-    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-}
-
-// Format duration
-function formatDuration(seconds) {
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.round(seconds % 60);
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-}
-
-// Show file preview
-function showFilePreview(file) {
-    document.getElementById('previewIcon').textContent = '🎵';
-    document.getElementById('previewName').textContent = file.name;
-    document.getElementById('previewSize').textContent = formatFileSize(file.size);
-
-    dropZoneContent.style.display = 'none';
-    filePreview.style.display = 'block';
-    dropZone.classList.add('has-file');
-
-    // Auto-fill song name from filename if empty
-    const songNameInput = document.getElementById('songName');
-    if (!songNameInput.value.trim()) {
-        const nameWithoutExt = file.name.replace(/\.[^/.]+$/, '');
-        songNameInput.value = nameWithoutExt;
-    }
-}
-
-// Clear file selection
-function clearFile() {
-    fileInput.value = '';
-    dropZoneContent.style.display = 'block';
-    filePreview.style.display = 'none';
-    dropZone.classList.remove('has-file');
-}
-
-// Drag and drop events
-['dragenter', 'dragover'].forEach(eventName => {
-    dropZone.addEventListener(eventName, function(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        dropZone.classList.add('drag-over');
-    });
-});
-
-['dragleave', 'drop'].forEach(eventName => {
-    dropZone.addEventListener(eventName, function(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        dropZone.classList.remove('drag-over');
-    });
-});
-
-dropZone.addEventListener('drop', function(e) {
-    const files = e.dataTransfer.files;
-    if (files.length > 0) {
-        fileInput.files = files;
-        showFilePreview(files[0]);
-    }
-});
-
-// File input change
-fileInput.addEventListener('change', function() {
-    if (this.files.length > 0) {
-        showFilePreview(this.files[0]);
-    }
-});
-
-// Clear file button
-clearFileBtn.addEventListener('click', function(e) {
-    e.stopPropagation();
-    clearFile();
-});
-
-// Reset form
-generatorForm.addEventListener('reset', function() {
-    setTimeout(function() {
-        clearFile();
-        statusDiv.style.display = 'none';
-        progressContainer.style.display = 'none';
-        resultSection.style.display = 'none';
-    }, 0);
-});
-
-// Form submission
-generatorForm.addEventListener('submit', async function(e) {
-    e.preventDefault();
-
-    if (!fileInput.files || fileInput.files.length === 0) {
-        statusDiv.innerHTML = '<div class="alert alert-danger">❌ Please select an audio file.</div>';
-        statusDiv.style.display = 'block';
-        return;
+    // File size formatter
+    function formatFileSize(bytes) {
+        if (bytes === 0) return "0 Bytes";
+        const k = 1024;
+        const sizes = ["Bytes", "KB", "MB", "GB"];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
     }
 
-    const file = fileInput.files[0];
-    const songName = document.getElementById('songName').value.trim();
-    const artist = document.getElementById('artistName').value.trim();
-    const difficulty = document.getElementById('difficulty').value;
+    // Format duration
+    function formatDuration(seconds) {
+        const mins = Math.floor(seconds / 60);
+        const secs = Math.round(seconds % 60);
+        return `${mins}:${secs.toString().padStart(2, "0")}`;
+    }
 
-    // Disable form during processing
-    generateBtn.disabled = true;
-    generateBtn.textContent = '⏳ Analysing audio...';
+    // Show file preview
+    function showFilePreview(file) {
+        document.getElementById("previewIcon").textContent = "🎵";
+        document.getElementById("previewName").textContent = file.name;
+        document.getElementById("previewSize").textContent = formatFileSize(
+            file.size,
+        );
 
-    // Show indeterminate progress
-    progressContainer.style.display = 'flex';
-    progressFill.style.width = '';
-    progressFill.classList.add('indeterminate');
-    progressText.textContent = '⏳';
+        dropZoneContent.style.display = "none";
+        filePreview.style.display = "block";
+        dropZone.classList.add("has-file");
 
-    statusDiv.innerHTML = '<div class="alert alert-info">🎵 Uploading audio and analysing tempo, beats, and rhythm patterns... This can take 15–60 seconds.</div>';
-    statusDiv.style.display = 'block';
-    resultSection.style.display = 'none';
+        // Auto-fill song name from filename if empty
+        const songNameInput = document.getElementById("songName");
+        if (!songNameInput.value.trim()) {
+            const nameWithoutExt = file.name.replace(/\.[^/.]+$/, "");
+            songNameInput.value = nameWithoutExt;
+        }
+    }
 
-    const formData = new FormData();
-    formData.append('file', file);
-    if (songName) formData.append('song_name', songName);
-    if (artist) formData.append('artist', artist);
-    formData.append('difficulty', difficulty);
+    // Clear file selection
+    function clearFile() {
+        fileInput.value = "";
+        dropZoneContent.style.display = "block";
+        filePreview.style.display = "none";
+        dropZone.classList.remove("has-file");
+    }
 
-    try {
-        const response = await fetch('/api/generate', {
-            method: 'POST',
-            body: formData,
+    // Drag and drop events
+    ["dragenter", "dragover"].forEach((eventName) => {
+        dropZone.addEventListener(eventName, function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            dropZone.classList.add("drag-over");
         });
+    });
 
-        const result = await response.json();
+    ["dragleave", "drop"].forEach((eventName) => {
+        dropZone.addEventListener(eventName, function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            dropZone.classList.remove("drag-over");
+        });
+    });
 
-        // Hide progress and status
-        progressContainer.style.display = 'none';
-        statusDiv.style.display = 'none';
+    dropZone.addEventListener("drop", function (e) {
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+            fileInput.files = files;
+            showFilePreview(files[0]);
+        }
+    });
 
-        if (response.ok && !result.error) {
-            // Success
-            resultSection.classList.remove('error');
-            resultSection.classList.add('success');
-            resultSection.style.display = 'block';
+    // File input change
+    fileInput.addEventListener("change", function () {
+        if (this.files.length > 0) {
+            showFilePreview(this.files[0]);
+        }
+    });
 
-            resultTitle.textContent = '✅ Chart Generated Successfully!';
+    // Clear file button
+    clearFileBtn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        clearFile();
+    });
 
-            let html = '';
+    // Reset form
+    generatorForm.addEventListener("reset", function () {
+        setTimeout(function () {
+            clearFile();
+            statusDiv.style.display = "none";
+            progressContainer.style.display = "none";
+            resultSection.style.display = "none";
+        }, 0);
+    });
 
-            // Stats grid
-            html += '<div class="result-details">';
-            html += `<div class="result-detail-item">
-                <span class="result-detail-value">${result.tempo || '?'}</span>
+    // Form submission
+    generatorForm.addEventListener("submit", async function (e) {
+        e.preventDefault();
+
+        if (!fileInput.files || fileInput.files.length === 0) {
+            statusDiv.innerHTML =
+                '<div class="alert alert-danger">❌ Please select an audio file.</div>';
+            statusDiv.style.display = "block";
+            return;
+        }
+
+        const file = fileInput.files[0];
+        const songName = document.getElementById("songName").value.trim();
+        const artist = document.getElementById("artistName").value.trim();
+        const difficulty = document.getElementById("difficulty").value;
+
+        // Disable form during processing
+        generateBtn.disabled = true;
+        generateBtn.textContent = "⏳ Analysing audio...";
+
+        // Show indeterminate progress
+        progressContainer.style.display = "flex";
+        progressFill.style.width = "";
+        progressFill.classList.add("indeterminate");
+        progressText.textContent = "⏳";
+
+        statusDiv.innerHTML =
+            '<div class="alert alert-info">🎵 Uploading audio and analysing tempo, beats, and rhythm patterns... This can take 15–60 seconds.</div>';
+        statusDiv.style.display = "block";
+        resultSection.style.display = "none";
+
+        const enableLyrics = document.getElementById("enableLyrics").checked;
+        const enableAlbumArt =
+            document.getElementById("enableAlbumArt").checked;
+
+        const formData = new FormData();
+        formData.append("file", file);
+        if (songName) formData.append("song_name", songName);
+        if (artist) formData.append("artist", artist);
+        formData.append("difficulty", difficulty);
+
+        try {
+            formData.append("enable_lyrics", enableLyrics ? "true" : "false");
+            formData.append(
+                "enable_album_art",
+                enableAlbumArt ? "true" : "false",
+            );
+
+            const response = await fetch("/api/generate", {
+                method: "POST",
+                body: formData,
+            });
+
+            const result = await response.json();
+
+            // Hide progress and status
+            progressContainer.style.display = "none";
+            statusDiv.style.display = "none";
+
+            if (response.ok && !result.error) {
+                // Success
+                resultSection.classList.remove("error");
+                resultSection.classList.add("success");
+                resultSection.style.display = "block";
+
+                resultTitle.textContent = "✅ Chart Generated Successfully!";
+
+                let html = "";
+                const featuresHtml = [];
+                if (result.has_lyrics) featuresHtml.push("🎤 Lyrics");
+                if (result.has_album_art) featuresHtml.push("🎨 Album Art");
+
+                // Stats grid
+                html += '<div class="result-details">';
+                html += `<div class="result-detail-item">
+                <span class="result-detail-value">${result.tempo || "?"}</span>
                 <span class="result-detail-label">BPM</span>
             </div>`;
-            html += `<div class="result-detail-item">
-                <span class="result-detail-value">${result.duration ? formatDuration(result.duration) : '?'}</span>
+                html += `<div class="result-detail-item">
+                <span class="result-detail-value">${result.duration ? formatDuration(result.duration) : "?"}</span>
                 <span class="result-detail-label">Duration</span>
             </div>`;
-            html += `<div class="result-detail-item">
-                <span class="result-detail-value">${result.total_notes || result.total_beats || '?'}</span>
+                html += `<div class="result-detail-item">
+                <span class="result-detail-value">${result.total_notes || result.total_beats || "?"}</span>
                 <span class="result-detail-label">Notes</span>
             </div>`;
-            html += `<div class="result-detail-item">
+                html += `<div class="result-detail-item">
                 <span class="result-detail-value">${(result.difficulty || difficulty).charAt(0).toUpperCase() + (result.difficulty || difficulty).slice(1)}</span>
                 <span class="result-detail-label">Difficulty</span>
             </div>`;
-            html += '</div>';
+                if (featuresHtml.length > 0) {
+                    html += `<div class="result-detail-item">
+                    <span class="result-detail-value">${featuresHtml.join(" ")}</span>
+                    <span class="result-detail-label">Features</span>
+                </div>`;
+                }
+                html += "</div>";
 
-            // File details
-            html += '<div class="result-file-info">';
-            html += `<p><strong>🎵 Song:</strong> ${result.song_name || songName || file.name}</p>`;
-            html += `<p><strong>🎤 Artist:</strong> ${result.artist || artist || 'Unknown Artist'}</p>`;
-            if (result.notes_chart) {
-                html += `<p><strong>📄 Chart File:</strong> <code>${result.notes_chart}</code></p>`;
-            }
-            if (result.output_dir) {
-                html += `<p><strong>📂 Song Folder:</strong> <code>${result.output_dir}</code></p>`;
-            }
-            if (result.id) {
-                html += `<p><strong>🆔 Database ID:</strong> ${result.id}
+                // File details
+                html += '<div class="result-file-info">';
+                html += `<p><strong>🎵 Song:</strong> ${result.song_name || songName || file.name}</p>`;
+                html += `<p><strong>🎤 Artist:</strong> ${result.artist || artist || "Unknown Artist"}</p>`;
+                if (result.notes_chart) {
+                    html += `<p><strong>📄 Chart File:</strong> <code>${result.notes_chart}</code></p>`;
+                }
+                if (result.output_dir) {
+                    html += `<p><strong>📂 Song Folder:</strong> <code>${result.output_dir}</code></p>`;
+                }
+                if (result.id) {
+                    html += `<p><strong>🆔 Database ID:</strong> ${result.id}
                     — <a href="/songs/${result.id}/edit" class="btn btn-primary btn-sm">✏️ Edit Metadata</a></p>`;
+                }
+                html += "</div>";
+
+                resultContent.innerHTML = html;
+            } else {
+                // Error
+                resultSection.classList.remove("success");
+                resultSection.classList.add("error");
+                resultSection.style.display = "block";
+
+                const errMsg =
+                    result.detail || result.error || "Chart generation failed";
+                resultTitle.textContent = "❌ Generation Failed";
+                resultContent.innerHTML = `<div class="alert alert-danger">${errMsg}</div>`;
             }
-            html += '</div>';
+        } catch (error) {
+            progressContainer.style.display = "none";
+            statusDiv.style.display = "none";
 
-            resultContent.innerHTML = html;
+            resultSection.classList.remove("success");
+            resultSection.classList.add("error");
+            resultSection.style.display = "block";
 
-        } else {
-            // Error
-            resultSection.classList.remove('success');
-            resultSection.classList.add('error');
-            resultSection.style.display = 'block';
-
-            const errMsg = result.detail || result.error || 'Chart generation failed';
-            resultTitle.textContent = '❌ Generation Failed';
-            resultContent.innerHTML = `<div class="alert alert-danger">${errMsg}</div>`;
+            resultTitle.textContent = "❌ Generation Failed";
+            resultContent.innerHTML = `<div class="alert alert-danger">Network error: ${error.message}</div>`;
+        } finally {
+            generateBtn.disabled = false;
+            generateBtn.textContent = "🎸 Generate Chart";
         }
 
-    } catch (error) {
-        progressContainer.style.display = 'none';
-        statusDiv.style.display = 'none';
+        resultSection.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    });
 
-        resultSection.classList.remove('success');
-        resultSection.classList.add('error');
-        resultSection.style.display = 'block';
-
-        resultTitle.textContent = '❌ Generation Failed';
-        resultContent.innerHTML = `<div class="alert alert-danger">Network error: ${error.message}</div>`;
-
-    } finally {
-        generateBtn.disabled = false;
-        generateBtn.textContent = '🎸 Generate Chart';
+    function resetGenerator() {
+        generatorForm.reset();
+        clearFile();
+        statusDiv.style.display = "none";
+        progressContainer.style.display = "none";
+        progressFill.classList.remove("indeterminate");
+        resultSection.style.display = "none";
+        resultSection.classList.remove("success", "error");
+        window.scrollTo({ top: 0, behavior: "smooth" });
     }
-
-    resultSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-});
-
-function resetGenerator() {
-    generatorForm.reset();
-    clearFile();
-    statusDiv.style.display = 'none';
-    progressContainer.style.display = 'none';
-    progressFill.classList.remove('indeterminate');
-    resultSection.style.display = 'none';
-    resultSection.classList.remove('success', 'error');
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-}
 </script>
 {% endblock %}

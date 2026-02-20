@@ -183,11 +183,18 @@
                 <span class="file-info-label">Song ID:</span>
                 <span class="file-info-value">{{ song.id }}</span>
             </div>
+            {% if song.remote_path %}
             <div class="file-info-item">
-                <span class="file-info-label">File Path:</span>
-                <span class="file-info-value"><code>{{ song.file_path }}</code></span>
+                <span class="file-info-label">Nextcloud Path:</span>
+                <span class="file-info-value"><code>{{ song.remote_path }}</code></span>
             </div>
-            {% if song.created_at %}
+            {% endif %}
+            {% if song.synced_at %}
+            <div class="file-info-item">
+                <span class="file-info-label">Last Synced:</span>
+                <span class="file-info-value">{{ song.synced_at }}</span>
+            </div>
+            {% elif song.created_at %}
             <div class="file-info-item">
                 <span class="file-info-label">Created:</span>
                 <span class="file-info-value">{{ song.created_at }}</span>
@@ -206,9 +213,6 @@
     <div class="editor-actions-bottom">
         <a href="/songs" class="btn btn-secondary">← Cancel</a>
         <div class="editor-actions-right">
-            <button type="button" class="btn btn-success sync-btn" onclick="syncToNextcloud({{ song.id }})">
-                ☁️ Sync to Nextcloud
-            </button>
             <button type="button" class="btn btn-primary" onclick="saveSong()">💾 Save Changes</button>
         </div>
     </div>
@@ -539,49 +543,6 @@ async function saveSong() {
     }
 
     // Scroll to status message
-    statusDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-}
-
-async function syncToNextcloud(id) {
-    if (!confirm('Sync this song to Nextcloud?\n\nAll files in the song folder will be uploaded.')) {
-        return;
-    }
-
-    const syncBtn = document.querySelector('.sync-btn');
-    syncBtn.disabled = true;
-    syncBtn.textContent = '⏳ Syncing...';
-
-    const statusDiv = document.getElementById('saveStatus');
-
-    try {
-        const formData = new FormData();
-        formData.append('song_id', id);
-
-        const response = await fetch('/api/webdav/sync-to-nextcloud', {
-            method: 'POST',
-            body: formData
-        });
-
-        const result = await response.json();
-
-        if (response.ok) {
-            const uploadCount = result.uploaded ? result.uploaded.length : 0;
-            statusDiv.innerHTML = `<div class="alert alert-success">☁️ Synced ${uploadCount} file(s) to Nextcloud at <code>${result.remote_path || '/'}</code></div>`;
-            statusDiv.style.display = 'block';
-            showNotification('Song synced to Nextcloud!', 'success');
-        } else {
-            const errMsg = result.detail || result.error || 'Sync failed';
-            statusDiv.innerHTML = `<div class="alert alert-danger">❌ Sync error: ${errMsg}</div>`;
-            statusDiv.style.display = 'block';
-        }
-    } catch (error) {
-        statusDiv.innerHTML = `<div class="alert alert-danger">❌ Sync error: ${error.message}</div>`;
-        statusDiv.style.display = 'block';
-    } finally {
-        syncBtn.disabled = false;
-        syncBtn.textContent = '☁️ Sync to Nextcloud';
-    }
-
     statusDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 

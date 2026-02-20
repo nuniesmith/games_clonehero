@@ -5,7 +5,15 @@
 {% block content %}
 <div class="container">
     <h1>📤 Upload Content</h1>
-    <p>Upload Clone Hero content archives (.zip or .rar) or individual asset files.</p>
+    <p>Upload Clone Hero content archives (.zip or .rar) or individual asset files. Songs are uploaded directly to Nextcloud.</p>
+
+    {% if not webdav_configured %}
+    <div class="alert alert-warning">
+        ⚠️ <strong>Nextcloud not configured.</strong> Song uploads require a configured Nextcloud connection.
+        Set <code>NEXTCLOUD_URL</code>, <code>NEXTCLOUD_USERNAME</code>, and <code>NEXTCLOUD_PASSWORD</code>
+        in your <code>.env</code> file. (Non-song asset uploads still work locally.)
+    </div>
+    {% endif %}
 
     <!-- Upload Form -->
     <div class="upload-section">
@@ -86,7 +94,7 @@
         <ol>
             <li><strong>Prepare your archive:</strong> Songs must be uploaded as <code>.zip</code> or <code>.rar</code> files.</li>
             <li><strong>Required files:</strong> Each song folder must contain a <code>song.ini</code> file with at least <code>name</code>, <code>artist</code>, and <code>album</code> fields.</li>
-            <li><strong>Automatic processing:</strong> The system extracts the archive, parses all <code>song.ini</code> files, organizes content into <code>Artist/Title</code> folders, and registers metadata in the database.</li>
+            <li><strong>Automatic processing:</strong> The system extracts the archive, parses all <code>song.ini</code> files, uploads each song folder to Nextcloud under <code>Artist/Title</code>, and caches metadata locally.</li>
             <li><strong>Multiple songs:</strong> You can upload archives containing multiple song folders at once.</li>
         </ol>
 
@@ -112,6 +120,10 @@
 
         <div class="alert alert-info">
             💡 <strong>Tip:</strong> For the best results, make sure each song folder in your archive contains a properly formatted <code>song.ini</code> file. The system will skip any folders without valid metadata.
+        </div>
+
+        <div class="alert alert-info">
+            ☁️ <strong>Nextcloud:</strong> Uploaded songs are stored entirely on Nextcloud via WebDAV. No song files are kept locally — only metadata is cached in the local database for fast searching.
         </div>
     </div>
 </div>

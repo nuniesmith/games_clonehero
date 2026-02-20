@@ -78,6 +78,31 @@ class WebDAVItem:
 
 
 # ---------------------------------------------------------------------------
+# Shared httpx client (lazy-init for connection pooling)
+# ---------------------------------------------------------------------------
+_client: httpx.AsyncClient | None = None
+
+
+def _get_client() -> httpx.AsyncClient:
+    """Return a shared httpx.AsyncClient, creating it on first use."""
+    global _client
+    if _client is None or _client.is_closed:
+        _client = httpx.AsyncClient(
+            auth=httpx.BasicAuth(NEXTCLOUD_USERNAME, NEXTCLOUD_PASSWORD),
+            timeout=httpx.Timeout(connect=15.0, read=300.0, write=300.0, pool=15.0),
+        )
+    return _client
+
+
+async def close_client() -> None:
+    """Close the shared httpx client (call on app shutdown)."""
+    global _client
+    if _client is not None and not _client.is_closed:
+        await _client.aclose()
+        _client = None
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 def _is_configured() -> bool:
@@ -107,7 +132,7 @@ def _parse_propfind_response(xml_text: str, base_path: str = "/") -> List[WebDAV
     try:
         root = ET.fromstring(xml_text)
     except ET.ParseError as e:
-        logger.error(f"❌ Failed to parse WebDAV XML response: {e}")
+        logger.error("❌ Failed to parse WebDAV XML response: {}", e)
         return items
 
     for response_el in root.findall(f"{{{DAV_NS}}}response"):
@@ -201,24 +226,24 @@ async def check_connection() -> Dict[str, Any]:
         }
 
     try:
-        async with httpx.AsyncClient(auth=_auth(), timeout=15.0) as client:
-            response = await client.request(
-                "PROPFIND",
-                _build_url("/"),
-                headers={"Depth": "0"},
-            )
-            if response.status_code in (200, 207):
-                logger.info("✅ Nextcloud WebDAV connection successful")
-                return {"connected": True, "url": NEXTCLOUD_URL}
-            else:
-                msg = f"HTTP {response.status_code}: {response.text[:200]}"
-                logger.warning(f"⚠️ Nextcloud connection issue: {msg}")
-                return {"connected": False, "error": msg}
+        client = _get_client()
+        response = await client.request(
+            "PROPFIND",
+            _build_url("/"),
+            headers={"Depth": "0"},
+        )
+        if response.status_code in (200, 207):
+            logger.info("✅ Nextcloud WebDAV connection successful")
+            return {"connected": True, "url": NEXTCLOUD_URL}
+        else:
+            msg = "HTTP {}: {}".format(response.status_code, response.text[:200])
+            logger.warning("⚠️ Nextcloud connection issue: {}", msg)
+            return {"connected": False, "error": msg}
     except httpx.HTTPError as e:
-        logger.error(f"❌ Nextcloud connection failed: {e}")
+        logger.error("❌ Nextcloud connection failed: {}", e)
         return {"connected": False, "error": str(e)}
     except Exception as e:
-        logger.error(f"❌ Unexpected error connecting to Nextcloud: {e}")
+        logger.error("❌ Unexpected error connecting to Nextcloud: {}", e)
         return {"connected": False, "error": str(e)}
 
 
@@ -245,40 +270,40 @@ async def list_directory(remote_path: str = "/") -> List[WebDAVItem]:
     </d:propfind>"""
 
     try:
-        async with httpx.AsyncClient(auth=_auth(), timeout=30.0) as client:
-            response = await client.request(
-                "PROPFIND",
-                url,
-                headers={
-                    "Depth": "1",
-                    "Content-Type": "application/xml; charset=utf-8",
-                },
-                content=propfind_body,
+        client = _get_client()
+        response = await client.request(
+            "PROPFIND",
+            url,
+            headers={
+                "Depth": "1",
+                "Content-Type": "application/xml; charset=utf-8",
+            },
+            content=propfind_body,
+        )
+
+        if response.status_code not in (200, 207):
+            logger.error(
+                "❌ WebDAV PROPFIND failed ({}): {}", response.status_code, response.text[:300]
             )
+            return []
 
-            if response.status_code not in (200, 207):
-                logger.error(
-                    f"❌ WebDAV PROPFIND failed ({response.status_code}): {response.text[:300]}"
-                )
-                return []
+        items = _parse_propfind_response(response.text, remote_path)
 
-            items = _parse_propfind_response(response.text, remote_path)
+        # Remove the first item if it represents the directory itself
+        clean_path = remote_path.strip("/")
+        filtered = [item for item in items if item.path.strip("/") != clean_path]
 
-            # Remove the first item if it represents the directory itself
-            clean_path = remote_path.strip("/")
-            filtered = [item for item in items if item.path.strip("/") != clean_path]
+        # Sort: directories first, then alphabetically
+        filtered.sort(key=lambda i: (not i.is_directory, i.name.lower()))
 
-            # Sort: directories first, then alphabetically
-            filtered.sort(key=lambda i: (not i.is_directory, i.name.lower()))
-
-            logger.info(f"📂 Listed {len(filtered)} items in Nextcloud:{remote_path}")
-            return filtered
+        logger.info("📂 Listed {} items in Nextcloud:{}", len(filtered), remote_path)
+        return filtered
 
     except httpx.HTTPError as e:
-        logger.error(f"❌ WebDAV list failed for {remote_path}: {e}")
+        logger.error("❌ WebDAV list failed for {}: {}", remote_path, e)
         return []
     except Exception as e:
-        logger.error(f"❌ Unexpected error listing {remote_path}: {e}")
+        logger.error("❌ Unexpected error listing {}: {}", remote_path, e)
         return []
 
 
@@ -293,23 +318,23 @@ async def download_file(remote_path: str) -> Optional[bytes]:
 
     url = _build_url(remote_path)
     try:
-        async with httpx.AsyncClient(auth=_auth(), timeout=120.0) as client:
-            response = await client.get(url)
-            if response.status_code == 200:
-                logger.info(
-                    f"⬇️ Downloaded {remote_path} ({len(response.content)} bytes)"
-                )
-                return response.content
-            else:
-                logger.error(
-                    f"❌ Download failed ({response.status_code}): {remote_path}"
-                )
-                return None
+        client = _get_client()
+        response = await client.get(url)
+        if response.status_code == 200:
+            logger.info(
+                "⬇️ Downloaded {} ({} bytes)", remote_path, len(response.content)
+            )
+            return response.content
+        else:
+            logger.error(
+                "❌ Download failed ({}): {}", response.status_code, remote_path
+            )
+            return None
     except httpx.HTTPError as e:
-        logger.error(f"❌ Download error for {remote_path}: {e}")
+        logger.error("❌ Download error for {}: {}", remote_path, e)
         return None
     except Exception as e:
-        logger.error(f"❌ Unexpected download error for {remote_path}: {e}")
+        logger.error("❌ Unexpected download error for {}: {}", remote_path, e)
         return None
 
 
@@ -323,22 +348,22 @@ async def download_file_stream(remote_path: str, local_path: str) -> bool:
 
     url = _build_url(remote_path)
     try:
-        async with httpx.AsyncClient(auth=_auth(), timeout=300.0) as client:
-            async with client.stream("GET", url) as response:
-                if response.status_code != 200:
-                    logger.error(
-                        f"❌ Stream download failed ({response.status_code}): {remote_path}"
-                    )
-                    return False
+        client = _get_client()
+        async with client.stream("GET", url) as response:
+            if response.status_code != 200:
+                logger.error(
+                    "❌ Stream download failed ({}): {}", response.status_code, remote_path
+                )
+                return False
 
-                with open(local_path, "wb") as f:
-                    async for chunk in response.aiter_bytes(chunk_size=65536):
-                        f.write(chunk)
+            with open(local_path, "wb") as f:
+                async for chunk in response.aiter_bytes(chunk_size=65536):
+                    f.write(chunk)
 
-        logger.info(f"⬇️ Streamed {remote_path} -> {local_path}")
+        logger.info("⬇️ Streamed {} -> {}", remote_path, local_path)
         return True
     except Exception as e:
-        logger.error(f"❌ Stream download error for {remote_path}: {e}")
+        logger.error("❌ Stream download error for {}: {}", remote_path, e)
         return False
 
 
@@ -363,35 +388,35 @@ async def upload_file(
 
     url = _build_url(remote_path)
     try:
-        async with httpx.AsyncClient(auth=_auth(), timeout=300.0) as client:
-            response = await client.put(
-                url,
-                content=content,
-                headers={"Content-Type": content_type},
+        client = _get_client()
+        response = await client.put(
+            url,
+            content=content,
+            headers={"Content-Type": content_type},
+        )
+        if response.status_code in (200, 201, 204):
+            logger.info("⬆️ Uploaded {} ({} bytes)", remote_path, len(content))
+            return True
+        else:
+            logger.error(
+                "❌ Upload failed ({}): {}", response.status_code, response.text[:200]
             )
-            if response.status_code in (200, 201, 204):
-                logger.info(f"⬆️ Uploaded {remote_path} ({len(content)} bytes)")
-                return True
-            else:
-                logger.error(
-                    f"❌ Upload failed ({response.status_code}): {response.text[:200]}"
-                )
-                return False
+            return False
     except httpx.HTTPError as e:
-        logger.error(f"❌ Upload error for {remote_path}: {e}")
+        logger.error("❌ Upload error for {}: {}", remote_path, e)
         return False
     except Exception as e:
-        logger.error(f"❌ Unexpected upload error for {remote_path}: {e}")
+        logger.error("❌ Unexpected upload error for {}: {}", remote_path, e)
         return False
 
 
-async def upload_file_stream(
+async def upload_file_from_obj(
     remote_path: str,
     file_obj: io.IOBase,
     content_type: str = "application/octet-stream",
 ) -> bool:
     """
-    Upload a file-like object to Nextcloud (streaming upload).
+    Read a file-like object into memory and upload it to Nextcloud.
     Returns True on success.
     """
     if not _is_configured():
@@ -404,23 +429,27 @@ async def upload_file_stream(
     url = _build_url(remote_path)
     try:
         data = file_obj.read()
-        async with httpx.AsyncClient(auth=_auth(), timeout=300.0) as client:
-            response = await client.put(
-                url,
-                content=data,
-                headers={"Content-Type": content_type},
+        client = _get_client()
+        response = await client.put(
+            url,
+            content=data,
+            headers={"Content-Type": content_type},
+        )
+        if response.status_code in (200, 201, 204):
+            logger.info("⬆️ Uploaded file object to {}", remote_path)
+            return True
+        else:
+            logger.error(
+                "❌ Upload failed ({}): {}", response.status_code, response.text[:200]
             )
-            if response.status_code in (200, 201, 204):
-                logger.info(f"⬆️ Streamed upload to {remote_path}")
-                return True
-            else:
-                logger.error(
-                    f"❌ Stream upload failed ({response.status_code}): {response.text[:200]}"
-                )
-                return False
+            return False
     except Exception as e:
-        logger.error(f"❌ Stream upload error for {remote_path}: {e}")
+        logger.error("❌ Upload error for {}: {}", remote_path, e)
         return False
+
+
+# Backwards-compatible alias
+upload_file_stream = upload_file_from_obj
 
 
 async def mkdir(remote_path: str) -> bool:
@@ -434,27 +463,27 @@ async def mkdir(remote_path: str) -> bool:
     # Build list of directories to create from root to target
     parts = PurePosixPath(remote_path.strip("/")).parts
     current = ""
+    client = _get_client()
     for part in parts:
         current = f"{current}/{part}"
         url = _build_url(current)
         try:
-            async with httpx.AsyncClient(auth=_auth(), timeout=15.0) as client:
-                response = await client.request("MKCOL", url)
-                if response.status_code in (201, 405):
-                    # 201 = created, 405 = already exists
-                    continue
-                elif response.status_code == 409:
-                    # Parent doesn't exist (shouldn't happen since we go in order)
-                    logger.warning(f"⚠️ MKCOL conflict for {current}")
-                else:
-                    logger.warning(
-                        f"⚠️ MKCOL unexpected status {response.status_code} for {current}"
-                    )
+            response = await client.request("MKCOL", url)
+            if response.status_code in (201, 405):
+                # 201 = created, 405 = already exists
+                continue
+            elif response.status_code == 409:
+                # Parent doesn't exist (shouldn't happen since we go in order)
+                logger.warning("⚠️ MKCOL conflict for {}", current)
+            else:
+                logger.warning(
+                    "⚠️ MKCOL unexpected status {} for {}", response.status_code, current
+                )
         except Exception as e:
-            logger.error(f"❌ MKCOL error for {current}: {e}")
+            logger.error("❌ MKCOL error for {}: {}", current, e)
             return False
 
-    logger.info(f"📁 Ensured directory exists: {remote_path}")
+    logger.info("📁 Ensured directory exists: {}", remote_path)
     return True
 
 
@@ -468,21 +497,21 @@ async def delete_remote(remote_path: str) -> bool:
 
     url = _build_url(remote_path)
     try:
-        async with httpx.AsyncClient(auth=_auth(), timeout=30.0) as client:
-            response = await client.request("DELETE", url)
-            if response.status_code in (200, 204):
-                logger.info(f"🗑️ Deleted remote: {remote_path}")
-                return True
-            elif response.status_code == 404:
-                logger.warning(f"⚠️ Remote path not found: {remote_path}")
-                return False
-            else:
-                logger.error(
-                    f"❌ Delete failed ({response.status_code}): {remote_path}"
-                )
-                return False
+        client = _get_client()
+        response = await client.request("DELETE", url)
+        if response.status_code in (200, 204):
+            logger.info("🗑️ Deleted remote: {}", remote_path)
+            return True
+        elif response.status_code == 404:
+            logger.warning("⚠️ Remote path not found: {}", remote_path)
+            return False
+        else:
+            logger.error(
+                "❌ Delete failed ({}): {}", response.status_code, remote_path
+            )
+            return False
     except Exception as e:
-        logger.error(f"❌ Delete error for {remote_path}: {e}")
+        logger.error("❌ Delete error for {}: {}", remote_path, e)
         return False
 
 
@@ -498,25 +527,25 @@ async def move_remote(source_path: str, dest_path: str) -> bool:
     dest_url = _build_url(dest_path)
 
     try:
-        async with httpx.AsyncClient(auth=_auth(), timeout=30.0) as client:
-            response = await client.request(
-                "MOVE",
-                source_url,
-                headers={
-                    "Destination": dest_url,
-                    "Overwrite": "T",
-                },
+        client = _get_client()
+        response = await client.request(
+            "MOVE",
+            source_url,
+            headers={
+                "Destination": dest_url,
+                "Overwrite": "T",
+            },
+        )
+        if response.status_code in (200, 201, 204):
+            logger.info("📦 Moved: {} -> {}", source_path, dest_path)
+            return True
+        else:
+            logger.error(
+                "❌ Move failed ({}): {} -> {}", response.status_code, source_path, dest_path
             )
-            if response.status_code in (200, 201, 204):
-                logger.info(f"📦 Moved: {source_path} -> {dest_path}")
-                return True
-            else:
-                logger.error(
-                    f"❌ Move failed ({response.status_code}): {source_path} -> {dest_path}"
-                )
-                return False
+            return False
     except Exception as e:
-        logger.error(f"❌ Move error: {e}")
+        logger.error("❌ Move error: {}", e)
         return False
 
 
@@ -541,25 +570,25 @@ async def get_file_info(remote_path: str) -> Optional[WebDAVItem]:
     </d:propfind>"""
 
     try:
-        async with httpx.AsyncClient(auth=_auth(), timeout=15.0) as client:
-            response = await client.request(
-                "PROPFIND",
-                url,
-                headers={
-                    "Depth": "0",
-                    "Content-Type": "application/xml; charset=utf-8",
-                },
-                content=propfind_body,
-            )
+        client = _get_client()
+        response = await client.request(
+            "PROPFIND",
+            url,
+            headers={
+                "Depth": "0",
+                "Content-Type": "application/xml; charset=utf-8",
+            },
+            content=propfind_body,
+        )
 
-            if response.status_code not in (200, 207):
-                return None
+        if response.status_code not in (200, 207):
+            return None
 
-            items = _parse_propfind_response(response.text, remote_path)
-            return items[0] if items else None
+        items = _parse_propfind_response(response.text, remote_path)
+        return items[0] if items else None
 
     except Exception as e:
-        logger.error(f"❌ Error getting info for {remote_path}: {e}")
+        logger.error("❌ Error getting info for {}: {}", remote_path, e)
         return None
 
 
@@ -790,21 +819,4 @@ async def list_song_folder_files(remote_folder: str) -> List[WebDAVItem]:
     return [i for i in items if not i.is_directory]
 
 
-def _safe_name(value: str) -> str:
-    """Sanitise a string for use as a remote directory name."""
-    replacements = {
-        "/": "_",
-        "\\": "_",
-        ":": "-",
-        "*": "",
-        "?": "",
-        '"': "",
-        "<": "",
-        ">": "",
-        "|": "",
-    }
-    result = value
-    for old, new in replacements.items():
-        result = result.replace(old, new)
-    result = result.strip(" .")
-    return result or "unknown"
+from src.utils import sanitize_filename as _safe_name

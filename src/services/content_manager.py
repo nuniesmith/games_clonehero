@@ -57,11 +57,11 @@ def parse_song_ini(ini_path: Path) -> Optional[Dict[str, Any]]:
         with ini_path.open("r", encoding="utf-8-sig") as f:
             config.read_file(f)
     except Exception as e:
-        logger.error(f"❌ Failed to read {ini_path}: {e}")
+        logger.error("❌ Failed to read {}: {}", ini_path, e)
         return None
 
     if not config.has_section("song"):
-        logger.warning(f"⚠️ Missing [song] section in {ini_path}")
+        logger.warning("⚠️ Missing [song] section in {}", ini_path)
         return None
 
     name = config.get("song", "name", fallback=None)
@@ -69,7 +69,7 @@ def parse_song_ini(ini_path: Path) -> Optional[Dict[str, Any]]:
     album = config.get("song", "album", fallback=None)
 
     if not name or not artist:
-        logger.warning(f"⚠️ Missing required fields (name/artist) in {ini_path}")
+        logger.warning("⚠️ Missing required fields (name/artist) in {}", ini_path)
         return None
 
     # Collect optional metadata
@@ -117,16 +117,27 @@ def write_song_ini(ini_path: Path, song_data: Dict[str, Any]) -> bool:
         ini_path.parent.mkdir(parents=True, exist_ok=True)
         with ini_path.open("w", encoding="utf-8") as f:
             config.write(f)
-        logger.info(f"✅ Wrote song.ini: {ini_path}")
+        logger.info("✅ Wrote song.ini: {}", ini_path)
         return True
     except Exception as e:
-        logger.error(f"❌ Failed to write song.ini at {ini_path}: {e}")
+        logger.error("❌ Failed to write song.ini at {}: {}", ini_path, e)
         return False
 
 
 # ---------------------------------------------------------------------------
 # Archive extraction
 # ---------------------------------------------------------------------------
+def _validate_archive_members(names: list[str], extract_dir: str) -> None:
+    """Raise ValueError if any archive member would escape extract_dir (zip-slip)."""
+    resolved_dir = Path(extract_dir).resolve()
+    for name in names:
+        member_path = (resolved_dir / name).resolve()
+        if not member_path.is_relative_to(resolved_dir):
+            raise ValueError(
+                f"Archive member {name!r} would extract outside target directory"
+            )
+
+
 def extract_archive(file_path: str, extract_dir: str) -> Dict[str, Any]:
     """
     Extract a .zip or .rar archive to the given directory.
@@ -138,31 +149,36 @@ def extract_archive(file_path: str, extract_dir: str) -> Dict[str, Any]:
     try:
         if file_ext == ".zip":
             with zipfile.ZipFile(file_path, "r") as zf:
+                _validate_archive_members(zf.namelist(), extract_dir)
                 zf.extractall(extract_dir)
-            logger.info(f"📦 Extracted ZIP: {file_path}")
+            logger.info("📦 Extracted ZIP: {}", file_path)
             return {"success": True}
 
         elif file_ext == ".rar":
             try:
                 with rarfile.RarFile(file_path) as rf:
+                    _validate_archive_members(rf.namelist(), extract_dir)
                     rf.extractall(extract_dir)
-                logger.info(f"📦 Extracted RAR: {file_path}")
+                logger.info("📦 Extracted RAR: {}", file_path)
                 return {"success": True}
             except rarfile.NeedFirstVolume:
-                logger.error(f"🚨 Multi-part RAR not supported: {file_path}")
+                logger.error("🚨 Multi-part RAR not supported: {}", file_path)
                 return {"error": "Multi-part RAR archives are not supported"}
             except rarfile.RarCannotExec as e:
-                logger.error(f"❌ RAR extraction needs 'unrar' binary: {e}")
+                logger.error("❌ RAR extraction needs 'unrar' binary: {}", e)
                 return {"error": "RAR extraction failed. Ensure 'unrar' is installed."}
 
         else:
             return {"error": f"Unsupported archive format: {file_ext}"}
 
+    except ValueError as e:
+        logger.error("❌ Unsafe archive rejected: {}", e)
+        return {"error": str(e)}
     except zipfile.BadZipFile:
-        logger.error(f"❌ Corrupted ZIP file: {file_path}")
+        logger.error("❌ Corrupted ZIP file: {}", file_path)
         return {"error": "The ZIP file is corrupted or invalid"}
     except Exception as e:
-        logger.exception(f"❌ Error extracting {file_path}: {e}")
+        logger.exception("❌ Error extracting {}: {}", file_path, e)
         return {"error": str(e)}
 
 
@@ -199,13 +215,13 @@ async def _upload_asset_to_nextcloud(
         file_bytes = local_path.read_bytes()
         ok = await upload_file(remote_path, file_bytes)
         if ok:
-            logger.info(f"⬆️ Uploaded {content_type} asset to Nextcloud: {remote_path}")
+            logger.info("⬆️ Uploaded {} asset to Nextcloud: {}", content_type, remote_path)
             return remote_path
         else:
-            logger.error(f"❌ Failed to upload asset to Nextcloud: {remote_path}")
+            logger.error("❌ Failed to upload asset to Nextcloud: {}", remote_path)
             return None
     except Exception as e:
-        logger.error(f"❌ Error uploading asset {local_path.name}: {e}")
+        logger.error("❌ Error uploading asset {}: {}", local_path.name, e)
         return None
 
 
@@ -254,7 +270,7 @@ async def process_extracted_songs(extract_dir: str) -> List[Dict[str, Any]]:
         )
 
         if not remote_path:
-            logger.error(f"❌ Failed to upload song '{title}' to Nextcloud")
+            logger.error("❌ Failed to upload song '{}' to Nextcloud", title)
             continue
 
         # Register in database with the Nextcloud remote path
@@ -375,7 +391,7 @@ async def process_upload(file_path: str, content_type: str = "songs") -> Dict[st
                 return {"error": "No files could be uploaded to Nextcloud"}
 
     except Exception as e:
-        logger.exception(f"❌ Error processing upload: {e}")
+        logger.exception("❌ Error processing upload: {}", e)
         return {"error": str(e)}
 
     finally:
@@ -674,31 +690,4 @@ async def delete_song_from_nextcloud(remote_path: str) -> bool:
 # ---------------------------------------------------------------------------
 # Utility
 # ---------------------------------------------------------------------------
-def _sanitize_filename(name: str) -> str:
-    """
-    Sanitize a string for use as a filename/directory name.
-    Removes or replaces characters that are problematic on most file systems.
-    """
-    replacements = {
-        "/": "_",
-        "\\": "_",
-        ":": "-",
-        "*": "",
-        "?": "",
-        '"': "",
-        "<": "",
-        ">": "",
-        "|": "",
-    }
-    result = name
-    for old, new in replacements.items():
-        result = result.replace(old, new)
-
-    # Strip leading/trailing whitespace and dots
-    result = result.strip(" .")
-
-    # Fallback for empty result
-    if not result:
-        result = "unknown"
-
-    return result
+from src.utils import sanitize_filename as _sanitize_filename

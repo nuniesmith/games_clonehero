@@ -8,7 +8,6 @@ WORKDIR /app
 # Install system dependencies for building Python packages
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
-    libpq-dev \
     libsndfile1-dev \
     libffi-dev \
     curl \

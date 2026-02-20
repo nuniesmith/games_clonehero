@@ -30,6 +30,7 @@ from loguru import logger
 from pydantic import BaseModel
 
 from src.auth import get_charter_name
+from src.utils import parse_metadata_json
 from src.config import (
     ALLOWED_AUDIO_EXTENSIONS,
     ALLOWED_UPLOAD_EXTENSIONS,
@@ -81,6 +82,22 @@ router = APIRouter(prefix="/api", tags=["API"])
 _START_TIME = time.time()
 # Track last DB upload time (updated by main.py after each upload)
 _last_db_upload: float | None = None
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+def _validate_remote_path(path: str) -> str:
+    """Reject paths containing traversal sequences and normalize."""
+    from posixpath import normpath
+
+    normalized = normpath(path)
+    if ".." in normalized.split("/"):
+        raise HTTPException(
+            status_code=400,
+            detail="Path traversal sequences ('..') are not allowed.",
+        )
+    return normalized
 
 
 # ---------------------------------------------------------------------------
@@ -214,12 +231,7 @@ async def api_list_songs(
 
     # Parse metadata JSON strings into dicts
     for song in songs:
-        meta = song.get("metadata")
-        if isinstance(meta, str):
-            try:
-                song["metadata"] = json.loads(meta)
-            except (json.JSONDecodeError, TypeError):
-                song["metadata"] = {}
+        song["metadata"] = parse_metadata_json(song.get("metadata"))
 
     return {
         "total": total,
@@ -236,12 +248,7 @@ async def api_get_song(song_id: int):
     if not song:
         raise HTTPException(status_code=404, detail="Song not found")
 
-    meta = song.get("metadata")
-    if isinstance(meta, str):
-        try:
-            song["metadata"] = json.loads(meta)
-        except (json.JSONDecodeError, TypeError):
-            song["metadata"] = {}
+    song["metadata"] = parse_metadata_json(song.get("metadata"))
 
     return song
 
@@ -280,17 +287,11 @@ async def api_update_song(song_id: int, body: SongUpdate):
     if remote_path and is_configured():
         updated_song = await get_song_by_id(song_id)
         if updated_song:
-            meta = updated_song.get("metadata", "{}")
-            if isinstance(meta, str):
-                try:
-                    meta = json.loads(meta)
-                except (json.JSONDecodeError, TypeError):
-                    meta = {}
             song_data = {
                 "title": updated_song.get("title", ""),
                 "artist": updated_song.get("artist", ""),
                 "album": updated_song.get("album", ""),
-                "metadata": meta,
+                "metadata": parse_metadata_json(updated_song.get("metadata", "{}")),
             }
             ok = await write_remote_song_ini(remote_path, song_data)
             if not ok:
@@ -402,7 +403,7 @@ async def api_upload_content(
                 await f.write(chunk)
 
         logger.info(
-            f"📤 Upload received: {filename} ({total_size} bytes) -> {content_type}"
+            "📤 Upload received: {} ({} bytes) -> {}", filename, total_size, content_type
         )
 
         # Process the uploaded file (songs are uploaded to Nextcloud inside)
@@ -416,7 +417,7 @@ async def api_upload_content(
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception(f"❌ Upload processing error: {e}")
+        logger.exception("❌ Upload processing error: {}", e)
         raise HTTPException(
             status_code=500, detail=f"Upload processing failed: {str(e)}"
         )
@@ -480,7 +481,7 @@ async def api_generate_song(
             while chunk := await file.read(65536):
                 await f.write(chunk)
 
-        logger.info(f"🎵 Generate request: {filename} (difficulty={difficulty})")
+        logger.info("🎵 Generate request: {} (difficulty={})", filename, difficulty)
 
         # --- Metadata lookup ---
         lookup_data: Dict[str, Any] = {}
@@ -548,7 +549,7 @@ async def api_generate_song(
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception(f"❌ Song generation error: {e}")
+        logger.exception("❌ Song generation error: {}", e)
         raise HTTPException(status_code=500, detail=f"Song generation failed: {str(e)}")
     finally:
         for p in [temp_path, cover_art_path]:
@@ -768,6 +769,7 @@ async def api_webdav_browse(path: str = Query("/", alias="path")):
             status_code=503, detail="Nextcloud WebDAV is not configured"
         )
 
+    path = _validate_remote_path(path)
     items = await list_directory(path)
     return {
         "path": path,
@@ -788,6 +790,8 @@ async def api_webdav_import_song(remote_path: str = Form(...)):
         raise HTTPException(
             status_code=503, detail="Nextcloud WebDAV is not configured"
         )
+
+    remote_path = _validate_remote_path(remote_path)
 
     from src.database import upsert_song
     from src.webdav import parse_remote_song_ini
@@ -827,6 +831,8 @@ async def api_webdav_upload(
             status_code=503, detail="Nextcloud WebDAV is not configured"
         )
 
+    remote_path = _validate_remote_path(remote_path)
+
     filename = file.filename
     if not filename:
         raise HTTPException(
@@ -858,7 +864,7 @@ async def api_webdav_upload(
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception(f"❌ WebDAV upload error: {e}")
+        logger.exception("❌ WebDAV upload error: {}", e)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -870,6 +876,7 @@ async def api_webdav_mkdir(remote_path: str = Form(...)):
             status_code=503, detail="Nextcloud WebDAV is not configured"
         )
 
+    remote_path = _validate_remote_path(remote_path)
     success = await mkdir(remote_path)
     if not success:
         raise HTTPException(
@@ -888,6 +895,7 @@ async def api_webdav_delete(path: str = Query(...)):
             status_code=503, detail="Nextcloud WebDAV is not configured"
         )
 
+    path = _validate_remote_path(path)
     success = await delete_remote(path)
     if not success:
         raise HTTPException(
@@ -984,7 +992,7 @@ async def api_get_song_chart(
     except ValueError as e:
         raise HTTPException(status_code=422, detail=f"Chart parse error: {e}")
     except Exception as e:
-        logger.exception(f"❌ Error fetching chart for song {song_id}: {e}")
+        logger.exception("❌ Error fetching chart for song {}: {}", song_id, e)
         raise HTTPException(status_code=500, detail=f"Failed to load chart: {str(e)}")
     finally:
         try:
@@ -1046,7 +1054,7 @@ async def api_get_chart_summary(song_id: int):
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception(f"❌ Error fetching chart summary for song {song_id}: {e}")
+        logger.exception("❌ Error fetching chart summary for song {}: {}", song_id, e)
         raise HTTPException(
             status_code=500, detail=f"Failed to load chart summary: {str(e)}"
         )
@@ -1106,7 +1114,7 @@ async def api_parse_uploaded_chart(
     except ValueError as e:
         raise HTTPException(status_code=422, detail=f"Chart parse error: {e}")
     except Exception as e:
-        logger.exception(f"❌ Error parsing uploaded chart: {e}")
+        logger.exception("❌ Error parsing uploaded chart: {}", e)
         raise HTTPException(status_code=500, detail=f"Failed to parse chart: {str(e)}")
     finally:
         try:

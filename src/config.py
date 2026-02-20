@@ -26,6 +26,12 @@ APP_VERSION = os.getenv("APP_VERSION", "1.0.0")
 DEBUG = os.getenv("DEBUG", "true").lower() == "true"
 SECRET_KEY = os.getenv("SECRET_KEY", "change-me-in-production")
 
+if APP_ENV == "production" and SECRET_KEY == "change-me-in-production":
+    raise RuntimeError(
+        "SECRET_KEY must be changed from the default value in production. "
+        "Set the SECRET_KEY environment variable to a random secret."
+    )
+
 # ---------------------------------------------------------------------------
 # Authentication (simple single-user login)
 # ---------------------------------------------------------------------------
@@ -108,8 +114,7 @@ NEXTCLOUD_FOLDERS = {
     "database": os.getenv("NEXTCLOUD_DATABASE_PATH", "/Database"),
 }
 
-# Legacy key kept for compatibility with code that references CONTENT_FOLDERS
-# These now only refer to local temp sub-directories used during processing.
+# Local temp sub-directory names used during processing.
 CONTENT_FOLDERS = {
     "backgrounds": "backgrounds",
     "colors": "colors",

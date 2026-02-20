@@ -99,9 +99,9 @@ def init_db() -> None:
             conn.executescript(SCHEMA_SQL)
             conn.commit()
             _run_migrations(conn)
-        logger.success(f"✅ Database initialized at {DB_PATH}")
+        logger.success("✅ Database initialized at {}", DB_PATH)
     except Exception as e:
-        logger.critical(f"❌ Failed to initialize database: {e}")
+        logger.critical("❌ Failed to initialize database: {}", e)
         raise
 
 
@@ -162,7 +162,7 @@ async def insert_song(
         )
         existing = await cursor.fetchone()
         if existing:
-            logger.warning(f"⚠️ Duplicate remote_path, skipping insert: {remote_path}")
+            logger.warning("⚠️ Duplicate remote_path, skipping insert: {}", remote_path)
             return existing["id"]
 
         cursor = await db.execute(
@@ -174,7 +174,7 @@ async def insert_song(
         )
         await db.commit()
         song_id = cursor.lastrowid or 0
-        logger.success(f"✅ Song added (id={song_id}): {title} - {artist}")
+        logger.success("✅ Song added (id={}): {} - {}", song_id, title, artist)
         return song_id
 
 
@@ -212,7 +212,7 @@ async def upsert_song(
                 (title, artist, album, file_path, metadata, song_id),
             )
             await db.commit()
-            logger.info(f"🔄 Song updated (id={song_id}): {title} - {artist}")
+            logger.info("🔄 Song updated (id={}): {} - {}", song_id, title, artist)
             return song_id
         else:
             cursor = await db.execute(
@@ -224,7 +224,7 @@ async def upsert_song(
             )
             await db.commit()
             song_id = cursor.lastrowid or 0
-            logger.success(f"✅ Song added (id={song_id}): {title} - {artist}")
+            logger.success("✅ Song added (id={}): {} - {}", song_id, title, artist)
             return song_id
 
 
@@ -302,7 +302,7 @@ async def update_song(song_id: int, **fields) -> bool:
         await db.commit()
         updated = cursor.rowcount > 0
         if updated:
-            logger.info(f"✏️ Song id={song_id} updated: {list(filtered.keys())}")
+            logger.info("✏️ Song id={} updated: {}", song_id, list(filtered.keys()))
         return updated
 
 
@@ -313,9 +313,9 @@ async def delete_song(song_id: int) -> bool:
         await db.commit()
         deleted = cursor.rowcount > 0
         if deleted:
-            logger.info(f"🗑️ Song id={song_id} deleted from database")
+            logger.info("🗑️ Song id={} deleted from database", song_id)
         else:
-            logger.warning(f"⚠️ Song id={song_id} not found for deletion")
+            logger.warning("⚠️ Song id={} not found for deletion", song_id)
         return deleted
 
 
@@ -328,7 +328,7 @@ async def delete_song_by_remote_path(remote_path: str) -> bool:
         await db.commit()
         deleted = cursor.rowcount > 0
         if deleted:
-            logger.info(f"🗑️ Song deleted (remote_path={remote_path})")
+            logger.info("🗑️ Song deleted (remote_path={})", remote_path)
         return deleted
 
 
@@ -401,7 +401,7 @@ def insert_song_sync(
         )
         existing = cursor.fetchone()
         if existing:
-            logger.warning(f"⚠️ Duplicate remote_path, skipping insert: {remote_path}")
+            logger.warning("⚠️ Duplicate remote_path, skipping insert: {}", remote_path)
             return existing["id"]
 
         cursor = conn.execute(
@@ -413,7 +413,7 @@ def insert_song_sync(
         )
         conn.commit()
         song_id = cursor.lastrowid or 0
-        logger.success(f"✅ Song added (id={song_id}): {title} - {artist}")
+        logger.success("✅ Song added (id={}): {} - {}", song_id, title, artist)
         return song_id
 
 
@@ -444,7 +444,7 @@ def upsert_song_sync(
                 (title, artist, album, file_path, metadata, song_id),
             )
             conn.commit()
-            logger.info(f"🔄 Song updated (id={song_id}): {title} - {artist}")
+            logger.info("🔄 Song updated (id={}): {} - {}", song_id, title, artist)
             return song_id
         else:
             cursor = conn.execute(
@@ -456,5 +456,5 @@ def upsert_song_sync(
             )
             conn.commit()
             song_id = cursor.lastrowid or 0
-            logger.success(f"✅ Song added (id={song_id}): {title} - {artist}")
+            logger.success("✅ Song added (id={}): {} - {}", song_id, title, artist)
             return song_id

@@ -19,27 +19,13 @@ from loguru import logger
 from src.auth import get_current_user
 from src.config import APP_VERSION, CONTENT_FOLDERS, NEXTCLOUD_SONGS_PATH
 from src.database import count_songs, get_song_by_id, get_songs
+from src.utils import parse_metadata_json
 from src.webdav import check_connection, is_configured, list_directory
 
 router = APIRouter(tags=["Pages"])
 
 # Number of songs per page in listings
 PAGE_SIZE = 20
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-def _parse_metadata(raw) -> dict:
-    """Safely parse metadata from the database (stored as JSON string or dict)."""
-    if isinstance(raw, dict):
-        return raw
-    if isinstance(raw, str):
-        try:
-            return json.loads(raw)
-        except (json.JSONDecodeError, TypeError):
-            return {}
-    return {}
 
 
 def _paginate(page: int, total: int, page_size: int = PAGE_SIZE) -> dict:
@@ -111,7 +97,7 @@ async def songs_page(
 
     # Parse metadata for each song
     for song in songs:
-        song["metadata"] = _parse_metadata(song.get("metadata"))
+        song["metadata"] = parse_metadata_json(song.get("metadata"))
 
     context = {
         "request": request,
@@ -143,7 +129,7 @@ async def song_editor(request: Request, song_id: int):
         }
         return request.app.state.templates.TemplateResponse("editor.html", context)
 
-    song["metadata"] = _parse_metadata(song.get("metadata"))
+    song["metadata"] = parse_metadata_json(song.get("metadata"))
 
     context = {
         "request": request,
@@ -206,7 +192,7 @@ async def chart_viewer_page(
     if song_id is not None:
         song = await get_song_by_id(song_id)
         if song:
-            song["metadata"] = _parse_metadata(song.get("metadata"))
+            song["metadata"] = parse_metadata_json(song.get("metadata"))
 
     context = {
         "request": request,
@@ -241,7 +227,7 @@ async def browser_page(
                 items_raw = await list_directory(path)
                 items = [item.to_dict() for item in items_raw]
             except Exception as e:
-                logger.error(f"❌ Error browsing Nextcloud path '{path}': {e}")
+                logger.error("❌ Error browsing Nextcloud path '{}': {}", path, e)
                 error = str(e)
         else:
             error = connection_status.get("error", "Connection failed")

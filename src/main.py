@@ -234,6 +234,18 @@ async def _periodic_library_sync():
 
 
 # ---------------------------------------------------------------------------
+# Background task error handler
+# ---------------------------------------------------------------------------
+def _on_background_task_done(task: asyncio.Task) -> None:
+    """Log errors from fire-and-forget background tasks."""
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.error("❌ Background task failed: {}", exc)
+
+
+# ---------------------------------------------------------------------------
 # Lifespan
 # ---------------------------------------------------------------------------
 @asynccontextmanager
@@ -286,7 +298,8 @@ async def lifespan(app: FastAPI):
     # Step 5: Initial library sync on startup
     if LIBRARY_SYNC_ON_STARTUP:
         # Run in background so we don't block startup
-        asyncio.create_task(_run_library_sync())
+        task = asyncio.create_task(_run_library_sync())
+        task.add_done_callback(_on_background_task_done)
         logger.info("🔄 Startup library sync triggered (runs in background)")
 
     # Step 6: Start periodic library sync
@@ -319,6 +332,11 @@ async def lifespan(app: FastAPI):
     # Step 8: Final DB upload
     logger.info("⬆️  Uploading database to Nextcloud before shutdown …")
     await _upload_db_to_nextcloud()
+
+    # Step 9: Close shared httpx client
+    from src.webdav import close_client
+
+    await close_client()
 
     logger.info("👋 Shutdown complete")
 

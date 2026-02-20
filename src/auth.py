@@ -13,6 +13,7 @@ Usage:
 
 import hashlib
 import hmac
+import html as html_mod
 import json
 import time
 from typing import Any
@@ -21,6 +22,7 @@ from fastapi import Request, Response
 from fastapi.responses import HTMLResponse
 
 from src.config import (
+    APP_ENV,
     AUTH_PASSWORD,
     AUTH_USERNAME,
     CHARTER_NAME,
@@ -116,6 +118,7 @@ def set_session_cookie(response: Response, username: str) -> None:
         value=value,
         max_age=SESSION_MAX_AGE,
         httponly=True,
+        secure=APP_ENV == "production",
         samesite="lax",
         path="/",
     )
@@ -362,10 +365,11 @@ def render_login_page(error: str = "", prefill_user: str = "") -> HTMLResponse:
     """Render the login page with an optional error message."""
     error_html = ""
     if error:
-        error_html = f'<div class="error-msg">❌ {error}</div>'
+        safe_error = html_mod.escape(error)
+        error_html = f'<div class="error-msg">❌ {safe_error}</div>'
 
     html = LOGIN_PAGE_HTML % {
         "error_html": error_html,
-        "prefill_user": prefill_user,
+        "prefill_user": html_mod.escape(prefill_user),
     }
     return HTMLResponse(content=html)

@@ -6,4 +6,4 @@ set -e
 # The only job here is to drop privileges from root to appuser before
 # executing the main process (Gunicorn / Uvicorn).
 
-exec su -s /bin/sh appuser -c "exec $*"
+exec su -s /bin/sh appuser -c "exec $*" -- "$@"

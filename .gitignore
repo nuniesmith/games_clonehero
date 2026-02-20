@@ -170,3 +170,5 @@ secrets/
 
 # virtualenv
 .venv/
+
+songs

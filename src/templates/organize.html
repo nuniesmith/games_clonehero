@@ -1,0 +1,1083 @@
+{% extends 'base.html' %} {% block title %}Library Organizer - Clone Hero
+Manager{% endblock %} {% block content %}
+<div class="container">
+    <h1>📁 Library Organizer</h1>
+    <p class="subtitle">
+        Keep your Nextcloud song library clean and organized. Fix folder paths,
+        find duplicates, and fetch missing album art.
+    </p>
+
+    {% if not webdav_configured %}
+    <div class="alert alert-warning">
+        ⚠️ <strong>Nextcloud not configured.</strong> Library organization
+        requires Nextcloud WebDAV. Configure your <code>.env</code> file.
+    </div>
+    {% endif %}
+
+    <!-- Scan Section -->
+    <div class="org-card">
+        <div class="card-header">
+            <h3>🔍 Library Scan</h3>
+            <p class="text-muted">
+                Scan your library for organizational issues without making any
+                changes.
+            </p>
+        </div>
+
+        <button
+            class="btn btn-primary"
+            id="scanBtn"
+            onclick="scanLibrary()"
+            {%
+            if
+            not
+            webdav_configured
+            %}disabled{%
+            endif
+            %}
+        >
+            🔍 Scan Library
+        </button>
+
+        <!-- Scan Results -->
+        <div id="scanResults" style="display: none; margin-top: 1.5rem">
+            <div class="scan-summary" id="scanSummary"></div>
+
+            <!-- Misplaced Songs -->
+            <div id="misplacedSection" style="display: none; margin-top: 1rem">
+                <h4>
+                    📁 Misplaced Songs
+                    <span class="badge" id="misplacedBadge">0</span>
+                </h4>
+                <p class="text-muted text-sm">
+                    These songs are not in the standard
+                    <code>Artist/Song Title</code> folder structure.
+                </p>
+                <div class="issue-table-wrap">
+                    <table class="data-table" id="misplacedTable">
+                        <thead>
+                            <tr>
+                                <th>Song</th>
+                                <th>Current Path</th>
+                                <th>Expected Path</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="misplacedBody"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Missing Files -->
+            <div
+                id="missingFilesSection"
+                style="display: none; margin-top: 1rem"
+            >
+                <h4>
+                    ⚠️ Missing Critical Files
+                    <span class="badge badge-danger" id="missingFilesBadge"
+                        >0</span
+                    >
+                </h4>
+                <div class="issue-table-wrap">
+                    <table class="data-table" id="missingFilesTable">
+                        <thead>
+                            <tr>
+                                <th>Song</th>
+                                <th>Issues</th>
+                            </tr>
+                        </thead>
+                        <tbody id="missingFilesBody"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Missing Album Art -->
+            <div id="missingArtSection" style="display: none; margin-top: 1rem">
+                <h4>
+                    🎨 Missing Album Art
+                    <span class="badge badge-warn" id="missingArtBadge">0</span>
+                </h4>
+                <div class="issue-table-wrap">
+                    <table class="data-table" id="missingArtTable">
+                        <thead>
+                            <tr>
+                                <th>Song</th>
+                                <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="missingArtBody"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Duplicates -->
+            <div id="duplicatesSection" style="display: none; margin-top: 1rem">
+                <h4>
+                    📋 Duplicate Songs
+                    <span class="badge badge-warn" id="duplicatesBadge">0</span>
+                </h4>
+                <div id="duplicatesList"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Organize Section -->
+    <div class="org-card" style="margin-top: 1.5rem">
+        <div class="card-header">
+            <h3>🔧 Organize Library</h3>
+            <p class="text-muted">
+                Run the full organizer to fix paths, fetch missing album art,
+                and clean up duplicates in one pass.
+            </p>
+        </div>
+
+        <div class="organize-options">
+            <label class="checkbox-label">
+                <input type="checkbox" id="optFixPaths" checked />
+                <span>📁 Fix folder paths (move to Artist/Song structure)</span>
+            </label>
+            <label class="checkbox-label">
+                <input type="checkbox" id="optFetchArt" />
+                <span>🎨 Fetch missing album art from MusicBrainz</span>
+            </label>
+            <label class="checkbox-label">
+                <input type="checkbox" id="optCleanDupes" />
+                <span>🗑️ Clean up duplicates (keep best quality)</span>
+            </label>
+            <label class="checkbox-label">
+                <input type="checkbox" id="optDryRun" checked />
+                <span
+                    >👁️ Dry run — preview changes without modifying
+                    anything</span
+                >
+            </label>
+        </div>
+
+        <div class="btn-group" style="margin-top: 1rem">
+            <button
+                class="btn btn-primary"
+                id="organizeBtn"
+                onclick="startOrganize()"
+                {%
+                if
+                not
+                webdav_configured
+                %}disabled{%
+                endif
+                %}
+            >
+                🔧 Start Organizing
+            </button>
+            <button
+                class="btn btn-outline"
+                id="organizeStopBtn"
+                onclick="stopOrganize()"
+                style="display: none"
+            >
+                ⏹ Stop
+            </button>
+        </div>
+
+        <!-- Organize Progress -->
+        <div id="organizeProgress" style="display: none; margin-top: 1.5rem">
+            <div class="progress-bar-container">
+                <div
+                    class="progress-bar"
+                    id="organizeProgressBar"
+                    style="width: 0%"
+                ></div>
+            </div>
+            <div class="progress-stats" id="organizeStats">
+                <span class="stat-moved"
+                    >📁 <span id="orgMoved">0</span> moved</span
+                >
+                <span class="stat-art">🎨 <span id="orgArt">0</span> art</span>
+                <span class="stat-dupes"
+                    >🗑️ <span id="orgDupes">0</span> dupes</span
+                >
+            </div>
+            <div class="progress-label" id="organizeLabel">Starting…</div>
+        </div>
+
+        <!-- Organize Log -->
+        <div id="organizeLog" style="display: none; margin-top: 1rem">
+            <h4>📜 Activity Log</h4>
+            <div class="log-container" id="organizeLogContainer"></div>
+        </div>
+    </div>
+
+    <!-- Quick Actions -->
+    <div class="org-card" style="margin-top: 1.5rem">
+        <div class="card-header">
+            <h3>⚡ Quick Actions</h3>
+        </div>
+        <div class="quick-actions">
+            <div class="action-item">
+                <h4>🔍 Find Duplicates</h4>
+                <p class="text-muted text-sm">
+                    Deep scan for duplicate songs using name matching and chart
+                    hash comparison.
+                </p>
+                <button
+                    class="btn btn-outline"
+                    onclick="findDuplicates()"
+                    {%
+                    if
+                    not
+                    webdav_configured
+                    %}disabled{%
+                    endif
+                    %}
+                >
+                    Find Duplicates
+                </button>
+            </div>
+            <div class="action-item">
+                <h4>🗑️ Clean Duplicates</h4>
+                <p class="text-muted text-sm">
+                    Remove lower-quality duplicates, keeping the best copy of
+                    each song.
+                </p>
+                <button
+                    class="btn btn-outline btn-danger"
+                    onclick="cleanDuplicates()"
+                    {%
+                    if
+                    not
+                    webdav_configured
+                    %}disabled{%
+                    endif
+                    %}
+                >
+                    Clean Duplicates
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Duplicates Detail Modal -->
+    <div
+        id="dupDetailModal"
+        class="modal-overlay"
+        style="display: none"
+        onclick="closeDupDetail(event)"
+    >
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="dupDetailTitle">Duplicate Group</h3>
+                <button
+                    class="btn btn-sm btn-outline"
+                    onclick="closeDupDetail()"
+                >
+                    &times;
+                </button>
+            </div>
+            <div id="dupDetailBody"></div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .org-card {
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 12px;
+        padding: 1.5rem;
+    }
+    .card-header {
+        margin-bottom: 1rem;
+    }
+    .card-header h3 {
+        margin: 0 0 0.25rem;
+    }
+    .text-muted {
+        color: #7f8c8d;
+    }
+    .text-sm {
+        font-size: 0.88em;
+    }
+
+    /* Buttons */
+    .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        padding: 0.6rem 1.2rem;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 0.95em;
+        transition: all 0.2s;
+    }
+    .btn-primary {
+        background: #3498db;
+        color: white;
+    }
+    .btn-primary:hover:not(:disabled) {
+        background: #2980b9;
+    }
+    .btn-primary:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+    .btn-outline {
+        background: transparent;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        color: #bdc3c7;
+    }
+    .btn-outline:hover:not(:disabled) {
+        border-color: rgba(255, 255, 255, 0.4);
+        color: #ecf0f1;
+    }
+    .btn-outline:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+    }
+    .btn-sm {
+        padding: 0.35rem 0.7rem;
+        font-size: 0.85em;
+    }
+    .btn-danger {
+        border-color: rgba(231, 76, 60, 0.4);
+        color: #e74c3c;
+    }
+    .btn-danger:hover:not(:disabled) {
+        background: rgba(231, 76, 60, 0.15);
+        border-color: #e74c3c;
+    }
+    .btn-success {
+        border-color: rgba(46, 204, 113, 0.4);
+        color: #2ecc71;
+    }
+    .btn-group {
+        display: flex;
+        gap: 0.5rem;
+    }
+
+    /* Checkboxes */
+    .organize-options {
+        display: flex;
+        flex-direction: column;
+        gap: 0.6rem;
+    }
+    .checkbox-label {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        cursor: pointer;
+        font-size: 0.95em;
+    }
+    .checkbox-label input[type="checkbox"] {
+        width: 16px;
+        height: 16px;
+        accent-color: #3498db;
+    }
+
+    /* Progress */
+    .progress-bar-container {
+        width: 100%;
+        height: 8px;
+        background: rgba(255, 255, 255, 0.08);
+        border-radius: 4px;
+        overflow: hidden;
+        margin-bottom: 0.75rem;
+    }
+    .progress-bar {
+        height: 100%;
+        background: linear-gradient(90deg, #3498db, #2ecc71);
+        border-radius: 4px;
+        transition: width 0.3s;
+    }
+    .progress-stats {
+        display: flex;
+        gap: 1.2rem;
+        font-size: 0.9em;
+        margin-bottom: 0.5rem;
+        color: #bdc3c7;
+    }
+    .stat-moved {
+        color: #3498db;
+    }
+    .stat-art {
+        color: #f39c12;
+    }
+    .stat-dupes {
+        color: #e74c3c;
+    }
+    .progress-label {
+        color: #bdc3c7;
+        font-size: 0.9em;
+    }
+
+    /* Scan summary */
+    .scan-summary {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+        gap: 0.75rem;
+    }
+    .summary-card {
+        padding: 1rem;
+        background: rgba(255, 255, 255, 0.04);
+        border-radius: 8px;
+        text-align: center;
+        border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+    .summary-card .num {
+        font-size: 1.8em;
+        font-weight: 700;
+        line-height: 1.2;
+    }
+    .summary-card .label {
+        font-size: 0.82em;
+        color: #7f8c8d;
+        margin-top: 0.25rem;
+    }
+    .num.green {
+        color: #2ecc71;
+    }
+    .num.yellow {
+        color: #f39c12;
+    }
+    .num.red {
+        color: #e74c3c;
+    }
+    .num.blue {
+        color: #3498db;
+    }
+
+    /* Badges */
+    .badge {
+        display: inline-block;
+        padding: 0.15rem 0.5rem;
+        border-radius: 10px;
+        font-size: 0.78em;
+        font-weight: 600;
+        background: rgba(52, 152, 219, 0.2);
+        color: #3498db;
+        vertical-align: middle;
+        margin-left: 0.3rem;
+    }
+    .badge-danger {
+        background: rgba(231, 76, 60, 0.2);
+        color: #e74c3c;
+    }
+    .badge-warn {
+        background: rgba(243, 156, 18, 0.2);
+        color: #f39c12;
+    }
+
+    /* Tables */
+    .issue-table-wrap {
+        overflow-x: auto;
+        max-height: 400px;
+        overflow-y: auto;
+    }
+    .data-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.88em;
+    }
+    .data-table th,
+    .data-table td {
+        padding: 0.55rem 0.7rem;
+        text-align: left;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    }
+    .data-table th {
+        color: #7f8c8d;
+        font-weight: 600;
+        text-transform: uppercase;
+        font-size: 0.78em;
+        letter-spacing: 0.5px;
+        position: sticky;
+        top: 0;
+        background: #1e2127;
+    }
+    .data-table tbody tr:hover {
+        background: rgba(255, 255, 255, 0.03);
+    }
+    .path-cell {
+        font-family: monospace;
+        font-size: 0.88em;
+        color: #bdc3c7;
+        word-break: break-all;
+        max-width: 300px;
+    }
+
+    /* Quick actions */
+    .quick-actions {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 1rem;
+    }
+    .action-item {
+        padding: 1rem;
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: 8px;
+    }
+    .action-item h4 {
+        margin: 0 0 0.35rem;
+        font-size: 1em;
+    }
+    .action-item .btn {
+        margin-top: 0.75rem;
+    }
+
+    /* Log */
+    .log-container {
+        max-height: 300px;
+        overflow-y: auto;
+        background: rgba(0, 0, 0, 0.3);
+        border-radius: 8px;
+        padding: 0.75rem;
+        font-family: monospace;
+        font-size: 0.82em;
+        line-height: 1.6;
+        color: #bdc3c7;
+    }
+    .log-entry {
+        padding: 0.15rem 0;
+    }
+    .log-entry.move {
+        color: #3498db;
+    }
+    .log-entry.art {
+        color: #f39c12;
+    }
+    .log-entry.dedup {
+        color: #e74c3c;
+    }
+    .log-entry.phase {
+        color: #2ecc71;
+        font-weight: 600;
+    }
+    .log-entry.error {
+        color: #e74c3c;
+    }
+
+    /* Duplicate group cards */
+    .dup-group {
+        padding: 0.75rem;
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: 8px;
+        margin-bottom: 0.5rem;
+    }
+    .dup-group-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 0.4rem;
+    }
+    .dup-group-title {
+        font-weight: 600;
+        font-size: 0.95em;
+    }
+    .dup-group-count {
+        color: #7f8c8d;
+        font-size: 0.85em;
+    }
+    .dup-entry {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0.3rem 0.5rem;
+        font-size: 0.85em;
+        border-radius: 4px;
+    }
+    .dup-entry.keep {
+        background: rgba(46, 204, 113, 0.08);
+    }
+    .dup-entry.dupe {
+        background: rgba(231, 76, 60, 0.06);
+    }
+    .dup-marker {
+        font-size: 0.78em;
+        font-weight: 700;
+        padding: 0.1rem 0.4rem;
+        border-radius: 3px;
+    }
+    .dup-marker.keep {
+        background: rgba(46, 204, 113, 0.2);
+        color: #2ecc71;
+    }
+    .dup-marker.dupe {
+        background: rgba(231, 76, 60, 0.2);
+        color: #e74c3c;
+    }
+    .dup-path {
+        font-family: monospace;
+        font-size: 0.9em;
+        color: #bdc3c7;
+        flex: 1;
+        word-break: break-all;
+    }
+    .dup-score {
+        color: #7f8c8d;
+        font-size: 0.85em;
+        white-space: nowrap;
+    }
+
+    /* Modal */
+    .modal-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0, 0, 0, 0.7);
+        z-index: 1000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 2rem;
+    }
+    .modal-content {
+        background: #1e2127;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 12px;
+        padding: 1.5rem;
+        max-width: 700px;
+        width: 100%;
+        max-height: 80vh;
+        overflow-y: auto;
+    }
+    .modal-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 1rem;
+        padding-bottom: 0.75rem;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .modal-header h3 {
+        margin: 0;
+    }
+</style>
+
+<script>
+    // ---------------------------------------------------------------------------
+    // Scan Library
+    // ---------------------------------------------------------------------------
+    async function scanLibrary() {
+        const btn = document.getElementById("scanBtn");
+        btn.disabled = true;
+        btn.textContent = "⏳ Scanning…";
+
+        try {
+            const resp = await fetch("/api/organize/scan");
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                throw new Error(err.detail || `HTTP ${resp.status}`);
+            }
+            const data = await resp.json();
+            displayScanResults(data);
+        } catch (err) {
+            alert("Scan failed: " + err.message);
+        } finally {
+            btn.disabled = false;
+            btn.textContent = "🔍 Scan Library";
+        }
+    }
+
+    function displayScanResults(data) {
+        const container = document.getElementById("scanResults");
+        container.style.display = "";
+
+        // Summary cards
+        const summary = document.getElementById("scanSummary");
+        summary.innerHTML = `
+        <div class="summary-card">
+            <div class="num blue">${data.total_songs || 0}</div>
+            <div class="label">Total Songs</div>
+        </div>
+        <div class="summary-card">
+            <div class="num green">${data.healthy || 0}</div>
+            <div class="label">Healthy</div>
+        </div>
+        <div class="summary-card">
+            <div class="num yellow">${data.misplaced_count || 0}</div>
+            <div class="label">Misplaced</div>
+        </div>
+        <div class="summary-card">
+            <div class="num red">${data.missing_files_count || 0}</div>
+            <div class="label">Missing Files</div>
+        </div>
+        <div class="summary-card">
+            <div class="num yellow">${data.missing_art_count || 0}</div>
+            <div class="label">Missing Art</div>
+        </div>
+        <div class="summary-card">
+            <div class="num yellow">${data.duplicate_count || 0}</div>
+            <div class="label">Duplicates</div>
+        </div>
+    `;
+
+        // Misplaced songs
+        const misplacedSection = document.getElementById("misplacedSection");
+        if (data.misplaced && data.misplaced.length > 0) {
+            misplacedSection.style.display = "";
+            document.getElementById("misplacedBadge").textContent =
+                data.misplaced.length;
+            const tbody = document.getElementById("misplacedBody");
+            tbody.innerHTML = "";
+            data.misplaced.forEach((s) => {
+                const tr = document.createElement("tr");
+                tr.innerHTML = `
+                <td>${esc(s.artist || "Unknown")} — ${esc(s.title || "Unknown")}</td>
+                <td class="path-cell">${esc(s.current_path)}</td>
+                <td class="path-cell">${esc(s.expected_path)}</td>
+                <td><button class="btn btn-sm btn-outline" onclick="organizeSong(${s.song_id})">📁 Fix</button></td>
+            `;
+                tbody.appendChild(tr);
+            });
+        } else {
+            misplacedSection.style.display = "none";
+        }
+
+        // Missing files
+        const missingSection = document.getElementById("missingFilesSection");
+        if (data.missing_files && data.missing_files.length > 0) {
+            missingSection.style.display = "";
+            document.getElementById("missingFilesBadge").textContent =
+                data.missing_files.length;
+            const tbody = document.getElementById("missingFilesBody");
+            tbody.innerHTML = "";
+            data.missing_files.forEach((s) => {
+                const tr = document.createElement("tr");
+                tr.innerHTML = `
+                <td>${esc(s.artist || "Unknown")} — ${esc(s.title || "Unknown")}</td>
+                <td>${(s.issues || []).map((i) => '<span style="color:#e74c3c">❌ ' + esc(i) + "</span>").join("<br>")}</td>
+            `;
+                tbody.appendChild(tr);
+            });
+        } else {
+            missingSection.style.display = "none";
+        }
+
+        // Missing art
+        const artSection = document.getElementById("missingArtSection");
+        if (data.missing_art && data.missing_art.length > 0) {
+            artSection.style.display = "";
+            document.getElementById("missingArtBadge").textContent =
+                data.missing_art.length;
+            const tbody = document.getElementById("missingArtBody");
+            tbody.innerHTML = "";
+            data.missing_art.forEach((s) => {
+                const tr = document.createElement("tr");
+                tr.innerHTML = `
+                <td>${esc(s.artist || "Unknown")} — ${esc(s.title || "Unknown")}</td>
+                <td><button class="btn btn-sm btn-outline" onclick="fetchArt(${s.song_id}, this)">🎨 Fetch</button></td>
+            `;
+                tbody.appendChild(tr);
+            });
+        } else {
+            artSection.style.display = "none";
+        }
+
+        // Duplicates
+        const dupSection = document.getElementById("duplicatesSection");
+        if (data.duplicate_groups && data.duplicate_groups.length > 0) {
+            dupSection.style.display = "";
+            document.getElementById("duplicatesBadge").textContent =
+                data.duplicate_count;
+            const list = document.getElementById("duplicatesList");
+            list.innerHTML = "";
+            data.duplicate_groups.slice(0, 20).forEach((g) => {
+                const div = document.createElement("div");
+                div.className = "dup-group";
+                let entriesHtml = "";
+                if (g.keep) {
+                    entriesHtml += `<div class="dup-entry keep"><span class="dup-marker keep">KEEP</span><span class="dup-path">${esc(g.keep.remote_path)}</span><span class="dup-score">score: ${g.keep.score || 0}</span></div>`;
+                }
+                (g.duplicates || []).forEach((d) => {
+                    entriesHtml += `<div class="dup-entry dupe"><span class="dup-marker dupe">DUPE</span><span class="dup-path">${esc(d.remote_path)}</span><span class="dup-score">score: ${d.score || 0}</span></div>`;
+                });
+                div.innerHTML = `
+                <div class="dup-group-header">
+                    <span class="dup-group-title">${esc(formatDupKey(g.key))}</span>
+                    <span class="dup-group-count">${g.count} copies</span>
+                </div>
+                ${entriesHtml}
+            `;
+                list.appendChild(div);
+            });
+            if (data.duplicate_groups.length > 20) {
+                list.innerHTML += `<p class="text-muted text-sm">…and ${data.duplicate_groups.length - 20} more groups</p>`;
+            }
+        } else {
+            dupSection.style.display = "none";
+        }
+
+        container.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    // ---------------------------------------------------------------------------
+    // Organize Single Song
+    // ---------------------------------------------------------------------------
+    async function organizeSong(songId) {
+        try {
+            const resp = await fetch(`/api/organize/song/${songId}`, {
+                method: "POST",
+            });
+            const data = await resp.json();
+            if (data.error) {
+                alert("Error: " + data.error);
+            } else if (data.moved) {
+                alert("✅ Song moved to: " + data.new_path);
+                scanLibrary(); // Refresh
+            } else {
+                alert(data.message || "No changes needed");
+            }
+        } catch (err) {
+            alert("Error: " + err.message);
+        }
+    }
+
+    // ---------------------------------------------------------------------------
+    // Fetch Album Art
+    // ---------------------------------------------------------------------------
+    async function fetchArt(songId, btn) {
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = "⏳…";
+        }
+        try {
+            const resp = await fetch(`/api/songs/${songId}/fetch-art`, {
+                method: "POST",
+            });
+            const data = await resp.json();
+            if (data.error) {
+                if (btn) {
+                    btn.textContent = "❌";
+                    btn.title = data.error;
+                }
+            } else if (data.found) {
+                if (btn) {
+                    btn.textContent = "✅ Done";
+                    btn.className = "btn btn-sm btn-success";
+                }
+            } else {
+                if (btn) {
+                    btn.textContent = "—";
+                    btn.title = data.message || "Not found";
+                }
+            }
+        } catch (err) {
+            if (btn) {
+                btn.textContent = "❌";
+                btn.title = err.message;
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------------------
+    // Organize Library (SSE)
+    // ---------------------------------------------------------------------------
+    let organizeEventSource = null;
+
+    function startOrganize() {
+        const fixPaths = document.getElementById("optFixPaths").checked;
+        const fetchArtOpt = document.getElementById("optFetchArt").checked;
+        const cleanDupes = document.getElementById("optCleanDupes").checked;
+        const dryRun = document.getElementById("optDryRun").checked;
+
+        const btn = document.getElementById("organizeBtn");
+        const stopBtn = document.getElementById("organizeStopBtn");
+        const progressDiv = document.getElementById("organizeProgress");
+        const logDiv = document.getElementById("organizeLog");
+        const logContainer = document.getElementById("organizeLogContainer");
+
+        btn.style.display = "none";
+        stopBtn.style.display = "";
+        progressDiv.style.display = "";
+        logDiv.style.display = "";
+        logContainer.innerHTML = "";
+
+        document.getElementById("orgMoved").textContent = "0";
+        document.getElementById("orgArt").textContent = "0";
+        document.getElementById("orgDupes").textContent = "0";
+        document.getElementById("organizeProgressBar").style.width = "0%";
+        document.getElementById("organizeLabel").textContent = "Starting…";
+
+        const params = new URLSearchParams({
+            dry_run: dryRun,
+            fix_paths: fixPaths,
+            fetch_art: fetchArtOpt,
+            clean_dupes: cleanDupes,
+        });
+
+        organizeEventSource = new EventSource(
+            `/api/organize/library?${params}`,
+        );
+
+        let moved = 0,
+            art = 0,
+            dupes = 0,
+            total = 1;
+
+        organizeEventSource.onmessage = function (e) {
+            const event = JSON.parse(e.data);
+
+            if (event.type === "start") {
+                total = event.total || 1;
+                addLog(event.message, "phase");
+            } else if (event.type === "phase") {
+                addLog(event.message, "phase");
+                document.getElementById("organizeLabel").textContent =
+                    event.message;
+            } else if (event.type === "organizing") {
+                const pct = ((event.index / total) * 100).toFixed(1);
+                document.getElementById("organizeProgressBar").style.width =
+                    pct + "%";
+                document.getElementById("organizeLabel").textContent =
+                    event.message;
+            } else if (event.type === "organized") {
+                moved++;
+                document.getElementById("orgMoved").textContent = moved;
+                addLog(event.message, "move");
+            } else if (event.type === "fetching_art") {
+                document.getElementById("organizeLabel").textContent =
+                    event.message;
+            } else if (event.type === "complete") {
+                document.getElementById("organizeProgressBar").style.width =
+                    "100%";
+                document.getElementById("organizeLabel").textContent =
+                    event.message;
+                moved = event.organized || moved;
+                art = event.art_found || art;
+                dupes = event.dupes_removed || dupes;
+                document.getElementById("orgMoved").textContent = moved;
+                document.getElementById("orgArt").textContent = art;
+                document.getElementById("orgDupes").textContent = dupes;
+                addLog(event.message, "phase");
+                if (event.errors && event.errors.length > 0) {
+                    event.errors.forEach((err) => addLog("⚠️ " + err, "error"));
+                }
+                stopOrganize();
+            } else if (event.type === "error") {
+                addLog("❌ " + event.message, "error");
+                stopOrganize();
+            }
+        };
+
+        organizeEventSource.onerror = function () {
+            addLog("Connection lost", "error");
+            stopOrganize();
+        };
+    }
+
+    function stopOrganize() {
+        if (organizeEventSource) {
+            organizeEventSource.close();
+            organizeEventSource = null;
+        }
+        document.getElementById("organizeBtn").style.display = "";
+        document.getElementById("organizeStopBtn").style.display = "none";
+    }
+
+    function addLog(message, type) {
+        const container = document.getElementById("organizeLogContainer");
+        const entry = document.createElement("div");
+        entry.className = "log-entry " + (type || "");
+        entry.textContent = message;
+        container.appendChild(entry);
+        container.scrollTop = container.scrollHeight;
+    }
+
+    // ---------------------------------------------------------------------------
+    // Find / Clean Duplicates
+    // ---------------------------------------------------------------------------
+    async function findDuplicates() {
+        try {
+            const resp = await fetch("/api/duplicates");
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                throw new Error(err.detail || `HTTP ${resp.status}`);
+            }
+            const data = await resp.json();
+            showDupDetail(data);
+        } catch (err) {
+            alert("Error: " + err.message);
+        }
+    }
+
+    async function cleanDuplicates() {
+        if (
+            !confirm(
+                "This will permanently delete lower-quality duplicate songs from Nextcloud. Continue?",
+            )
+        ) {
+            return;
+        }
+        try {
+            const resp = await fetch("/api/duplicates/clean", {
+                method: "POST",
+            });
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                throw new Error(err.detail || `HTTP ${resp.status}`);
+            }
+            const data = await resp.json();
+            alert(data.message || `Deleted ${data.deleted_count} duplicate(s)`);
+        } catch (err) {
+            alert("Error: " + err.message);
+        }
+    }
+
+    function showDupDetail(data) {
+        const modal = document.getElementById("dupDetailModal");
+        const title = document.getElementById("dupDetailTitle");
+        const body = document.getElementById("dupDetailBody");
+
+        title.textContent = `${data.group_count || 0} Duplicate Groups (${data.duplicate_count || 0} total)`;
+
+        if (!data.groups || data.groups.length === 0) {
+            body.innerHTML =
+                '<p class="text-muted">No duplicates found! 🎉</p>';
+        } else {
+            let html = "";
+            data.groups.forEach((g) => {
+                html += '<div class="dup-group">';
+                html += `<div class="dup-group-header"><span class="dup-group-title">${esc(formatDupKey(g.key))}</span><span class="dup-group-count">${g.count} copies</span></div>`;
+                if (g.keep) {
+                    html += `<div class="dup-entry keep"><span class="dup-marker keep">KEEP</span><span class="dup-path">${esc(g.keep.remote_path)}</span><span class="dup-score">score: ${g.keep.score || 0}</span></div>`;
+                }
+                (g.duplicates || []).forEach((d) => {
+                    html += `<div class="dup-entry dupe"><span class="dup-marker dupe">DUPE</span><span class="dup-path">${esc(d.remote_path)}</span><span class="dup-score">score: ${d.score || 0}</span></div>`;
+                });
+                html += "</div>";
+            });
+            body.innerHTML = html;
+        }
+
+        modal.style.display = "flex";
+    }
+
+    function closeDupDetail(e) {
+        if (e && e.target !== e.currentTarget) return;
+        document.getElementById("dupDetailModal").style.display = "none";
+    }
+
+    // ---------------------------------------------------------------------------
+    // Helpers
+    // ---------------------------------------------------------------------------
+    function esc(text) {
+        if (!text) return "";
+        const div = document.createElement("div");
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    function formatDupKey(key) {
+        if (!key) return "Unknown";
+        if (key.startsWith("chart_hash:"))
+            return "[Identical Chart] " + key.slice(11);
+        const parts = key.split("|", 2);
+        if (parts.length === 2) return parts[0] + " — " + parts[1];
+        return key;
+    }
+</script>
+{% endblock %}

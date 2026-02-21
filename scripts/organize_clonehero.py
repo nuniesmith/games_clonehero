@@ -22,6 +22,7 @@ Optional:
   --move            Move files instead of copying (saves disk space)
   --clean           Auto-delete songs with critical issues (unplayable)
   --skip-extract    Skip archive extraction step
+  --skip-flatten    Skip numbered-folder flattening step
   --fetch-art       Download missing album art during organize
   --fetch-art-only  Scan an already-organized library and fetch missing art (no --source needed)
   --dedup           Scan dest for duplicate songs and print a report
@@ -492,6 +493,155 @@ def extract_all(source: Path, tools: dict, dry_run: bool):
     if failed:
         msg += f"  {RED}\u2717 {failed} failed.{RESET}"
     prog.stop(msg)
+
+
+# ---------------------------------------------------------------------------
+# Numbered folder flattening
+# ---------------------------------------------------------------------------
+# Matches folder names that are:
+#   - Purely numeric: "01", "02", "12"
+#   - Number + dot separator: "01.", "05. Necrophagist", "03.SongName"
+#   - Number + dash separator: "01 - SongName", "05-SongName"
+# Does NOT match band names that start with numbers like "3 Doors Down",
+# "30 Seconds to Mars", "4 Non Blondes", etc. (no dot/dash after the number).
+_NUMBERED_DIR_RE = re.compile(
+    r"^\d{1,3}$"  # pure number: "01", "02"
+    r"|^\d{1,3}\.\s+\S"  # number + dot + space: "05. Necrophagist"
+    r"|^\d{1,3}\s*-\s*\S"  # number + dash: "01 - Song", "05-Song"
+)
+
+
+def _is_numbered_wrapper(d: Path) -> bool:
+    """Check if a directory looks like a numbered wrapper folder.
+
+    A numbered wrapper is a folder like '01', '02', '01. Necrophagist' etc.
+    that contains subdirectories (actual song folders) rather than being a
+    song folder itself. We only flatten it if:
+      1) Its name matches the numbered pattern, AND
+      2) It is NOT itself a song directory (no notes/song.ini directly inside), AND
+      3) It contains at least one subdirectory.
+    """
+    if not d.is_dir():
+        return False
+    if not _NUMBERED_DIR_RE.search(d.name):
+        return False
+    # Don't flatten if this IS a song folder
+    if is_song_dir(d):
+        return False
+    # Must have at least one child directory
+    return any(child.is_dir() for child in d.iterdir())
+
+
+def flatten_numbered_dirs(source: Path, dry_run: bool) -> tuple[int, int]:
+    """Find numbered wrapper directories and move their contents up to the parent.
+
+    Only operates on immediate children of `source` to avoid recursion issues.
+    Returns (moved_count, removed_count).
+    """
+    moved = 0
+    removed = 0
+
+    # Collect first so we're not mutating while iterating
+    numbered_dirs = sorted(
+        [d for d in source.iterdir() if _is_numbered_wrapper(d)],
+        key=lambda d: d.name,
+    )
+
+    if not numbered_dirs:
+        return 0, 0
+
+    for num_dir in numbered_dirs:
+        children = list(num_dir.iterdir())
+
+        for child in children:
+            dest_path = source / child.name
+
+            # Handle name conflicts
+            if dest_path.exists():
+                if dest_path == child:
+                    continue
+                # Append the numbered prefix to disambiguate
+                new_name = f"{num_dir.name} - {child.name}"
+                dest_path = source / new_name
+                if dest_path.exists():
+                    log.warning(
+                        f"  Skipping {child.name} from {num_dir.name}: "
+                        f"conflict at {dest_path}"
+                    )
+                    continue
+
+            if dry_run:
+                log.info(f"  [DRY RUN] Would move: {child} -> {dest_path}")
+            else:
+                try:
+                    shutil.move(str(child), str(dest_path))
+                    log.info(f"  Moved: {child.name} from {num_dir.name}/ -> root")
+                except Exception as e:
+                    log.error(f"  Failed to move {child}: {e}")
+                    continue
+
+            moved += 1
+
+        # Remove the now-empty numbered directory
+        if not dry_run:
+            try:
+                # Only remove if truly empty (some children may have failed to move)
+                remaining = list(num_dir.iterdir())
+                if not remaining:
+                    num_dir.rmdir()
+                    log.info(f"  Removed empty numbered dir: {num_dir.name}")
+                    removed += 1
+                else:
+                    log.warning(
+                        f"  {num_dir.name} still has {len(remaining)} item(s), "
+                        f"not removing"
+                    )
+            except Exception as e:
+                log.error(f"  Failed to remove {num_dir.name}: {e}")
+        else:
+            log.info(f"  [DRY RUN] Would remove empty dir: {num_dir.name}")
+            removed += 1
+
+    return moved, removed
+
+
+def flatten_numbered_dirs_recursive(source: Path, dry_run: bool) -> tuple[int, int]:
+    """Recursively flatten numbered dirs at all levels of the source tree.
+
+    Walks bottom-up so deeper nested numbered folders get flattened first.
+    Returns total (moved_count, removed_count).
+    """
+    total_moved = 0
+    total_removed = 0
+
+    # Walk bottom-up: process deepest directories first
+    all_dirs = sorted(
+        [d for d in source.rglob("*") if d.is_dir()],
+        key=lambda d: len(d.parts),
+        reverse=True,
+    )
+
+    # Also include the source directory itself
+    all_dirs.append(source)
+
+    processed = set()
+    for parent_dir in all_dirs:
+        if parent_dir in processed:
+            continue
+        processed.add(parent_dir)
+
+        if not parent_dir.exists():
+            continue
+
+        numbered = [d for d in parent_dir.iterdir() if _is_numbered_wrapper(d)]
+        if not numbered:
+            continue
+
+        m, r = flatten_numbered_dirs(parent_dir, dry_run)
+        total_moved += m
+        total_removed += r
+
+    return total_moved, total_removed
 
 
 # ---------------------------------------------------------------------------
@@ -1052,6 +1202,11 @@ def main():
         help="Skip archive extraction step",
     )
     parser.add_argument(
+        "--skip-flatten",
+        action="store_true",
+        help="Skip numbered-folder flattening step",
+    )
+    parser.add_argument(
         "--clean",
         action="store_true",
         help="Auto-delete songs with critical issues (missing audio/chart - unplayable)",
@@ -1330,6 +1485,25 @@ def main():
         extract_all(source, tools, args.dry_run)
     else:
         print(f"  {DIM}Step 1: Skipped (--skip-extract){RESET}")
+
+    # Step 1.5: Flatten numbered directories
+    if not args.skip_flatten:
+        print(f"\n  {BOLD}Step 1.5:{RESET} Flattening numbered folders...")
+        log.info("--- Step 1.5: Flattening numbered directories ---")
+
+        flatten_spinner = SimpleSpinner("Scanning for numbered wrapper folders...")
+        flatten_spinner.start()
+        moved, removed = flatten_numbered_dirs_recursive(source, args.dry_run)
+        if moved > 0:
+            flatten_spinner.stop(
+                f"  {GREEN}✓{RESET} Flattened {BOLD}{moved}{RESET} item(s) "
+                f"from {BOLD}{removed}{RESET} numbered folder(s)."
+            )
+        else:
+            flatten_spinner.stop(f"  {DIM}No numbered wrapper folders found.{RESET}")
+        log.info(f"Flattened {moved} items from {removed} numbered folders.")
+    else:
+        print(f"  {DIM}Step 1.5: Skipped (--skip-flatten){RESET}")
 
     # Step 2: Discover song directories
     print(f"\n  {BOLD}Step 2:{RESET} Scanning for songs...")

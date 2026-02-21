@@ -1402,6 +1402,7 @@ def process_song_file(
     genre: str = "Generated",
     cover_art_path: Optional[str] = None,
     instrument: str = "guitar",
+    auto_validate: bool = True,
 ) -> Dict[str, Any]:
     """
     Full pipeline: analyse audio -> generate chart -> stage locally.
@@ -1570,6 +1571,32 @@ def process_song_file(
         if not chart_ok:
             return {"error": "Failed to generate notes.chart"}
 
+        # Step 4b: Validate and auto-fix the generated chart
+        validation_result = None
+        if auto_validate:
+            try:
+                from src.services.chart_validator import validate_and_fix_chart
+
+                validation_result = validate_and_fix_chart(chart_path, staging_dir)
+                if validation_result.fixes_applied:
+                    logger.info(
+                        "🔧 Applied {} fix(es) to generated chart for '{}'",
+                        len(validation_result.fixes_applied),
+                        song_name,
+                    )
+                    for fix_msg in validation_result.fixes_applied:
+                        logger.debug("  ✅ {}", fix_msg)
+
+                if validation_result.is_valid:
+                    logger.info("✅ Generated chart passed validation")
+                else:
+                    logger.warning(
+                        "⚠️ Generated chart has {} critical issue(s) after fixes",
+                        validation_result.critical_count,
+                    )
+            except Exception as e:
+                logger.warning("⚠️ Chart validation failed (continuing without): {}", e)
+
         # Step 5: Album art — use provided cover or generate procedurally
         has_album_art = False
 
@@ -1662,7 +1689,7 @@ def process_song_file(
         stem_note_count = (
             len(stem_analysis.onset_times) if stem_analysis else len(onset_times)
         )
-        return {
+        result = {
             "message": "Song generated successfully",
             "song_name": song_name,
             "artist": artist,
@@ -1678,6 +1705,22 @@ def process_song_file(
             "unique_id": unique_id,
             "instrument": instrument,
         }
+
+        # Include validation results if available
+        if validation_result is not None:
+            result["validation"] = {
+                "valid": validation_result.is_valid,
+                "critical": validation_result.critical_count,
+                "warnings": validation_result.warning_count,
+                "fixes_applied": validation_result.fixes_applied,
+                "issues": [
+                    iss.to_dict()
+                    for iss in validation_result.issues
+                    if iss.severity != "info"
+                ],
+            }
+
+        return result
 
     except Exception as e:
         logger.exception("❌ Error processing song '{}': {}", song_name, e)
@@ -1753,6 +1796,7 @@ async def process_and_upload_song(
         }
 
     # Run the CPU-bound audio analysis + chart generation in a thread
+    # (includes automatic chart validation and fixes)
     result = await asyncio.to_thread(
         process_song_file,
         file_path,
@@ -1767,6 +1811,7 @@ async def process_and_upload_song(
         genre=genre,
         cover_art_path=cover_art_path,
         instrument=instrument,
+        auto_validate=True,
     )
 
     if "error" in result:

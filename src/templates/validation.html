@@ -1,0 +1,1109 @@
+{% extends 'base.html' %} {% block title %}Chart Validation - Clone Hero
+Manager{% endblock %} {% block content %}
+<div class="container">
+    <h1>🔍 Chart Validation</h1>
+    <p class="subtitle">
+        Validate Clone Hero chart files for issues that cause loading errors.
+        Upload a chart file or validate songs from your library.
+    </p>
+
+    {% if not webdav_configured %}
+    <div class="alert alert-warning">
+        ⚠️ <strong>Nextcloud not configured.</strong> Library validation
+        requires Nextcloud. You can still validate uploaded chart files.
+    </div>
+    {% endif %}
+
+    <!-- Tab Navigation -->
+    <div class="tab-nav">
+        <button
+            class="tab-btn active"
+            data-tab="upload-tab"
+            onclick="switchTab('upload-tab', this)"
+        >
+            📄 Upload Chart
+        </button>
+        <button
+            class="tab-btn"
+            data-tab="single-tab"
+            onclick="switchTab('single-tab', this)"
+            {%
+            if
+            not
+            webdav_configured
+            %}disabled{%
+            endif
+            %}
+        >
+            🎵 Validate Song
+        </button>
+        <button
+            class="tab-btn"
+            data-tab="batch-tab"
+            onclick="switchTab('batch-tab', this)"
+            {%
+            if
+            not
+            webdav_configured
+            %}disabled{%
+            endif
+            %}
+        >
+            📚 Batch Validate
+        </button>
+    </div>
+
+    <!-- Upload Tab -->
+    <div class="tab-content active" id="upload-tab">
+        <div class="gen-card">
+            <h3>Validate Uploaded Chart</h3>
+            <p class="text-muted">
+                Upload a <code>notes.chart</code> file to check for issues.
+            </p>
+
+            <form id="uploadValidateForm" enctype="multipart/form-data">
+                <div class="drop-zone" id="dropZone">
+                    <div class="drop-zone-content" id="dropZoneContent">
+                        <div class="drop-zone-icon">
+                            <svg
+                                width="48"
+                                height="48"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="1.5"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                            >
+                                <path
+                                    d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"
+                                />
+                                <polyline points="14 2 14 8 20 8" />
+                                <line x1="16" y1="13" x2="8" y2="13" />
+                                <line x1="16" y1="17" x2="8" y2="17" />
+                                <polyline points="10 9 9 9 8 9" />
+                            </svg>
+                        </div>
+                        <p class="drop-zone-text">
+                            Drag &amp; drop a notes.chart file here
+                        </p>
+                        <p class="drop-zone-hint">or click to browse</p>
+                        <input
+                            type="file"
+                            id="chartFileInput"
+                            name="file"
+                            class="drop-zone-input"
+                            accept=".chart"
+                            required
+                        />
+                    </div>
+                    <div
+                        class="drop-zone-file-info"
+                        id="dropZoneFileInfo"
+                        style="display: none"
+                    >
+                        <span class="file-name" id="fileName"></span>
+                        <span class="file-size" id="fileSize"></span>
+                        <button
+                            type="button"
+                            class="btn btn-sm btn-outline"
+                            onclick="clearFile()"
+                        >
+                            ✕
+                        </button>
+                    </div>
+                </div>
+
+                <div class="form-row" style="margin-top: 1rem">
+                    <label class="checkbox-label">
+                        <input
+                            type="checkbox"
+                            id="uploadFixCheckbox"
+                            name="fix"
+                        />
+                        <span>🔧 Apply automatic fixes</span>
+                    </label>
+                </div>
+
+                <button
+                    type="submit"
+                    class="btn btn-primary"
+                    id="uploadValidateBtn"
+                    disabled
+                >
+                    🔍 Validate Chart
+                </button>
+            </form>
+        </div>
+    </div>
+
+    <!-- Single Song Tab -->
+    <div class="tab-content" id="single-tab">
+        <div class="gen-card">
+            <h3>Validate Song from Library</h3>
+            <p class="text-muted">
+                Enter a song ID to validate its chart from Nextcloud.
+            </p>
+
+            <form id="singleValidateForm">
+                <div class="form-group">
+                    <label for="songIdInput">Song ID</label>
+                    <input
+                        type="number"
+                        id="songIdInput"
+                        class="form-control"
+                        placeholder="Enter song ID"
+                        min="1"
+                        required
+                    />
+                </div>
+
+                <div class="form-row">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="singleFixCheckbox" />
+                        <span>🔧 Apply fixes &amp; re-upload to Nextcloud</span>
+                    </label>
+                </div>
+
+                <button
+                    type="submit"
+                    class="btn btn-primary"
+                    id="singleValidateBtn"
+                >
+                    🔍 Validate Song
+                </button>
+            </form>
+        </div>
+
+        {% if songs %}
+        <div class="gen-card" style="margin-top: 1rem">
+            <h3>Quick Pick</h3>
+            <div class="song-pick-list">
+                {% for song in songs[:20] %}
+                <button
+                    class="btn btn-sm btn-outline song-pick-btn"
+                    onclick="pickSong({{ song.id }})"
+                >
+                    {{ song.artist or 'Unknown' }} — {{ song.title or 'Unknown'
+                    }}
+                </button>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Batch Tab -->
+    <div class="tab-content" id="batch-tab">
+        <div class="gen-card">
+            <h3>Batch Library Validation</h3>
+            <p class="text-muted">
+                Validate all songs in your Nextcloud library. This scans every
+                chart file and reports issues.
+            </p>
+
+            <div class="form-row">
+                <label class="checkbox-label">
+                    <input type="checkbox" id="batchFixCheckbox" />
+                    <span>🔧 Apply fixes &amp; re-upload corrected charts</span>
+                </label>
+            </div>
+
+            <button
+                class="btn btn-primary"
+                id="batchValidateBtn"
+                onclick="startBatchValidation()"
+            >
+                📚 Validate Entire Library
+            </button>
+            <button
+                class="btn btn-outline"
+                id="batchStopBtn"
+                onclick="stopBatchValidation()"
+                style="display: none"
+            >
+                ⏹ Stop
+            </button>
+
+            <!-- Batch Progress -->
+            <div id="batchProgress" style="display: none; margin-top: 1.5rem">
+                <div class="progress-bar-container">
+                    <div
+                        class="progress-bar"
+                        id="batchProgressBar"
+                        style="width: 0%"
+                    ></div>
+                </div>
+                <div class="progress-stats" id="batchStats">
+                    <span class="stat-valid"
+                        >✅ <span id="batchValid">0</span></span
+                    >
+                    <span class="stat-invalid"
+                        >❌ <span id="batchInvalid">0</span></span
+                    >
+                    <span class="stat-fixed"
+                        >🔧 <span id="batchFixed">0</span></span
+                    >
+                    <span class="stat-total"
+                        >/ <span id="batchTotal">0</span></span
+                    >
+                </div>
+                <div class="progress-label" id="batchLabel">Starting…</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Results Section -->
+    <div id="validationResults" style="display: none; margin-top: 1.5rem">
+        <div class="gen-card">
+            <div class="result-header" id="resultHeader">
+                <!-- Populated by JS -->
+            </div>
+
+            <!-- Metadata -->
+            <div id="resultMetadata" style="display: none">
+                <h4>📋 Chart Metadata</h4>
+                <div class="metadata-grid" id="metadataGrid"></div>
+            </div>
+
+            <!-- Sections Found -->
+            <div id="resultSections" style="display: none; margin-top: 1rem">
+                <h4>📂 Sections Found</h4>
+                <div class="section-tags" id="sectionTags"></div>
+            </div>
+
+            <!-- Issues -->
+            <div id="resultIssues" style="margin-top: 1rem">
+                <h4>🔎 Issues</h4>
+                <div class="issue-filters" style="margin-bottom: 0.75rem">
+                    <button
+                        class="btn btn-sm filter-btn active"
+                        onclick="filterIssues('all', this)"
+                    >
+                        All
+                    </button>
+                    <button
+                        class="btn btn-sm filter-btn"
+                        onclick="filterIssues('critical', this)"
+                    >
+                        ❌ Critical
+                    </button>
+                    <button
+                        class="btn btn-sm filter-btn"
+                        onclick="filterIssues('warning', this)"
+                    >
+                        ⚠️ Warnings
+                    </button>
+                    <button
+                        class="btn btn-sm filter-btn"
+                        onclick="filterIssues('info', this)"
+                    >
+                        ℹ️ Info
+                    </button>
+                </div>
+                <div class="issues-list" id="issuesList"></div>
+            </div>
+
+            <!-- Fixes Applied -->
+            <div id="resultFixes" style="display: none; margin-top: 1rem">
+                <h4>🔧 Fixes Applied</h4>
+                <div class="fixes-list" id="fixesList"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Batch Results Table -->
+    <div id="batchResults" style="display: none; margin-top: 1.5rem">
+        <div class="gen-card">
+            <h3 id="batchResultsTitle">Batch Results</h3>
+            <div class="table-responsive">
+                <table class="data-table" id="batchResultsTable">
+                    <thead>
+                        <tr>
+                            <th>Song</th>
+                            <th>Status</th>
+                            <th>Critical</th>
+                            <th>Warnings</th>
+                            <th>Fixes</th>
+                        </tr>
+                    </thead>
+                    <tbody id="batchResultsBody"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    /* Tab navigation */
+    .tab-nav {
+        display: flex;
+        gap: 0.5rem;
+        margin-bottom: 1.5rem;
+        border-bottom: 2px solid rgba(255, 255, 255, 0.1);
+        padding-bottom: 0;
+    }
+    .tab-btn {
+        padding: 0.6rem 1.2rem;
+        background: transparent;
+        border: none;
+        color: #bdc3c7;
+        cursor: pointer;
+        font-size: 0.95em;
+        border-bottom: 2px solid transparent;
+        margin-bottom: -2px;
+        transition: all 0.2s;
+    }
+    .tab-btn:hover:not(:disabled) {
+        color: #ecf0f1;
+        border-bottom-color: rgba(52, 152, 219, 0.4);
+    }
+    .tab-btn.active {
+        color: #3498db;
+        border-bottom-color: #3498db;
+    }
+    .tab-btn:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+    }
+    .tab-content {
+        display: none;
+    }
+    .tab-content.active {
+        display: block;
+    }
+
+    /* Drop zone */
+    .drop-zone {
+        border: 2px dashed rgba(255, 255, 255, 0.15);
+        border-radius: 12px;
+        padding: 2rem;
+        text-align: center;
+        cursor: pointer;
+        transition: all 0.3s;
+        background: rgba(255, 255, 255, 0.02);
+    }
+    .drop-zone:hover,
+    .drop-zone.drag-over {
+        border-color: #3498db;
+        background: rgba(52, 152, 219, 0.06);
+    }
+    .drop-zone-icon {
+        color: #7f8c8d;
+        margin-bottom: 0.5rem;
+    }
+    .drop-zone-text {
+        font-size: 1.1em;
+        margin: 0.5rem 0 0.25rem;
+    }
+    .drop-zone-hint {
+        font-size: 0.85em;
+        color: #7f8c8d;
+        margin: 0;
+    }
+    .drop-zone-input {
+        display: none;
+    }
+    .drop-zone-file-info {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+        justify-content: center;
+    }
+    .file-name {
+        font-weight: 600;
+        color: #3498db;
+    }
+    .file-size {
+        color: #7f8c8d;
+        font-size: 0.9em;
+    }
+
+    /* Form elements */
+    .form-group {
+        margin-bottom: 1rem;
+    }
+    .form-group label {
+        display: block;
+        margin-bottom: 0.35rem;
+        font-weight: 500;
+    }
+    .form-control {
+        width: 100%;
+        padding: 0.6rem 0.8rem;
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 6px;
+        color: #ecf0f1;
+        font-size: 0.95em;
+    }
+    .form-control:focus {
+        outline: none;
+        border-color: #3498db;
+        box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.2);
+    }
+    .form-row {
+        margin-bottom: 1rem;
+    }
+    .checkbox-label {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+        cursor: pointer;
+    }
+    .checkbox-label input[type="checkbox"] {
+        width: 16px;
+        height: 16px;
+        accent-color: #3498db;
+    }
+
+    /* Buttons */
+    .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        padding: 0.6rem 1.2rem;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 0.95em;
+        transition: all 0.2s;
+    }
+    .btn-primary {
+        background: #3498db;
+        color: white;
+    }
+    .btn-primary:hover:not(:disabled) {
+        background: #2980b9;
+    }
+    .btn-primary:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+    .btn-outline {
+        background: transparent;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        color: #bdc3c7;
+    }
+    .btn-outline:hover {
+        border-color: rgba(255, 255, 255, 0.4);
+        color: #ecf0f1;
+    }
+    .btn-sm {
+        padding: 0.35rem 0.7rem;
+        font-size: 0.85em;
+    }
+
+    /* Progress */
+    .progress-bar-container {
+        width: 100%;
+        height: 8px;
+        background: rgba(255, 255, 255, 0.08);
+        border-radius: 4px;
+        overflow: hidden;
+        margin-bottom: 0.75rem;
+    }
+    .progress-bar {
+        height: 100%;
+        background: linear-gradient(90deg, #3498db, #2ecc71);
+        border-radius: 4px;
+        transition: width 0.3s;
+    }
+    .progress-stats {
+        display: flex;
+        gap: 1.2rem;
+        font-size: 0.9em;
+        margin-bottom: 0.5rem;
+    }
+    .stat-valid {
+        color: #2ecc71;
+    }
+    .stat-invalid {
+        color: #e74c3c;
+    }
+    .stat-fixed {
+        color: #f39c12;
+    }
+    .stat-total {
+        color: #7f8c8d;
+    }
+    .progress-label {
+        color: #bdc3c7;
+        font-size: 0.9em;
+    }
+
+    /* Result header */
+    .result-header {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        padding-bottom: 1rem;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        margin-bottom: 1rem;
+    }
+    .result-status {
+        font-size: 1.6em;
+        font-weight: 700;
+    }
+    .result-status.valid {
+        color: #2ecc71;
+    }
+    .result-status.invalid {
+        color: #e74c3c;
+    }
+    .result-counts {
+        display: flex;
+        gap: 1rem;
+        font-size: 0.9em;
+        color: #bdc3c7;
+    }
+
+    /* Metadata grid */
+    .metadata-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+        gap: 0.5rem;
+    }
+    .metadata-item {
+        padding: 0.5rem 0.75rem;
+        background: rgba(255, 255, 255, 0.04);
+        border-radius: 6px;
+        font-size: 0.9em;
+    }
+    .metadata-key {
+        color: #7f8c8d;
+        font-size: 0.85em;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+    .metadata-value {
+        color: #ecf0f1;
+        margin-top: 2px;
+    }
+
+    /* Section tags */
+    .section-tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+    }
+    .section-tag {
+        padding: 0.3rem 0.6rem;
+        background: rgba(52, 152, 219, 0.15);
+        color: #3498db;
+        border-radius: 4px;
+        font-size: 0.82em;
+        font-family: monospace;
+    }
+
+    /* Issues list */
+    .issue-item {
+        display: flex;
+        align-items: flex-start;
+        gap: 0.6rem;
+        padding: 0.6rem 0.8rem;
+        border-radius: 6px;
+        margin-bottom: 0.4rem;
+        font-size: 0.9em;
+        line-height: 1.4;
+    }
+    .issue-item.critical {
+        background: rgba(231, 76, 60, 0.1);
+        border-left: 3px solid #e74c3c;
+    }
+    .issue-item.warning {
+        background: rgba(243, 156, 18, 0.1);
+        border-left: 3px solid #f39c12;
+    }
+    .issue-item.info {
+        background: rgba(52, 152, 219, 0.08);
+        border-left: 3px solid #3498db;
+    }
+    .issue-icon {
+        flex-shrink: 0;
+        font-size: 1em;
+    }
+    .issue-body {
+        flex: 1;
+    }
+    .issue-code {
+        font-family: monospace;
+        font-size: 0.8em;
+        color: #7f8c8d;
+        margin-right: 0.4rem;
+    }
+    .issue-line {
+        font-size: 0.8em;
+        color: #7f8c8d;
+        margin-left: 0.3rem;
+    }
+
+    /* Filter buttons */
+    .issue-filters {
+        display: flex;
+        gap: 0.3rem;
+    }
+    .filter-btn {
+        background: rgba(255, 255, 255, 0.06);
+        color: #bdc3c7;
+        border: 1px solid transparent;
+    }
+    .filter-btn.active {
+        background: rgba(52, 152, 219, 0.15);
+        color: #3498db;
+        border-color: rgba(52, 152, 219, 0.3);
+    }
+
+    /* Fixes list */
+    .fix-item {
+        padding: 0.5rem 0.75rem;
+        background: rgba(46, 204, 113, 0.08);
+        border-left: 3px solid #2ecc71;
+        border-radius: 0 6px 6px 0;
+        margin-bottom: 0.3rem;
+        font-size: 0.9em;
+        color: #2ecc71;
+    }
+
+    /* Song pick buttons */
+    .song-pick-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+    }
+    .song-pick-btn {
+        font-size: 0.82em;
+    }
+
+    /* Batch results table */
+    .table-responsive {
+        overflow-x: auto;
+    }
+    .data-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.9em;
+    }
+    .data-table th,
+    .data-table td {
+        padding: 0.6rem 0.8rem;
+        text-align: left;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    }
+    .data-table th {
+        color: #7f8c8d;
+        font-weight: 600;
+        text-transform: uppercase;
+        font-size: 0.8em;
+        letter-spacing: 0.5px;
+    }
+    .data-table tbody tr:hover {
+        background: rgba(255, 255, 255, 0.03);
+    }
+    .status-badge {
+        display: inline-block;
+        padding: 0.2rem 0.5rem;
+        border-radius: 4px;
+        font-size: 0.85em;
+        font-weight: 600;
+    }
+    .status-badge.valid {
+        background: rgba(46, 204, 113, 0.15);
+        color: #2ecc71;
+    }
+    .status-badge.invalid {
+        background: rgba(231, 76, 60, 0.15);
+        color: #e74c3c;
+    }
+
+    .text-muted {
+        color: #7f8c8d;
+    }
+    .gen-card {
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 12px;
+        padding: 1.5rem;
+    }
+</style>
+
+<script>
+    // ---------------------------------------------------------------------------
+    // Tab Switching
+    // ---------------------------------------------------------------------------
+    function switchTab(tabId, btn) {
+        document
+            .querySelectorAll(".tab-content")
+            .forEach((t) => t.classList.remove("active"));
+        document
+            .querySelectorAll(".tab-btn")
+            .forEach((b) => b.classList.remove("active"));
+        document.getElementById(tabId).classList.add("active");
+        btn.classList.add("active");
+    }
+
+    // ---------------------------------------------------------------------------
+    // Drop Zone
+    // ---------------------------------------------------------------------------
+    const dropZone = document.getElementById("dropZone");
+    const fileInput = document.getElementById("chartFileInput");
+    const dropZoneContent = document.getElementById("dropZoneContent");
+    const dropZoneFileInfo = document.getElementById("dropZoneFileInfo");
+    const uploadBtn = document.getElementById("uploadValidateBtn");
+
+    if (dropZone) {
+        dropZone.addEventListener("click", () => fileInput.click());
+        dropZone.addEventListener("dragover", (e) => {
+            e.preventDefault();
+            dropZone.classList.add("drag-over");
+        });
+        dropZone.addEventListener("dragleave", () =>
+            dropZone.classList.remove("drag-over"),
+        );
+        dropZone.addEventListener("drop", (e) => {
+            e.preventDefault();
+            dropZone.classList.remove("drag-over");
+            if (e.dataTransfer.files.length) {
+                fileInput.files = e.dataTransfer.files;
+                showFileInfo(e.dataTransfer.files[0]);
+            }
+        });
+        fileInput.addEventListener("change", () => {
+            if (fileInput.files.length) showFileInfo(fileInput.files[0]);
+        });
+    }
+
+    function showFileInfo(file) {
+        document.getElementById("fileName").textContent = file.name;
+        document.getElementById("fileSize").textContent = formatSize(file.size);
+        dropZoneContent.style.display = "none";
+        dropZoneFileInfo.style.display = "flex";
+        uploadBtn.disabled = false;
+    }
+
+    function clearFile() {
+        fileInput.value = "";
+        dropZoneContent.style.display = "";
+        dropZoneFileInfo.style.display = "none";
+        uploadBtn.disabled = true;
+    }
+
+    function formatSize(bytes) {
+        if (bytes < 1024) return bytes + " B";
+        if (bytes < 1048576) return (bytes / 1024).toFixed(1) + " KB";
+        return (bytes / 1048576).toFixed(1) + " MB";
+    }
+
+    // ---------------------------------------------------------------------------
+    // Upload Validation
+    // ---------------------------------------------------------------------------
+    document
+        .getElementById("uploadValidateForm")
+        ?.addEventListener("submit", async (e) => {
+            e.preventDefault();
+            const btn = document.getElementById("uploadValidateBtn");
+            btn.disabled = true;
+            btn.textContent = "⏳ Validating…";
+
+            const formData = new FormData();
+            formData.append("file", fileInput.files[0]);
+            formData.append(
+                "fix",
+                document.getElementById("uploadFixCheckbox").checked,
+            );
+
+            try {
+                const resp = await fetch("/api/validate/upload", {
+                    method: "POST",
+                    body: formData,
+                });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    throw new Error(err.detail || `HTTP ${resp.status}`);
+                }
+                const data = await resp.json();
+                displayResults(data);
+            } catch (err) {
+                alert("Validation failed: " + err.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = "🔍 Validate Chart";
+            }
+        });
+
+    // ---------------------------------------------------------------------------
+    // Single Song Validation
+    // ---------------------------------------------------------------------------
+    document
+        .getElementById("singleValidateForm")
+        ?.addEventListener("submit", async (e) => {
+            e.preventDefault();
+            const songId = document.getElementById("songIdInput").value;
+            const fix = document.getElementById("singleFixCheckbox").checked;
+            const btn = document.getElementById("singleValidateBtn");
+            btn.disabled = true;
+            btn.textContent = "⏳ Validating…";
+
+            try {
+                const resp = await fetch(`/api/validate/${songId}?fix=${fix}`, {
+                    method: "POST",
+                });
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    throw new Error(err.detail || `HTTP ${resp.status}`);
+                }
+                const data = await resp.json();
+                displayResults(data);
+            } catch (err) {
+                alert("Validation failed: " + err.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = "🔍 Validate Song";
+            }
+        });
+
+    function pickSong(id) {
+        document.getElementById("songIdInput").value = id;
+        document
+            .getElementById("singleValidateForm")
+            .dispatchEvent(new Event("submit"));
+    }
+
+    // ---------------------------------------------------------------------------
+    // Batch Validation
+    // ---------------------------------------------------------------------------
+    let batchEventSource = null;
+
+    function startBatchValidation() {
+        const fix = document.getElementById("batchFixCheckbox").checked;
+        const btn = document.getElementById("batchValidateBtn");
+        const stopBtn = document.getElementById("batchStopBtn");
+        const progressDiv = document.getElementById("batchProgress");
+        const resultsDiv = document.getElementById("batchResults");
+        const tbody = document.getElementById("batchResultsBody");
+
+        btn.style.display = "none";
+        stopBtn.style.display = "";
+        progressDiv.style.display = "";
+        resultsDiv.style.display = "";
+        tbody.innerHTML = "";
+
+        document.getElementById("batchValid").textContent = "0";
+        document.getElementById("batchInvalid").textContent = "0";
+        document.getElementById("batchFixed").textContent = "0";
+        document.getElementById("batchTotal").textContent = "0";
+        document.getElementById("batchProgressBar").style.width = "0%";
+        document.getElementById("batchLabel").textContent = "Starting…";
+        document.getElementById("batchResultsTitle").textContent =
+            "Batch Results";
+
+        // Hide single results
+        document.getElementById("validationResults").style.display = "none";
+
+        batchEventSource = new EventSource(`/api/validate/batch?fix=${fix}`);
+        let validCount = 0,
+            invalidCount = 0,
+            fixedCount = 0,
+            total = 0;
+
+        batchEventSource.onmessage = function (e) {
+            const event = JSON.parse(e.data);
+
+            if (event.type === "start") {
+                total = event.total;
+                document.getElementById("batchTotal").textContent = total;
+            } else if (event.type === "validating") {
+                document.getElementById("batchLabel").textContent =
+                    event.message;
+            } else if (event.type === "validated") {
+                const pct = ((event.index / total) * 100).toFixed(1);
+                document.getElementById("batchProgressBar").style.width =
+                    pct + "%";
+                document.getElementById("batchLabel").textContent =
+                    event.message;
+
+                if (event.valid) validCount++;
+                else invalidCount++;
+                if (event.fixes > 0) fixedCount++;
+
+                document.getElementById("batchValid").textContent = validCount;
+                document.getElementById("batchInvalid").textContent =
+                    invalidCount;
+                document.getElementById("batchFixed").textContent = fixedCount;
+
+                // Add table row
+                const tr = document.createElement("tr");
+                tr.innerHTML = `
+                <td>${escapeHtml(event.label)}</td>
+                <td><span class="status-badge ${event.valid ? "valid" : "invalid"}">${event.valid ? "✅ Valid" : "❌ Invalid"}</span></td>
+                <td>${event.critical || 0}</td>
+                <td>${event.warnings || 0}</td>
+                <td>${event.fixes || 0}</td>
+            `;
+                tbody.appendChild(tr);
+            } else if (event.type === "error") {
+                invalidCount++;
+                document.getElementById("batchInvalid").textContent =
+                    invalidCount;
+                const tr = document.createElement("tr");
+                tr.innerHTML = `
+                <td>${escapeHtml(event.label || "Unknown")}</td>
+                <td><span class="status-badge invalid">⚠️ Error</span></td>
+                <td colspan="3">${escapeHtml(event.message)}</td>
+            `;
+                tbody.appendChild(tr);
+            } else if (event.type === "complete") {
+                document.getElementById("batchProgressBar").style.width =
+                    "100%";
+                document.getElementById("batchLabel").textContent =
+                    event.message;
+                document.getElementById("batchResultsTitle").textContent =
+                    `Batch Results — ${event.valid} valid, ${event.invalid} invalid, ${event.fixed} fixed`;
+                stopBatchValidation();
+            }
+        };
+
+        batchEventSource.onerror = function () {
+            document.getElementById("batchLabel").textContent =
+                "Connection lost";
+            stopBatchValidation();
+        };
+    }
+
+    function stopBatchValidation() {
+        if (batchEventSource) {
+            batchEventSource.close();
+            batchEventSource = null;
+        }
+        document.getElementById("batchValidateBtn").style.display = "";
+        document.getElementById("batchStopBtn").style.display = "none";
+    }
+
+    // ---------------------------------------------------------------------------
+    // Display Results
+    // ---------------------------------------------------------------------------
+    function displayResults(data) {
+        const container = document.getElementById("validationResults");
+        container.style.display = "";
+
+        // Header
+        const header = document.getElementById("resultHeader");
+        const statusClass = data.valid ? "valid" : "invalid";
+        const statusText = data.valid ? "✅ VALID" : "❌ INVALID";
+        const counts = data.counts || {};
+        header.innerHTML = `
+        <span class="result-status ${statusClass}">${statusText}</span>
+        <div style="flex:1">
+            <div style="font-size:0.9em;color:#bdc3c7">${escapeHtml(data.chart_path || "")}</div>
+            <div class="result-counts">
+                <span>❌ ${counts.critical || 0} critical</span>
+                <span>⚠️ ${counts.warnings || 0} warnings</span>
+                <span>ℹ️ ${counts.info || 0} info</span>
+            </div>
+        </div>
+    `;
+
+        // Metadata
+        const metaDiv = document.getElementById("resultMetadata");
+        const metaGrid = document.getElementById("metadataGrid");
+        if (data.metadata && Object.keys(data.metadata).length > 0) {
+            metaDiv.style.display = "";
+            metaGrid.innerHTML = "";
+            for (const [key, val] of Object.entries(data.metadata)) {
+                const item = document.createElement("div");
+                item.className = "metadata-item";
+                item.innerHTML = `<div class="metadata-key">${escapeHtml(key)}</div><div class="metadata-value">${escapeHtml(val)}</div>`;
+                metaGrid.appendChild(item);
+            }
+        } else {
+            metaDiv.style.display = "none";
+        }
+
+        // Sections
+        const secDiv = document.getElementById("resultSections");
+        const secTags = document.getElementById("sectionTags");
+        if (data.sections && data.sections.length > 0) {
+            secDiv.style.display = "";
+            secTags.innerHTML = "";
+            data.sections.forEach((s) => {
+                const tag = document.createElement("span");
+                tag.className = "section-tag";
+                tag.textContent = s;
+                secTags.appendChild(tag);
+            });
+        } else {
+            secDiv.style.display = "none";
+        }
+
+        // Issues
+        const issuesList = document.getElementById("issuesList");
+        issuesList.innerHTML = "";
+        if (data.issues && data.issues.length > 0) {
+            data.issues.forEach((iss) => {
+                const div = document.createElement("div");
+                div.className = `issue-item ${iss.severity}`;
+                div.dataset.severity = iss.severity;
+                const icon =
+                    { critical: "❌", warning: "⚠️", info: "ℹ️" }[
+                        iss.severity
+                    ] || "?";
+                const lineInfo = iss.line
+                    ? `<span class="issue-line">line ${iss.line}</span>`
+                    : "";
+                div.innerHTML = `
+                <span class="issue-icon">${icon}</span>
+                <div class="issue-body">
+                    <span class="issue-code">[${escapeHtml(iss.code)}]</span>${lineInfo}
+                    ${escapeHtml(iss.message)}
+                </div>
+            `;
+                issuesList.appendChild(div);
+            });
+        } else {
+            issuesList.innerHTML =
+                '<p style="color:#7f8c8d;font-size:0.9em;">No issues found! 🎉</p>';
+        }
+
+        // Fixes
+        const fixesDiv = document.getElementById("resultFixes");
+        const fixesList = document.getElementById("fixesList");
+        if (data.fixes_applied && data.fixes_applied.length > 0) {
+            fixesDiv.style.display = "";
+            fixesList.innerHTML = "";
+            data.fixes_applied.forEach((fix) => {
+                const div = document.createElement("div");
+                div.className = "fix-item";
+                div.textContent = "✅ " + fix;
+                fixesList.appendChild(div);
+            });
+        } else {
+            fixesDiv.style.display = "none";
+        }
+
+        // Scroll to results
+        container.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    function filterIssues(severity, btn) {
+        document
+            .querySelectorAll(".filter-btn")
+            .forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+
+        document.querySelectorAll(".issue-item").forEach((item) => {
+            if (severity === "all" || item.dataset.severity === severity) {
+                item.style.display = "";
+            } else {
+                item.style.display = "none";
+            }
+        });
+    }
+
+    function escapeHtml(text) {
+        if (!text) return "";
+        const div = document.createElement("div");
+        div.textContent = text;
+        return div.innerHTML;
+    }
+</script>
+{% endblock %}

@@ -5,6 +5,8 @@ Provides all REST API endpoints for:
 - Songs CRUD (list, get, update, delete) — backed by Nextcloud WebDAV
 - Content upload (archives and direct files) — songs go to Nextcloud
 - Song generation from audio files — output uploaded to Nextcloud
+- Chart validation (single song, batch, uploaded chart)
+- Song library organization (path fixes, dedup, album art)
 - Metadata lookup (MusicBrainz / Cover Art Archive)
 - Filename parsing (smart artist/title extraction)
 - Nextcloud WebDAV operations (browse, download, upload, mkdir, delete)
@@ -1135,3 +1137,268 @@ async def api_parse_uploaded_chart(
             os.remove(temp_chart)
         except (FileNotFoundError, OSError):
             pass
+
+
+# ---------------------------------------------------------------------------
+# Chart Validation
+# ---------------------------------------------------------------------------
+
+
+@router.post("/validate/{song_id}")
+async def api_validate_song(song_id: int, fix: bool = Query(False)):
+    """
+    Validate a song's chart file from Nextcloud.
+
+    Downloads the notes.chart from the song's remote folder, runs all
+    validation checks, and returns a detailed report.
+
+    Set ``fix=true`` to apply automatic fixes and re-upload the corrected
+    chart back to Nextcloud.
+    """
+    from src.services.chart_validator import validate_song_on_nextcloud
+
+    result = await validate_song_on_nextcloud(song_id, fix=fix)
+    return result.to_dict()
+
+
+@router.post("/validate/upload")
+async def api_validate_uploaded_chart(
+    file: UploadFile = File(...),
+    fix: bool = Form(False),
+):
+    """
+    Validate an uploaded ``.chart`` file without requiring Nextcloud.
+
+    Returns a validation report with any issues found.  If ``fix`` is
+    True, the response includes the list of fixes that would be applied.
+    """
+    from src.services.chart_validator import validate_chart_content
+
+    filename = file.filename or "notes.chart"
+    if not filename.lower().endswith(".chart"):
+        raise HTTPException(
+            status_code=400,
+            detail="Only .chart files are supported for validation.",
+        )
+
+    content = await file.read()
+
+    # Decode
+    if content[:3] == b"\xef\xbb\xbf":
+        chart_text = content.decode("utf-8-sig")
+    else:
+        try:
+            chart_text = content.decode("utf-8")
+        except UnicodeDecodeError:
+            chart_text = content.decode("latin-1")
+
+    result = validate_chart_content(
+        chart_text=chart_text,
+        chart_label=filename,
+        fix=fix,
+    )
+
+    response = result.to_dict()
+
+    # If fixes were applied, note that in the response
+    if fix and result.fixes_applied:
+        fixed_lines = getattr(result, "_fixed_lines", None)
+        if fixed_lines:
+            response["fixed_chart_available"] = True
+
+    return response
+
+
+@router.post("/validate/batch")
+async def api_validate_batch(
+    song_ids: Optional[str] = Query(None, description="Comma-separated song IDs"),
+    fix: bool = Query(False),
+):
+    """
+    Validate multiple songs via SSE streaming.
+
+    If ``song_ids`` is omitted, validates the entire library.
+    Returns a Server-Sent Events stream with real-time progress.
+    """
+    from src.services.chart_validator import batch_validate_library
+
+    ids = None
+    if song_ids:
+        try:
+            ids = [int(s.strip()) for s in song_ids.split(",") if s.strip()]
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="song_ids must be a comma-separated list of integers",
+            )
+
+    async def event_stream():
+        try:
+            async for event in batch_validate_library(song_ids=ids, fix=fix):
+                yield f"data: {json.dumps(event)}\n\n"
+        except Exception as e:
+            logger.exception(f"❌ Batch validation error: {e}")
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Song Library Organization
+# ---------------------------------------------------------------------------
+
+
+@router.get("/organize/scan")
+async def api_scan_library_issues():
+    """
+    Scan the Nextcloud song library for organizational issues.
+
+    Checks for misplaced songs, missing files, missing album art,
+    and duplicate songs.  Returns a summary without modifying anything.
+    """
+    from src.services.song_organizer import scan_library_issues
+
+    if not is_configured():
+        raise HTTPException(
+            status_code=503, detail="Nextcloud WebDAV is not configured"
+        )
+
+    result = await scan_library_issues()
+    if "error" in result:
+        raise HTTPException(status_code=500, detail=result["error"])
+    return result
+
+
+@router.post("/organize/song/{song_id}")
+async def api_organize_song(song_id: int, dry_run: bool = Query(False)):
+    """
+    Move a single song to the correct ``Artist/Song Title`` path on Nextcloud.
+
+    Set ``dry_run=true`` to preview the change without moving anything.
+    """
+    from src.services.song_organizer import organize_song_folder
+
+    if not is_configured():
+        raise HTTPException(
+            status_code=503, detail="Nextcloud WebDAV is not configured"
+        )
+
+    result = await organize_song_folder(song_id, dry_run=dry_run)
+    if "error" in result:
+        raise HTTPException(status_code=500, detail=result["error"])
+    return result
+
+
+@router.post("/organize/library")
+async def api_organize_library(
+    dry_run: bool = Query(False),
+    fix_paths: bool = Query(True),
+    fetch_art: bool = Query(False),
+    clean_dupes: bool = Query(False),
+):
+    """
+    Organize the entire library via SSE streaming.
+
+    Supports path fixing, album art fetching, and duplicate cleanup.
+    Returns a Server-Sent Events stream with real-time progress.
+    """
+    from src.services.song_organizer import organize_library_stream
+
+    if not is_configured():
+        raise HTTPException(
+            status_code=503, detail="Nextcloud WebDAV is not configured"
+        )
+
+    async def event_stream():
+        try:
+            async for event in organize_library_stream(
+                dry_run=dry_run,
+                fix_paths=fix_paths,
+                fetch_art=fetch_art,
+                clean_dupes=clean_dupes,
+            ):
+                yield f"data: {json.dumps(event)}\n\n"
+        except Exception as e:
+            logger.exception(f"❌ Library organization error: {e}")
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.get("/duplicates")
+async def api_find_duplicates():
+    """
+    Scan the Nextcloud library for duplicate songs.
+
+    Uses normalized artist+title matching and chart hash comparison
+    to detect duplicates.  Returns groups with scoring to identify
+    the best copy to keep.
+    """
+    from src.services.song_organizer import find_duplicates_on_nextcloud
+
+    if not is_configured():
+        raise HTTPException(
+            status_code=503, detail="Nextcloud WebDAV is not configured"
+        )
+
+    result = await find_duplicates_on_nextcloud()
+    if "error" in result:
+        raise HTTPException(status_code=500, detail=result["error"])
+    return result
+
+
+@router.post("/duplicates/clean")
+async def api_clean_duplicates(dry_run: bool = Query(False)):
+    """
+    Remove duplicate songs, keeping the highest-scored copy in each group.
+
+    Set ``dry_run=true`` to preview what would be deleted.
+    """
+    from src.services.song_organizer import cleanup_duplicates
+
+    if not is_configured():
+        raise HTTPException(
+            status_code=503, detail="Nextcloud WebDAV is not configured"
+        )
+
+    result = await cleanup_duplicates(dry_run=dry_run)
+    if "error" in result:
+        raise HTTPException(status_code=500, detail=result["error"])
+    return result
+
+
+@router.post("/songs/{song_id}/fetch-art")
+async def api_fetch_album_art(song_id: int):
+    """
+    Attempt to download album art for a song from MusicBrainz / Cover Art Archive.
+
+    If art is found, it is uploaded to the song's folder on Nextcloud
+    as ``album.jpg``.
+    """
+    from src.services.song_organizer import fetch_missing_art_for_song
+
+    if not is_configured():
+        raise HTTPException(
+            status_code=503, detail="Nextcloud WebDAV is not configured"
+        )
+
+    result = await fetch_missing_art_for_song(song_id)
+    if "error" in result:
+        raise HTTPException(status_code=500, detail=result["error"])
+    return result

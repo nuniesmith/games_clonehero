@@ -3,7 +3,8 @@ Clone Hero Content Manager - Page Routes
 
 Serves HTML pages using Jinja2 templates. These routes handle all the
 browser-facing views: home, songs browser, song editor, upload page,
-song generator, chart viewer/editor, and the Nextcloud WebDAV file browser.
+song generator, chart viewer/editor, chart validation, library organizer,
+and the Nextcloud WebDAV file browser.
 
 Songs are stored on Nextcloud via WebDAV.  The local SQLite database is
 a metadata cache that is refreshed by the library sync process.
@@ -218,6 +219,52 @@ async def chart_viewer_page(
         "initial_difficulty": difficulty or "expert",
     }
     return request.app.state.templates.TemplateResponse("chart_viewer.html", context)
+
+
+# ---------------------------------------------------------------------------
+# Chart Validation
+# ---------------------------------------------------------------------------
+@router.get("/validation", response_class=HTMLResponse)
+async def validation_page(request: Request):
+    """Validate Clone Hero chart files for issues."""
+    webdav_configured = is_configured()
+
+    # Fetch a few recent songs for the "quick pick" list
+    songs = []
+    if webdav_configured:
+        try:
+            songs = await get_songs(limit=20)
+            for song in songs:
+                song["metadata"] = _parse_metadata(song.get("metadata"))
+        except Exception:
+            pass
+
+    context = {
+        "request": request,
+        "page_title": "Chart Validation",
+        "current_user": get_current_user(request),
+        "webdav_configured": webdav_configured,
+        "songs": songs,
+    }
+    return request.app.state.templates.TemplateResponse("validation.html", context)
+
+
+# ---------------------------------------------------------------------------
+# Library Organizer
+# ---------------------------------------------------------------------------
+@router.get("/organize", response_class=HTMLResponse)
+async def organize_page(request: Request):
+    """Library organization tools — fix paths, fetch art, clean duplicates."""
+    webdav_configured = is_configured()
+
+    context = {
+        "request": request,
+        "page_title": "Library Organizer",
+        "current_user": get_current_user(request),
+        "webdav_configured": webdav_configured,
+        "nextcloud_songs_path": NEXTCLOUD_SONGS_PATH,
+    }
+    return request.app.state.templates.TemplateResponse("organize.html", context)
 
 
 # ---------------------------------------------------------------------------

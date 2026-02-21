@@ -156,6 +156,41 @@
         </div>
     </div>
 
+    <!-- Tags Section -->
+    <div class="editor-section">
+        <h2>🏷️ Tags</h2>
+        <p class="help-text">Tags help organise and filter your library. Add genre, decade, or custom tags. Tags are always lowercase.</p>
+
+        <div class="tags-editor">
+            <div class="tags-current" id="tagsContainer">
+                {% if song.tags %}
+                {% for tag in song.tags %}
+                <span class="tag-chip" data-tag="{{ tag }}">
+                    {{ tag }}
+                    <button type="button" class="tag-remove" onclick="removeTag('{{ tag }}')" title="Remove tag">×</button>
+                </span>
+                {% endfor %}
+                {% else %}
+                <span class="tags-empty" id="tagsEmpty">No tags yet</span>
+                {% endif %}
+            </div>
+
+            <div class="tags-add-row">
+                <div class="tags-input-wrap">
+                    <input type="text" id="tagInput" class="tag-input"
+                           placeholder="Type a tag and press Enter…"
+                           autocomplete="off"
+                           onkeydown="handleTagKeydown(event)">
+                    <div class="tag-suggestions" id="tagSuggestions" style="display:none;"></div>
+                </div>
+                <button type="button" class="btn btn-primary btn-sm" onclick="addTagFromInput()">+ Add</button>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="lookupAndAutoTag()" title="Look up metadata from MusicBrainz and auto-generate tags">🔍 Auto-tag</button>
+            </div>
+
+            <div id="autoTagStatus" class="auto-tag-status" style="display:none;"></div>
+        </div>
+    </div>
+
     <!-- Difficulty Section -->
     <div class="editor-section">
         <h2>🎯 Difficulty Ratings</h2>
@@ -400,6 +435,174 @@
     .editor-actions-right {
         display: flex;
         gap: 10px;
+    }
+
+    /* ── Tags Editor ── */
+    .tags-editor {
+        margin-top: 8px;
+    }
+
+    .tags-current {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        min-height: 36px;
+        padding: 10px 12px;
+        background: #f8f9fa;
+        border: 1px solid #dee2e6;
+        border-radius: 6px;
+        margin-bottom: 10px;
+        align-items: center;
+    }
+
+    .tags-empty {
+        color: #95a5a6;
+        font-style: italic;
+        font-size: 0.9em;
+    }
+
+    .tag-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        padding: 4px 10px;
+        border-radius: 14px;
+        font-size: 0.85em;
+        font-weight: 500;
+        background: rgba(52, 152, 219, 0.12);
+        color: #2980b9;
+        border: 1px solid rgba(52, 152, 219, 0.25);
+        animation: fadeInTag 0.2s ease;
+    }
+
+    @keyframes fadeInTag {
+        from { opacity: 0; transform: scale(0.85); }
+        to { opacity: 1; transform: scale(1); }
+    }
+
+    .tag-chip[data-tag^="has-"] {
+        background: rgba(39, 174, 96, 0.12);
+        color: #27ae60;
+        border-color: rgba(39, 174, 96, 0.25);
+    }
+
+    .tag-chip[data-tag$="s"]:not([data-tag*="-"]) {
+        /* Decade tags like "2020s", "1990s" — but not hyphenated ones */
+    }
+
+    .tag-chip[data-tag="generated"] {
+        background: rgba(155, 89, 182, 0.12);
+        color: #8e44ad;
+        border-color: rgba(155, 89, 182, 0.25);
+    }
+
+    .tag-remove {
+        background: none;
+        border: none;
+        color: inherit;
+        font-size: 1.1em;
+        cursor: pointer;
+        opacity: 0.5;
+        padding: 0 2px;
+        line-height: 1;
+        font-weight: bold;
+        transition: opacity 0.15s;
+    }
+
+    .tag-remove:hover {
+        opacity: 1;
+    }
+
+    .tags-add-row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+    }
+
+    .tags-input-wrap {
+        flex: 1;
+        position: relative;
+    }
+
+    .tag-input {
+        width: 100%;
+        padding: 8px 12px;
+        border: 2px solid #bdc3c7;
+        border-radius: 5px;
+        font-size: 0.95em;
+        font-family: inherit;
+    }
+
+    .tag-input:focus {
+        outline: none;
+        border-color: #3498db;
+    }
+
+    .tag-suggestions {
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        background: #fff;
+        border: 1px solid #dee2e6;
+        border-top: none;
+        border-radius: 0 0 6px 6px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        max-height: 180px;
+        overflow-y: auto;
+        z-index: 100;
+    }
+
+    .tag-suggestion-item {
+        padding: 8px 12px;
+        cursor: pointer;
+        font-size: 0.9em;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        transition: background 0.1s;
+    }
+
+    .tag-suggestion-item:hover,
+    .tag-suggestion-item.active {
+        background: #eef5fc;
+    }
+
+    .tag-suggestion-count {
+        font-size: 0.8em;
+        color: #95a5a6;
+    }
+
+    .auto-tag-status {
+        margin-top: 10px;
+        padding: 10px 14px;
+        border-radius: 6px;
+        font-size: 0.9em;
+        animation: fadeInTag 0.25s ease;
+    }
+
+    .auto-tag-status.loading {
+        background: #eaf4fc;
+        border: 1px solid #bee5eb;
+        color: #0c5460;
+    }
+
+    .auto-tag-status.success {
+        background: #d4edda;
+        border: 1px solid #c3e6cb;
+        color: #155724;
+    }
+
+    .auto-tag-status.error {
+        background: #f8d7da;
+        border: 1px solid #f5c6cb;
+        color: #721c24;
+    }
+
+    .auto-tag-status.no-results {
+        background: #fff3cd;
+        border: 1px solid #ffeaa7;
+        color: #856404;
     }
 
     .staging-banner {
@@ -680,5 +883,288 @@ document.addEventListener('keydown', function(e) {
         saveSong();
     }
 });
+
+// ── Tag Management ──
+
+// All existing tags in the library (for autocomplete)
+const allKnownTags = {{ all_tags | tojson }};
+let suggestIndex = -1;
+
+function getCurrentTags() {
+    const chips = document.querySelectorAll('#tagsContainer .tag-chip');
+    return Array.from(chips).map(c => c.getAttribute('data-tag'));
+}
+
+function renderTagChip(tag) {
+    const span = document.createElement('span');
+    span.className = 'tag-chip';
+    span.setAttribute('data-tag', tag);
+    span.textContent = tag + ' ';
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'tag-remove';
+    btn.title = 'Remove tag';
+    btn.textContent = '×';
+    btn.onclick = function() { removeTag(tag); };
+    span.appendChild(btn);
+    return span;
+}
+
+async function addTag(tag) {
+    tag = tag.trim().toLowerCase();
+    if (!tag) return;
+
+    const current = getCurrentTags();
+    if (current.indexOf(tag) !== -1) return; // already present
+
+    try {
+        const resp = await fetch('/api/songs/' + songId + '/tags', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ add: [tag] })
+        });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+        refreshTagsUI(data.tags);
+    } catch (err) {
+        showNotification('Failed to add tag: ' + err.message, 'danger');
+    }
+}
+
+async function removeTag(tag) {
+    try {
+        const resp = await fetch('/api/songs/' + songId + '/tags', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ remove: [tag] })
+        });
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+        refreshTagsUI(data.tags);
+    } catch (err) {
+        showNotification('Failed to remove tag: ' + err.message, 'danger');
+    }
+}
+
+function refreshTagsUI(tags) {
+    const container = document.getElementById('tagsContainer');
+    container.innerHTML = '';
+    if (!tags || tags.length === 0) {
+        const empty = document.createElement('span');
+        empty.className = 'tags-empty';
+        empty.id = 'tagsEmpty';
+        empty.textContent = 'No tags yet';
+        container.appendChild(empty);
+    } else {
+        tags.forEach(function(tag) {
+            container.appendChild(renderTagChip(tag));
+        });
+    }
+}
+
+function addTagFromInput() {
+    const input = document.getElementById('tagInput');
+    const val = input.value.trim();
+    if (val) {
+        // Support comma-separated tags
+        val.split(',').forEach(function(t) {
+            addTag(t);
+        });
+        input.value = '';
+        hideSuggestions();
+    }
+}
+
+function handleTagKeydown(e) {
+    const suggestionsEl = document.getElementById('tagSuggestions');
+    const items = suggestionsEl.querySelectorAll('.tag-suggestion-item');
+
+    if (e.key === 'Enter') {
+        e.preventDefault();
+        if (suggestIndex >= 0 && suggestIndex < items.length) {
+            const tag = items[suggestIndex].getAttribute('data-tag');
+            addTag(tag);
+            document.getElementById('tagInput').value = '';
+            hideSuggestions();
+        } else {
+            addTagFromInput();
+        }
+        return;
+    }
+
+    if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        suggestIndex = Math.min(suggestIndex + 1, items.length - 1);
+        highlightSuggestion(items);
+        return;
+    }
+
+    if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        suggestIndex = Math.max(suggestIndex - 1, -1);
+        highlightSuggestion(items);
+        return;
+    }
+
+    if (e.key === 'Escape') {
+        hideSuggestions();
+        return;
+    }
+
+    // Debounce the suggestion update
+    setTimeout(function() { showSuggestions(); }, 50);
+}
+
+function showSuggestions() {
+    const input = document.getElementById('tagInput');
+    const val = input.value.trim().toLowerCase();
+    const suggestionsEl = document.getElementById('tagSuggestions');
+
+    if (!val) {
+        hideSuggestions();
+        return;
+    }
+
+    const currentTags = getCurrentTags();
+    const matches = allKnownTags.filter(function(t) {
+        return t.tag.indexOf(val) !== -1 && currentTags.indexOf(t.tag) === -1;
+    }).slice(0, 8);
+
+    if (matches.length === 0) {
+        hideSuggestions();
+        return;
+    }
+
+    suggestIndex = -1;
+    suggestionsEl.innerHTML = '';
+    matches.forEach(function(t) {
+        const item = document.createElement('div');
+        item.className = 'tag-suggestion-item';
+        item.setAttribute('data-tag', t.tag);
+
+        const nameSpan = document.createElement('span');
+        nameSpan.textContent = t.tag;
+        item.appendChild(nameSpan);
+
+        const countSpan = document.createElement('span');
+        countSpan.className = 'tag-suggestion-count';
+        countSpan.textContent = t.count + ' song' + (t.count !== 1 ? 's' : '');
+        item.appendChild(countSpan);
+
+        item.onclick = function() {
+            addTag(t.tag);
+            input.value = '';
+            hideSuggestions();
+        };
+        suggestionsEl.appendChild(item);
+    });
+    suggestionsEl.style.display = 'block';
+}
+
+function highlightSuggestion(items) {
+    items.forEach(function(item, i) {
+        item.classList.toggle('active', i === suggestIndex);
+    });
+}
+
+function hideSuggestions() {
+    suggestIndex = -1;
+    document.getElementById('tagSuggestions').style.display = 'none';
+}
+
+// Close suggestions when clicking outside
+document.addEventListener('click', function(e) {
+    if (!e.target.closest('.tags-input-wrap')) {
+        hideSuggestions();
+    }
+});
+
+// ── Auto-tag via MusicBrainz lookup ──
+async function lookupAndAutoTag() {
+    const titleEl = document.getElementById('title');
+    const artistEl = document.getElementById('artist');
+    const statusEl = document.getElementById('autoTagStatus');
+
+    const title = titleEl ? titleEl.value.trim() : '';
+    const artist = artistEl ? artistEl.value.trim() : '';
+
+    if (!title) {
+        statusEl.className = 'auto-tag-status error';
+        statusEl.textContent = '⚠️ Song title is required for lookup.';
+        statusEl.style.display = 'block';
+        return;
+    }
+
+    statusEl.className = 'auto-tag-status loading';
+    statusEl.textContent = '🔍 Looking up metadata on MusicBrainz…';
+    statusEl.style.display = 'block';
+
+    try {
+        const resp = await fetch('/api/lookup-metadata', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title: title, artist: artist })
+        });
+
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+
+        if (!data.found) {
+            statusEl.className = 'auto-tag-status no-results';
+            statusEl.textContent = '⚠️ No match found on MusicBrainz for "' + title + '"' + (artist ? ' by ' + artist : '');
+            return;
+        }
+
+        const suggestedTags = data.suggested_tags || [];
+        if (suggestedTags.length === 0) {
+            statusEl.className = 'auto-tag-status no-results';
+            statusEl.textContent = '⚠️ Metadata found but no tags could be generated.';
+            return;
+        }
+
+        // Add all suggested tags
+        const addResp = await fetch('/api/songs/' + songId + '/tags', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ add: suggestedTags })
+        });
+
+        if (!addResp.ok) throw new Error('Failed to save tags');
+        const tagData = await addResp.json();
+        refreshTagsUI(tagData.tags);
+
+        const newCount = suggestedTags.length;
+        let msg = '✅ Added ' + newCount + ' tag' + (newCount !== 1 ? 's' : '') + ': ' + suggestedTags.join(', ');
+        if (data.album) {
+            msg += '  •  Album: ' + data.album;
+        }
+        if (data.year) {
+            msg += ' (' + data.year + ')';
+        }
+        statusEl.className = 'auto-tag-status success';
+        statusEl.textContent = msg;
+
+        // Also fill in album/year/genre fields if empty
+        const albumEl = document.getElementById('album');
+        if (albumEl && !albumEl.value.trim() && data.album) {
+            albumEl.value = data.album;
+            albumEl.classList.add('modified');
+        }
+        const yearEl = document.getElementById('meta-year');
+        if (yearEl && !yearEl.value.trim() && data.year) {
+            yearEl.value = data.year;
+            yearEl.classList.add('modified');
+        }
+        const genreEl = document.getElementById('meta-genre');
+        if (genreEl && !genreEl.value.trim() && data.genre) {
+            genreEl.value = data.genre;
+            genreEl.classList.add('modified');
+        }
+
+    } catch (err) {
+        statusEl.className = 'auto-tag-status error';
+        statusEl.textContent = '❌ Lookup failed: ' + err.message;
+    }
+}
 </script>
 {% endblock %}

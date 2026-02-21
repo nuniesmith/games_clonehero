@@ -72,6 +72,14 @@ _MIGRATIONS = [
         ],
         "description": "Add synced_at column",
     },
+    # Migration 3: Add tags column (JSON array for indexing / categorisation)
+    {
+        "check": "SELECT COUNT(*) FROM pragma_table_info('songs') WHERE name='tags'",
+        "apply": [
+            "ALTER TABLE songs ADD COLUMN tags TEXT DEFAULT '[]'",
+        ],
+        "description": "Add tags column",
+    },
 ]
 
 
@@ -286,7 +294,15 @@ async def update_song(song_id: int, **fields) -> bool:
     if not fields:
         return False
 
-    allowed = {"title", "artist", "album", "file_path", "remote_path", "metadata"}
+    allowed = {
+        "title",
+        "artist",
+        "album",
+        "file_path",
+        "remote_path",
+        "metadata",
+        "tags",
+    }
     filtered = {k: v for k, v in fields.items() if k in allowed}
     if not filtered:
         return False
@@ -390,6 +406,67 @@ async def get_songs_by_artist(
         return [row_to_dict(r) for r in rows]
 
 
+async def get_artist_variants() -> List[Dict[str, Any]]:
+    """
+    Find artist names that differ only by case / minor punctuation.
+
+    Returns a list of variant groups.  Each group is a dict with:
+      - ``key``   – the lower-cased artist name used for grouping
+      - ``variants`` – list of dicts ``{"artist": str, "song_count": int}``
+
+    Only groups with 2+ distinct spellings are returned.
+    """
+    async with get_async_connection() as db:
+        cursor = await db.execute(
+            """
+            SELECT artist, COUNT(*) as song_count
+            FROM songs
+            GROUP BY artist
+            ORDER BY artist COLLATE NOCASE ASC
+            """
+        )
+        rows = await cursor.fetchall()
+
+    # Group by lower-cased + stripped key
+    from collections import OrderedDict
+
+    groups: OrderedDict[str, list] = OrderedDict()
+    for row in rows:
+        r = row_to_dict(row)
+        key = r["artist"].strip().lower()
+        groups.setdefault(key, []).append(r)
+
+    # Keep only groups with more than one distinct spelling
+    return [
+        {"key": key, "variants": variants}
+        for key, variants in groups.items()
+        if len(variants) > 1
+    ]
+
+
+async def rename_artist(old_name: str, new_name: str) -> int:
+    """
+    Rename every song whose artist matches *old_name* (exact, case-sensitive)
+    to *new_name*.  Returns the number of rows updated.
+    """
+    async with get_async_connection() as db:
+        cursor = await db.execute(
+            "UPDATE songs SET artist = ? WHERE artist = ?",
+            (new_name, old_name),
+        )
+        await db.commit()
+        updated = cursor.rowcount
+        if updated:
+            logger.info(
+                "✏️ Renamed artist '{}' → '{}' ({} song{})",
+                old_name,
+                new_name,
+                updated,
+                "s" if updated != 1 else "",
+            )
+        return updated
+
+
 async def count_songs(search: Optional[str] = None) -> int:
     """Return total number of songs, optionally filtered by search."""
     async with get_async_connection() as db:
@@ -439,6 +516,209 @@ async def purge_stale_songs(valid_remote_paths: List[str]) -> int:
             "🗑️ Purged {} stale song(s) no longer on Nextcloud", len(ids_to_delete)
         )
         return len(ids_to_delete)
+
+
+# ---------------------------------------------------------------------------
+# Tag helpers
+# ---------------------------------------------------------------------------
+
+
+def parse_tags(raw) -> List[str]:
+    """Parse a tags value from the database into a Python list of strings.
+
+    Tags are stored as a JSON array (e.g. ``'["rock","metal"]'``).
+    Accepts a list, a JSON string, or ``None`` and always returns a
+    deduplicated, lowercase-sorted list.
+    """
+    import json as _json
+
+    if isinstance(raw, list):
+        tags = raw
+    elif isinstance(raw, str):
+        try:
+            parsed = _json.loads(raw)
+            tags = parsed if isinstance(parsed, list) else []
+        except (_json.JSONDecodeError, TypeError):
+            tags = []
+    else:
+        tags = []
+    # Normalise: strip whitespace, lowercase, deduplicate, sort
+    seen: set[str] = set()
+    out: List[str] = []
+    for t in tags:
+        t_clean = str(t).strip().lower()
+        if t_clean and t_clean not in seen:
+            seen.add(t_clean)
+            out.append(t_clean)
+    out.sort()
+    return out
+
+
+async def get_all_tags() -> List[Dict[str, Any]]:
+    """Return every distinct tag across all songs with usage counts.
+
+    Returns a list of ``{"tag": str, "count": int}`` dicts sorted
+    alphabetically by tag name.
+    """
+    import json as _json
+
+    async with get_async_connection() as db:
+        cursor = await db.execute(
+            "SELECT tags FROM songs WHERE tags IS NOT NULL AND tags != '[]'"
+        )
+        rows = await cursor.fetchall()
+
+    tag_counts: Dict[str, int] = {}
+    for row in rows:
+        for tag in parse_tags(row["tags"]):
+            tag_counts[tag] = tag_counts.get(tag, 0) + 1
+
+    return [{"tag": tag, "count": count} for tag, count in sorted(tag_counts.items())]
+
+
+async def get_song_tags(song_id: int) -> List[str]:
+    """Return the tag list for a single song."""
+    async with get_async_connection() as db:
+        cursor = await db.execute("SELECT tags FROM songs WHERE id = ?", (song_id,))
+        row = await cursor.fetchone()
+    if not row:
+        return []
+    return parse_tags(row["tags"])
+
+
+async def set_song_tags(song_id: int, tags: List[str]) -> bool:
+    """Replace all tags on a song. Returns True if the row was updated."""
+    import json as _json
+
+    clean = parse_tags(tags)  # normalise
+    tags_json = _json.dumps(clean)
+    async with get_async_connection() as db:
+        cursor = await db.execute(
+            "UPDATE songs SET tags = ? WHERE id = ?",
+            (tags_json, song_id),
+        )
+        await db.commit()
+        updated = cursor.rowcount > 0
+        if updated:
+            logger.info("🏷️ Song id={} tags set to {}", song_id, clean)
+        return updated
+
+
+async def add_song_tag(song_id: int, tag: str) -> List[str]:
+    """Add a single tag to a song (idempotent). Returns the new tag list."""
+    import json as _json
+
+    current = await get_song_tags(song_id)
+    tag_clean = tag.strip().lower()
+    if not tag_clean:
+        return current
+    if tag_clean in current:
+        return current
+    current.append(tag_clean)
+    current.sort()
+    tags_json = _json.dumps(current)
+    async with get_async_connection() as db:
+        await db.execute(
+            "UPDATE songs SET tags = ? WHERE id = ?",
+            (tags_json, song_id),
+        )
+        await db.commit()
+    logger.info("🏷️ Song id={} +tag '{}'", song_id, tag_clean)
+    return current
+
+
+async def remove_song_tag(song_id: int, tag: str) -> List[str]:
+    """Remove a single tag from a song. Returns the new tag list."""
+    import json as _json
+
+    current = await get_song_tags(song_id)
+    tag_clean = tag.strip().lower()
+    if tag_clean not in current:
+        return current
+    current.remove(tag_clean)
+    tags_json = _json.dumps(current)
+    async with get_async_connection() as db:
+        await db.execute(
+            "UPDATE songs SET tags = ? WHERE id = ?",
+            (tags_json, song_id),
+        )
+        await db.commit()
+    logger.info("🏷️ Song id={} -tag '{}'", song_id, tag_clean)
+    return current
+
+
+async def get_songs_by_tag(
+    tag: str,
+    search: Optional[str] = None,
+    limit: int = 200,
+    offset: int = 0,
+) -> List[Dict[str, Any]]:
+    """Fetch songs that contain a specific tag, with optional search filter.
+
+    Tags are stored as JSON arrays so we use a LIKE match on the
+    serialised string (reliable because tags are always lowercase,
+    stripped, and sorted).
+    """
+    tag_clean = tag.strip().lower()
+    tag_pattern = f'%"{tag_clean}"%'
+
+    async with get_async_connection() as db:
+        if search and search.strip():
+            search_pattern = f"%{search.strip()}%"
+            cursor = await db.execute(
+                """
+                SELECT * FROM songs
+                WHERE tags LIKE ?
+                  AND (title LIKE ? OR artist LIKE ? OR album LIKE ?)
+                ORDER BY artist COLLATE NOCASE ASC, title COLLATE NOCASE ASC
+                LIMIT ? OFFSET ?
+                """,
+                (
+                    tag_pattern,
+                    search_pattern,
+                    search_pattern,
+                    search_pattern,
+                    limit,
+                    offset,
+                ),
+            )
+        else:
+            cursor = await db.execute(
+                """
+                SELECT * FROM songs
+                WHERE tags LIKE ?
+                ORDER BY artist COLLATE NOCASE ASC, title COLLATE NOCASE ASC
+                LIMIT ? OFFSET ?
+                """,
+                (tag_pattern, limit, offset),
+            )
+        rows = await cursor.fetchall()
+        return [row_to_dict(r) for r in rows]
+
+
+async def count_songs_by_tag(tag: str, search: Optional[str] = None) -> int:
+    """Return the number of songs that have a given tag."""
+    tag_clean = tag.strip().lower()
+    tag_pattern = f'%"{tag_clean}"%'
+
+    async with get_async_connection() as db:
+        if search and search.strip():
+            search_pattern = f"%{search.strip()}%"
+            cursor = await db.execute(
+                """
+                SELECT COUNT(*) as cnt FROM songs
+                WHERE tags LIKE ?
+                  AND (title LIKE ? OR artist LIKE ? OR album LIKE ?)
+                """,
+                (tag_pattern, search_pattern, search_pattern, search_pattern),
+            )
+        else:
+            cursor = await db.execute(
+                "SELECT COUNT(*) as cnt FROM songs WHERE tags LIKE ?",
+                (tag_pattern,),
+            )
+        row = await cursor.fetchone()
+        return row["cnt"] if row else 0
 
 
 # ---------------------------------------------------------------------------

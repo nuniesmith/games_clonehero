@@ -26,10 +26,15 @@ from src.config import (
 )
 from src.database import (
     count_songs,
+    count_songs_by_tag,
+    get_all_tags,
     get_artists,
     get_song_by_id,
+    get_song_tags,
     get_songs,
     get_songs_by_artist,
+    get_songs_by_tag,
+    parse_tags,
 )
 from src.webdav import check_connection, is_configured, list_directory
 
@@ -109,10 +114,20 @@ async def songs_page(
     search: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     view: Optional[str] = Query(None),
+    tag: Optional[str] = Query(None),
 ):
     """Browse and search songs stored in the local metadata cache."""
     search_query = search.strip() if search else None
     view_mode = view if view in ("artists", "list") else "list"
+    active_tag = tag.strip().lower() if tag else None
+
+    # Fetch all tags for the filter sidebar / dropdown
+    all_tags = await get_all_tags()
+
+    # --- Helper to parse metadata + tags on each song dict ---
+    def _enrich_song(song):
+        song["metadata"] = _parse_metadata(song.get("metadata"))
+        song["tags"] = parse_tags(song.get("tags"))
 
     # --- Artist-grouped view ---
     if view_mode == "artists":
@@ -125,12 +140,19 @@ async def songs_page(
                 artist=artist_name, search=search_query
             )
             for song in artist_songs:
-                song["metadata"] = _parse_metadata(song.get("metadata"))
+                _enrich_song(song)
+
+            # If a tag filter is active, keep only matching songs
+            if active_tag:
+                artist_songs = [s for s in artist_songs if active_tag in s["tags"]]
+                if not artist_songs:
+                    continue  # skip artists with no matching songs
+
             total_songs += len(artist_songs)
             artists_with_songs.append(
                 {
                     "name": artist_name,
-                    "song_count": artist_row["song_count"],
+                    "song_count": len(artist_songs),
                     "songs": artist_songs,
                 }
             )
@@ -145,6 +167,8 @@ async def songs_page(
             "total_songs": total_songs,
             "songs": [],
             "search_query": search_query or "",
+            "active_tag": active_tag or "",
+            "all_tags": all_tags,
             "pagination": _paginate(1, 0),
             "webdav_configured": is_configured(),
             "nextcloud_songs_path": NEXTCLOUD_SONGS_PATH,
@@ -153,18 +177,29 @@ async def songs_page(
         return request.app.state.templates.TemplateResponse("songs.html", context)
 
     # --- Flat list view (default) ---
-    total = await count_songs(search=search_query)
-    pag = _paginate(page, total)
 
-    songs = await get_songs(
-        search=search_query,
-        limit=pag["page_size"],
-        offset=pag["offset"],
-    )
+    # When filtering by tag, use tag-specific queries
+    if active_tag:
+        total = await count_songs_by_tag(active_tag, search=search_query)
+        pag = _paginate(page, total)
+        songs = await get_songs_by_tag(
+            active_tag,
+            search=search_query,
+            limit=pag["page_size"],
+            offset=pag["offset"],
+        )
+    else:
+        total = await count_songs(search=search_query)
+        pag = _paginate(page, total)
+        songs = await get_songs(
+            search=search_query,
+            limit=pag["page_size"],
+            offset=pag["offset"],
+        )
 
-    # Parse metadata for each song
+    # Parse metadata and tags for each song
     for song in songs:
-        song["metadata"] = _parse_metadata(song.get("metadata"))
+        _enrich_song(song)
 
     context = {
         "request": request,
@@ -176,6 +211,8 @@ async def songs_page(
         "total_songs": total,
         "songs": songs,
         "search_query": search_query or "",
+        "active_tag": active_tag or "",
+        "all_tags": all_tags,
         "pagination": pag,
         "webdav_configured": is_configured(),
         "nextcloud_songs_path": NEXTCLOUD_SONGS_PATH,
@@ -202,6 +239,10 @@ async def song_editor(request: Request, song_id: int):
         return request.app.state.templates.TemplateResponse("editor.html", context)
 
     song["metadata"] = _parse_metadata(song.get("metadata"))
+    song["tags"] = parse_tags(song.get("tags"))
+
+    # Fetch all existing tags for autocomplete suggestions
+    all_tags = await get_all_tags()
 
     # Detect if the song is in the Generator staging folder
     remote_path = song.get("remote_path", "")
@@ -212,6 +253,7 @@ async def song_editor(request: Request, song_id: int):
         "page_title": f"Edit: {song.get('title', 'Song')}",
         "current_user": get_current_user(request),
         "song": song,
+        "all_tags": all_tags,
         "webdav_configured": is_configured(),
         "is_staged": is_staged,
         "generator_path": NEXTCLOUD_GENERATOR_PATH,

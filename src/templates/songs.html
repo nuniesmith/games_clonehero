@@ -21,6 +21,9 @@ endblock %} {% block content %}
         <!-- Search Form -->
         <form method="get" action="/songs" class="search-form" id="songs-search-form">
             <input type="hidden" name="view" value="{{ view_mode }}" id="view-mode-input" />
+            {% if active_tag %}
+            <input type="hidden" name="tag" value="{{ active_tag }}" id="tag-filter-input" />
+            {% endif %}
             <input
                 type="text"
                 name="search"
@@ -30,23 +33,40 @@ endblock %} {% block content %}
             />
             <button type="submit" class="btn btn-primary">Search</button>
             {% if search_query %}
-            <a href="/songs?view={{ view_mode }}" class="btn btn-secondary">Clear</a>
+            <a href="/songs?view={{ view_mode }}{% if active_tag %}&tag={{ active_tag }}{% endif %}" class="btn btn-secondary">Clear</a>
             {% endif %}
         </form>
 
         <!-- View Toggle -->
         <div class="view-toggle">
             <a
-                href="/songs?view=list{% if search_query %}&search={{ search_query }}{% endif %}"
+                href="/songs?view=list{% if search_query %}&search={{ search_query }}{% endif %}{% if active_tag %}&tag={{ active_tag }}{% endif %}"
                 class="btn btn-sm {% if view_mode == 'list' %}btn-primary{% else %}btn-secondary{% endif %}"
                 title="Flat list view"
             >📋 List</a>
             <a
-                href="/songs?view=artists{% if search_query %}&search={{ search_query }}{% endif %}"
+                href="/songs?view=artists{% if search_query %}&search={{ search_query }}{% endif %}{% if active_tag %}&tag={{ active_tag }}{% endif %}"
                 class="btn btn-sm {% if view_mode == 'artists' %}btn-primary{% else %}btn-secondary{% endif %}"
                 title="Group by artist"
             >🎤 Artists</a>
         </div>
+
+        <!-- Tag Filter -->
+        {% if all_tags %}
+        <div class="tag-filter">
+            <select id="tagFilterSelect" onchange="applyTagFilter(this.value)" class="tag-filter-select">
+                <option value="">🏷️ All Tags</option>
+                {% for t in all_tags %}
+                <option value="{{ t.tag }}" {% if active_tag == t.tag %}selected{% endif %}>
+                    {{ t.tag }} ({{ t.count }})
+                </option>
+                {% endfor %}
+            </select>
+            {% if active_tag %}
+            <a href="/songs?view={{ view_mode }}{% if search_query %}&search={{ search_query }}{% endif %}" class="btn btn-sm btn-secondary tag-clear-btn" title="Clear tag filter">✕</a>
+            {% endif %}
+        </div>
+        {% endif %}
 
         <!-- Refresh Library -->
         {% if webdav_configured %}
@@ -72,16 +92,19 @@ endblock %} {% block content %}
             {{ total_songs }} song{{ 's' if total_songs != 1 else '' }}
             across {{ total_artists }} artist{{ 's' if total_artists != 1 else '' }}
             {% endif %}
+            {% if active_tag %} tagged <span class="active-tag-badge">{{ active_tag }}</span>{% endif %}
         </p>
         {% elif search_query %}
         <p class="search-results">
             Found {{ pagination.total }} result{{ 's' if pagination.total != 1
             else '' }} for "{{ search_query }}"
+            {% if active_tag %} tagged <span class="active-tag-badge">{{ active_tag }}</span>{% endif %}
         </p>
         {% else %}
         <p class="search-results">
             {{ pagination.total }} song{{ 's' if pagination.total != 1 else ''
             }} in library
+            {% if active_tag %} tagged <span class="active-tag-badge">{{ active_tag }}</span>{% endif %}
         </p>
         {% endif %}
     </div>
@@ -191,6 +214,13 @@ endblock %} {% block content %}
                             <code class="remote-path">{{ song.remote_path }}</code>
                         </p>
                         {% endif %}
+                        {% if song.tags and song.tags | length > 0 %}
+                        <div class="song-tags">
+                            {% for tag in song.tags %}
+                            <a href="/songs?view={{ view_mode }}&tag={{ tag }}{% if search_query %}&search={{ search_query }}{% endif %}" class="song-tag-chip" title="Filter by {{ tag }}">{{ tag }}</a>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
                         {% if song.metadata and song.metadata | length > 0 %}
                         <details class="metadata-details">
                             <summary>
@@ -280,7 +310,15 @@ endblock %} {% block content %}
                 <p><strong>Last synced:</strong> {{ song.synced_at }}</p>
                 {% elif song.created_at %}
                 <p><strong>Added:</strong> {{ song.created_at }}</p>
-                {% endif %} {% if song.metadata and song.metadata | length > 0
+                {% endif %}
+                {% if song.tags and song.tags | length > 0 %}
+                <div class="song-tags">
+                    {% for tag in song.tags %}
+                    <a href="/songs?view={{ view_mode }}&tag={{ tag }}{% if search_query %}&search={{ search_query }}{% endif %}" class="song-tag-chip" title="Filter by {{ tag }}">{{ tag }}</a>
+                    {% endfor %}
+                </div>
+                {% endif %}
+                {% if song.metadata and song.metadata | length > 0
                 %}
                 <details class="metadata-details">
                     <summary>
@@ -305,7 +343,7 @@ endblock %} {% block content %}
         <div class="pagination">
             {% if pagination.has_previous %}
             <a
-                href="/songs?page={{ pagination.previous_page }}&view={{ view_mode }}{% if search_query %}&search={{ search_query }}{% endif %}"
+                href="/songs?page={{ pagination.previous_page }}&view={{ view_mode }}{% if search_query %}&search={{ search_query }}{% endif %}{% if active_tag %}&tag={{ active_tag }}{% endif %}"
                 class="btn btn-secondary"
                 >⬅️ Previous</a
             >
@@ -317,7 +355,7 @@ endblock %} {% block content %}
 
             {% if pagination.has_next %}
             <a
-                href="/songs?page={{ pagination.next_page }}&view={{ view_mode }}{% if search_query %}&search={{ search_query }}{% endif %}"
+                href="/songs?page={{ pagination.next_page }}&view={{ view_mode }}{% if search_query %}&search={{ search_query }}{% endif %}{% if active_tag %}&tag={{ active_tag }}{% endif %}"
                 class="btn btn-secondary"
                 >Next ➡️</a
             >
@@ -350,6 +388,68 @@ endblock %} {% block content %}
         border-radius: 5px;
         font-size: 0.88em;
         white-space: nowrap;
+    }
+
+    /* ── Tag Filter ── */
+    .tag-filter {
+        display: flex;
+        gap: 4px;
+        align-items: center;
+        flex-shrink: 0;
+    }
+    .tag-filter-select {
+        padding: 6px 10px;
+        border: 2px solid #bdc3c7;
+        border-radius: 5px;
+        font-size: 0.9em;
+        font-family: inherit;
+        background: #fff;
+        cursor: pointer;
+        max-width: 200px;
+    }
+    .tag-filter-select:focus {
+        outline: none;
+        border-color: #3498db;
+    }
+    .tag-clear-btn {
+        padding: 5px 8px !important;
+        font-size: 0.85em !important;
+    }
+    .active-tag-badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-size: 0.88em;
+        font-weight: 600;
+        background: rgba(52, 152, 219, 0.12);
+        color: #2980b9;
+        border: 1px solid rgba(52, 152, 219, 0.25);
+        font-style: normal;
+    }
+
+    /* ── Song Tag Chips (on cards) ── */
+    .song-tags {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 5px;
+        margin-top: 8px;
+    }
+    .song-tag-chip {
+        display: inline-block;
+        padding: 2px 9px;
+        border-radius: 10px;
+        font-size: 0.78em;
+        font-weight: 500;
+        background: rgba(52, 152, 219, 0.08);
+        color: #2980b9;
+        border: 1px solid rgba(52, 152, 219, 0.18);
+        text-decoration: none;
+        transition: all 0.15s ease;
+    }
+    .song-tag-chip:hover {
+        background: rgba(52, 152, 219, 0.18);
+        border-color: rgba(52, 152, 219, 0.35);
+        color: #2471a3;
     }
 
     /* ── Artist Accordion ── */
@@ -779,6 +879,14 @@ endblock %} {% block content %}
             text-align: center;
         }
 
+        .tag-filter {
+            width: 100%;
+        }
+        .tag-filter-select {
+            flex: 1;
+            max-width: none;
+        }
+
         #sync-library-btn {
             width: 100%;
         }
@@ -820,6 +928,18 @@ endblock %} {% block content %}
 {% endblock %} {% block extra_js %}
 <script>
     // ── SSE-powered Library Sync ──
+
+    /* ── Tag Filter Navigation ── */
+    function applyTagFilter(tag) {
+        const params = new URLSearchParams(window.location.search);
+        if (tag) {
+            params.set('tag', tag);
+        } else {
+            params.delete('tag');
+        }
+        params.delete('page'); // reset to page 1 on filter change
+        window.location.href = '/songs?' + params.toString();
+    }
 
     /* ── Artist Accordion Toggle ── */
     function toggleArtist(btn) {

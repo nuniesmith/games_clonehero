@@ -43,12 +43,22 @@ from src.config import (
     NEXTCLOUD_DB_PATH,
 )
 from src.database import (
+    add_song_tag,
     count_songs,
+    count_songs_by_tag,
     delete_song,
+    get_all_tags,
+    get_artist_variants,
     get_artists,
     get_song_by_id,
+    get_song_tags,
     get_songs,
     get_songs_by_artist,
+    get_songs_by_tag,
+    parse_tags,
+    remove_song_tag,
+    rename_artist,
+    set_song_tags,
     update_song,
 )
 from src.services.chart_parser import (
@@ -95,6 +105,22 @@ class SongUpdate(BaseModel):
     artist: Optional[str] = None
     album: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
+    tags: Optional[list[str]] = None
+
+
+class TagUpdateRequest(BaseModel):
+    """Set, add, or remove tags on a song."""
+
+    tags: Optional[list[str]] = None  # replace all tags
+    add: Optional[list[str]] = None  # add these tags
+    remove: Optional[list[str]] = None  # remove these tags
+
+
+class ArtistMergeRequest(BaseModel):
+    """Merge multiple artist name variants into a single canonical name."""
+
+    canonical: str
+    variants: list[str]
 
 
 class WebDAVDownloadRequest(BaseModel):
@@ -216,7 +242,7 @@ async def api_list_songs(
     total = await count_songs(search=search_query)
     songs = await get_songs(search=search_query, limit=limit, offset=offset)
 
-    # Parse metadata JSON strings into dicts
+    # Parse metadata JSON strings and tags into native types
     for song in songs:
         meta = song.get("metadata")
         if isinstance(meta, str):
@@ -224,6 +250,7 @@ async def api_list_songs(
                 song["metadata"] = json.loads(meta)
             except (json.JSONDecodeError, TypeError):
                 song["metadata"] = {}
+        song["tags"] = parse_tags(song.get("tags"))
 
     return {
         "total": total,
@@ -254,7 +281,7 @@ async def api_artist_songs(
     search_query = search.strip() if search else None
     songs = await get_songs_by_artist(artist=artist_name, search=search_query)
 
-    # Parse metadata JSON strings into dicts
+    # Parse metadata JSON strings and tags into native types
     for song in songs:
         meta = song.get("metadata")
         if isinstance(meta, str):
@@ -262,8 +289,161 @@ async def api_artist_songs(
                 song["metadata"] = json.loads(meta)
             except (json.JSONDecodeError, TypeError):
                 song["metadata"] = {}
+        song["tags"] = parse_tags(song.get("tags"))
 
     return {"artist": artist_name, "total": len(songs), "songs": songs}
+
+
+@router.get("/artists/duplicates")
+async def api_artist_duplicates():
+    """
+    Detect artist name variants that differ only by case or minor spelling.
+
+    Returns groups of variant names with their song counts so the user can
+    choose a canonical spelling and merge them.
+    """
+    groups = await get_artist_variants()
+    return {"total": len(groups), "groups": groups}
+
+
+@router.post("/artists/merge")
+async def api_merge_artists(body: ArtistMergeRequest):
+    """
+    Merge artist name variants into a single canonical name.
+
+    Updates the local database **and** rewrites each affected song's
+    ``song.ini`` on Nextcloud so everything stays in sync.
+    """
+    canonical = body.canonical.strip()
+    if not canonical:
+        raise HTTPException(status_code=400, detail="Canonical name must not be empty")
+
+    variants = [
+        v.strip() for v in body.variants if v.strip() and v.strip() != canonical
+    ]
+    if not variants:
+        raise HTTPException(status_code=400, detail="No variants to merge")
+
+    total_updated = 0
+    nextcloud_errors: list[str] = []
+
+    for old_name in variants:
+        # 1. Rename in DB
+        count = await rename_artist(old_name, canonical)
+        total_updated += count
+
+        # 2. Update song.ini on Nextcloud for each affected song
+        if count > 0 and is_configured():
+            affected = await get_songs_by_artist(artist=canonical)
+            for song in affected:
+                remote_path = song.get("remote_path", "")
+                if not remote_path:
+                    continue
+                meta = song.get("metadata", "{}")
+                if isinstance(meta, str):
+                    try:
+                        meta = json.loads(meta)
+                    except (json.JSONDecodeError, TypeError):
+                        meta = {}
+                song_data = {
+                    "title": song.get("title", ""),
+                    "artist": canonical,
+                    "album": song.get("album", ""),
+                    "metadata": meta,
+                }
+                ok = await write_remote_song_ini(remote_path, song_data)
+                if not ok:
+                    nextcloud_errors.append(
+                        f"Failed to update song.ini for '{song.get('title', '?')}' at {remote_path}"
+                    )
+
+    result: Dict[str, Any] = {
+        "message": f"Merged {len(variants)} variant(s) into '{canonical}'",
+        "canonical": canonical,
+        "variants_merged": variants,
+        "songs_updated": total_updated,
+    }
+    if nextcloud_errors:
+        result["nextcloud_warnings"] = nextcloud_errors
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Tags
+# ---------------------------------------------------------------------------
+@router.get("/tags")
+async def api_list_tags():
+    """List all tags in use across the library with usage counts."""
+    tags = await get_all_tags()
+    return {"total": len(tags), "tags": tags}
+
+
+@router.get("/songs/{song_id}/tags")
+async def api_get_song_tags(song_id: int):
+    """Get tags for a single song."""
+    song = await get_song_by_id(song_id)
+    if not song:
+        raise HTTPException(status_code=404, detail="Song not found")
+    tags = await get_song_tags(song_id)
+    return {"song_id": song_id, "tags": tags}
+
+
+@router.put("/songs/{song_id}/tags")
+async def api_update_song_tags(song_id: int, body: TagUpdateRequest):
+    """
+    Update tags on a song.
+
+    Supports three modes (first match wins):
+    - ``tags``: replace all tags with this list
+    - ``add``: append tags to the existing set
+    - ``remove``: remove tags from the existing set
+    """
+    song = await get_song_by_id(song_id)
+    if not song:
+        raise HTTPException(status_code=404, detail="Song not found")
+
+    if body.tags is not None:
+        await set_song_tags(song_id, body.tags)
+        new_tags = await get_song_tags(song_id)
+    elif body.add:
+        new_tags = list(await get_song_tags(song_id))
+        for t in body.add:
+            new_tags = await add_song_tag(song_id, t)
+    elif body.remove:
+        new_tags = list(await get_song_tags(song_id))
+        for t in body.remove:
+            new_tags = await remove_song_tag(song_id, t)
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide 'tags', 'add', or 'remove'",
+        )
+
+    return {"song_id": song_id, "tags": new_tags}
+
+
+@router.get("/songs/by-tag/{tag}")
+async def api_songs_by_tag(
+    tag: str,
+    search: Optional[str] = Query(None),
+    limit: int = Query(200, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+):
+    """List songs that have a specific tag."""
+    search_query = search.strip() if search else None
+    total = await count_songs_by_tag(tag, search=search_query)
+    songs = await get_songs_by_tag(tag, search=search_query, limit=limit, offset=offset)
+    for song in songs:
+        meta = song.get("metadata")
+        if isinstance(meta, str):
+            try:
+                song["metadata"] = json.loads(meta)
+            except (json.JSONDecodeError, TypeError):
+                song["metadata"] = {}
+        song["tags"] = parse_tags(song.get("tags"))
+
+    return {"tag": tag, "total": total, "songs": songs}
 
 
 @router.get("/songs/{song_id}")
@@ -279,6 +459,8 @@ async def api_get_song(song_id: int):
             song["metadata"] = json.loads(meta)
         except (json.JSONDecodeError, TypeError):
             song["metadata"] = {}
+
+    song["tags"] = parse_tags(song.get("tags"))
 
     return song
 
@@ -304,6 +486,8 @@ async def api_update_song(song_id: int, body: SongUpdate):
         fields["album"] = body.album
     if body.metadata is not None:
         fields["metadata"] = json.dumps(body.metadata)
+    if body.tags is not None:
+        fields["tags"] = json.dumps(parse_tags(body.tags))
 
     if not fields:
         raise HTTPException(status_code=400, detail="No fields to update")
@@ -602,6 +786,45 @@ async def api_generate_song(
         result["year"] = year
         result["genre"] = genre
 
+        # --- Auto-tag the generated song ---
+        song_id = result.get("id")
+        if song_id:
+            auto_tags: list[str] = ["generated"]
+
+            # Genre tags from lookup
+            lookup_genres = lookup_data.get("genres", [])
+            if lookup_genres:
+                for g in lookup_genres:
+                    tag = g.strip().lower()
+                    if tag:
+                        auto_tags.append(tag)
+            elif genre and genre.lower() != "generated":
+                auto_tags.append(genre.strip().lower())
+
+            # Decade tag from year
+            if year and len(year) >= 4 and year[:4].isdigit():
+                decade = (int(year[:4]) // 10) * 10
+                auto_tags.append(f"{decade}s")
+
+            # Album art tag
+            if result.get("has_album_art"):
+                auto_tags.append("has-album-art")
+
+            # Instrument tag
+            if instrument and instrument != "full_mix":
+                auto_tags.append(f"chart-{instrument}")
+
+            try:
+                await set_song_tags(song_id, auto_tags)
+                result["tags"] = parse_tags(auto_tags)
+                logger.info(
+                    "🏷️ Auto-tagged generated song id={}: {}",
+                    song_id,
+                    result["tags"],
+                )
+            except Exception as e:
+                logger.warning("⚠️ Failed to auto-tag song {}: {}", song_id, e)
+
         return result
 
     except HTTPException:
@@ -639,9 +862,9 @@ async def api_lookup_metadata(req: MetadataLookupRequest):
     """
     Look up song metadata from MusicBrainz by title and optional artist.
 
-    Returns canonical title, artist, album, year, genre, and whether
-    cover art is available.  Does NOT download the cover art itself
-    (that happens during generation).
+    Returns canonical title, artist, album, year, genre, a cover art
+    preview URL from the Cover Art Archive, and ``suggested_tags``
+    derived from MusicBrainz genres / recording metadata.
     """
     try:
         data = await lookup_song_metadata(req.title, req.artist)
@@ -653,6 +876,55 @@ async def api_lookup_metadata(req: MetadataLookupRequest):
         data["found"] = True
         # Don't send binary art data through this endpoint
         data.pop("cover_art_bytes", None)
+
+        # Build a direct Cover Art Archive preview URL so the UI can
+        # show a real thumbnail without downloading the full image
+        # server-side.  CAA serves CORS headers so the browser can
+        # load the image directly.
+        release_mbid = data.get("release_mbid", "")
+        rg_mbid = data.get("release_group_mbid", "")
+        cover_art_url = ""
+        if release_mbid:
+            cover_art_url = (
+                f"https://coverartarchive.org/release/{release_mbid}/front-250"
+            )
+        elif rg_mbid:
+            cover_art_url = (
+                f"https://coverartarchive.org/release-group/{rg_mbid}/front-250"
+            )
+        data["cover_art_url"] = cover_art_url
+
+        # Build suggested tags from the MusicBrainz response so the
+        # generator / editor can auto-tag songs for easier indexing.
+        suggested_tags: list[str] = []
+
+        # Genre tags (already title-cased in lookup_song_metadata)
+        genres = data.get("genres", [])
+        for g in genres:
+            tag = g.strip().lower()
+            if tag:
+                suggested_tags.append(tag)
+
+        # Year decade tag  (e.g. "2020s", "1990s")
+        year = data.get("year", "")
+        if year and len(year) >= 4 and year[:4].isdigit():
+            decade = (int(year[:4]) // 10) * 10
+            suggested_tags.append(f"{decade}s")
+
+        # Mark that album art is available
+        if cover_art_url:
+            suggested_tags.append("has-album-art")
+
+        # Deduplicate and sort
+        seen: set[str] = set()
+        unique_tags: list[str] = []
+        for t in suggested_tags:
+            if t not in seen:
+                seen.add(t)
+                unique_tags.append(t)
+        unique_tags.sort()
+        data["suggested_tags"] = unique_tags
+
         return data
     except Exception as e:
         logger.warning("Metadata lookup error: {}", e)

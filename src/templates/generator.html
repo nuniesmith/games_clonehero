@@ -158,6 +158,16 @@ endblock %} {% block content %}
                     </div>
                 </div>
 
+                <!-- Suggested Tags -->
+                <div
+                    class="suggested-tags-row"
+                    id="suggestedTagsRow"
+                    style="display: none"
+                >
+                    <span class="suggested-tags-label">🏷️ Suggested tags</span>
+                    <div class="suggested-tags-list" id="suggestedTagsList"></div>
+                </div>
+
                 <!-- Options Row -->
                 <div class="options-row">
                     <label class="option-toggle" for="enableLyrics">
@@ -541,19 +551,17 @@ endblock %} {% block content %}
         gap: 14px;
         margin-top: 14px;
         padding: 12px 14px;
-        background: rgba(39, 174, 96, 0.06);
-        border: 1px solid rgba(39, 174, 96, 0.15);
-        border-radius: 10px;
-        animation: slideDown 0.3s ease-out;
+        background: rgba(39, 174, 96, 0.08);
+        border: 1px solid rgba(39, 174, 96, 0.2);
+        border-radius: 8px;
     }
 
     .cover-art-thumb {
-        width: 56px;
-        height: 56px;
-        border-radius: 8px;
-        background: #e9ecef;
-        overflow: hidden;
+        width: 60px;
+        height: 60px;
         flex-shrink: 0;
+        border-radius: 8px;
+        overflow: hidden;
     }
 
     .cover-art-thumb img {
@@ -570,13 +578,76 @@ endblock %} {% block content %}
 
     .cover-art-label {
         font-weight: 600;
-        font-size: 0.9em;
+        font-size: 0.92em;
         color: #27ae60;
     }
 
     .cover-art-detail {
-        font-size: 0.82em;
+        font-size: 0.85em;
         color: #7f8c8d;
+    }
+
+    /* Suggested Tags */
+    .suggested-tags-row {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 12px;
+        padding: 10px 14px;
+        background: rgba(52, 152, 219, 0.06);
+        border: 1px solid rgba(52, 152, 219, 0.18);
+        border-radius: 8px;
+    }
+
+    .suggested-tags-label {
+        font-weight: 600;
+        font-size: 0.88em;
+        color: #2980b9;
+        margin-right: 4px;
+        white-space: nowrap;
+    }
+
+    .suggested-tags-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+    }
+
+    .suggested-tag {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 3px 10px;
+        border-radius: 12px;
+        font-size: 0.8em;
+        font-weight: 500;
+        cursor: default;
+        transition: all 0.15s ease;
+    }
+
+    .suggested-tag.genre-tag {
+        background: rgba(155, 89, 182, 0.12);
+        color: #8e44ad;
+        border: 1px solid rgba(155, 89, 182, 0.25);
+    }
+
+    .suggested-tag.decade-tag {
+        background: rgba(230, 126, 34, 0.12);
+        color: #d35400;
+        border: 1px solid rgba(230, 126, 34, 0.25);
+    }
+
+    .suggested-tag.art-tag {
+        background: rgba(39, 174, 96, 0.12);
+        color: #27ae60;
+        border: 1px solid rgba(39, 174, 96, 0.25);
+    }
+
+    .suggested-tag.default-tag {
+        background: rgba(52, 152, 219, 0.1);
+        color: #2980b9;
+        border: 1px solid rgba(52, 152, 219, 0.2);
     }
 
     /* ── Options Row ── */
@@ -1153,6 +1224,8 @@ endblock %} {% block content %}
         document.getElementById("genreField").value = "";
         document.getElementById("albumHint").textContent = "";
         document.getElementById("coverArtRow").style.display = "none";
+        document.getElementById("suggestedTagsRow").style.display = "none";
+        document.getElementById("suggestedTagsList").innerHTML = "";
 
         // Show meta section
         metaSection.style.display = "block";
@@ -1245,14 +1318,39 @@ endblock %} {% block content %}
                 }
 
                 // Show that cover art will be available
-                if (data.release_mbid || data.release_group_mbid) {
+                if (data.cover_art_url || data.release_mbid || data.release_group_mbid) {
                     document.getElementById("coverArtRow").style.display =
                         "flex";
                     document.getElementById("coverArtDetail").textContent =
                         `From "${data.album || "Unknown Album"}"${data.year ? " (" + data.year + ")" : ""}`;
-                    // We don't have the actual image URL yet (fetched during generation)
-                    document.getElementById("coverArtThumb").innerHTML =
-                        '<div style="width:100%;height:100%;background:#27ae60;display:flex;align-items:center;justify-content:center;color:white;font-size:1.5em;border-radius:8px;">🎨</div>';
+
+                    // Show real album art thumbnail from Cover Art Archive
+                    const thumbEl = document.getElementById("coverArtThumb");
+                    if (data.cover_art_url) {
+                        const img = document.createElement("img");
+                        img.src = data.cover_art_url;
+                        img.alt = data.album || "Album Art";
+                        img.style.width = "100%";
+                        img.style.height = "100%";
+                        img.style.objectFit = "cover";
+                        img.style.borderRadius = "8px";
+                        img.onerror = function() {
+                            // Fall back to placeholder if image fails to load
+                            thumbEl.innerHTML =
+                                '<div style="width:100%;height:100%;background:#95a5a6;display:flex;align-items:center;justify-content:center;color:white;font-size:1.5em;border-radius:8px;">🎨</div>';
+                            document.getElementById("coverArtDetail").textContent += " (art not available)";
+                        };
+                        thumbEl.innerHTML = "";
+                        thumbEl.appendChild(img);
+                    } else {
+                        thumbEl.innerHTML =
+                            '<div style="width:100%;height:100%;background:#27ae60;display:flex;align-items:center;justify-content:center;color:white;font-size:1.5em;border-radius:8px;">🎨</div>';
+                    }
+                }
+
+                // Show suggested tags from MusicBrainz
+                if (data.suggested_tags && data.suggested_tags.length > 0) {
+                    showSuggestedTags(data.suggested_tags);
                 }
 
                 // Update album hint
@@ -1268,6 +1366,46 @@ endblock %} {% block content %}
             lookupBadgeText.textContent = "Lookup unavailable";
             console.debug("Metadata lookup error:", e);
         }
+    }
+
+    function showSuggestedTags(tags) {
+        const row = document.getElementById("suggestedTagsRow");
+        const list = document.getElementById("suggestedTagsList");
+        if (!tags || tags.length === 0) {
+            row.style.display = "none";
+            return;
+        }
+        list.innerHTML = "";
+        tags.forEach(function(tag) {
+            const span = document.createElement("span");
+            span.className = "suggested-tag";
+            span.textContent = tag;
+
+            // Assign visual category
+            if (tag === "has-album-art") {
+                span.classList.add("art-tag");
+            } else if (/^\d{4}s$/.test(tag)) {
+                span.classList.add("decade-tag");
+            } else if (["rock", "metal", "pop", "punk", "alternative", "indie",
+                         "electronic", "hip hop", "hip-hop", "jazz", "blues",
+                         "classical", "country", "folk", "r&b", "soul", "funk",
+                         "reggae", "ska", "grunge", "emo", "hardcore", "post-hardcore",
+                         "metalcore", "deathcore", "progressive rock", "progressive metal",
+                         "death metal", "black metal", "thrash metal", "power metal",
+                         "nu metal", "djent", "math rock", "post-rock", "shoegaze",
+                         "ambient", "synthwave", "dream pop", "noise rock",
+                         "psychedelic rock", "stoner rock", "doom metal",
+                         "symphonic metal", "melodic death metal",
+                         "post-punk", "new wave", "gothic rock", "industrial"
+                        ].indexOf(tag) !== -1) {
+                span.classList.add("genre-tag");
+            } else {
+                // Treat any other tag from MusicBrainz as a genre tag too
+                span.classList.add("genre-tag");
+            }
+            list.appendChild(span);
+        });
+        row.style.display = "flex";
     }
 
     function clearFile() {

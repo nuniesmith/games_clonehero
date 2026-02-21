@@ -18,13 +18,14 @@ Tests for the song_generator module's chart output. Validates:
 - Edge cases: very short songs, very fast/slow tempos, no onsets, no segments
 """
 
+from __future__ import annotations
+
 import random
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 import numpy as np
-import pytest
 
 from src.services.song_generator import (
     DIFFICULTY_PROFILES,
@@ -58,15 +59,15 @@ REQUIRED_SONG_FIELDS = [
 ]
 
 
-def _parse_chart_sections(text: str) -> Dict[str, str]:
+def _parse_chart_sections(text: str) -> dict[str, str]:
     """
     Parse a .chart file into a dict of section_name -> section_body.
     The section body is everything between the opening '{' and closing '}'.
     """
-    sections: Dict[str, str] = {}
+    sections: dict[str, str] = {}
     current_section = None
     brace_depth = 0
-    body_lines: List[str] = []
+    body_lines: list[str] = []
 
     for line in text.splitlines():
         stripped = line.strip()
@@ -93,9 +94,9 @@ def _parse_chart_sections(text: str) -> Dict[str, str]:
     return sections
 
 
-def _parse_song_fields(section_body: str) -> Dict[str, str]:
+def _parse_song_fields(section_body: str) -> dict[str, str]:
     """Parse key = value pairs from a [Song] section body."""
-    fields: Dict[str, str] = {}
+    fields: dict[str, str] = {}
     for line in section_body.splitlines():
         line = line.strip()
         if "=" in line:
@@ -104,7 +105,7 @@ def _parse_song_fields(section_body: str) -> Dict[str, str]:
     return fields
 
 
-def _extract_note_events(section_body: str) -> List[Tuple[int, str, str]]:
+def _extract_note_events(section_body: str) -> list[tuple[int, str, str]]:
     """
     Extract note events from a difficulty section body.
 
@@ -112,7 +113,7 @@ def _extract_note_events(section_body: str) -> List[Tuple[int, str, str]]:
     For 'N' events, rest_of_line is e.g. '0 0' (note_num sustain_length).
     For 'S' events, rest_of_line is e.g. '2 768' (star_power length).
     """
-    events: List[Tuple[int, str, str]] = []
+    events: list[tuple[int, str, str]] = []
     for line in section_body.splitlines():
         line = line.strip()
         if not line or "=" not in line:
@@ -133,7 +134,7 @@ def _extract_note_events(section_body: str) -> List[Tuple[int, str, str]]:
 
 
 def _generate_chart_to_text(
-    mock_analysis: Dict[str, Any],
+    mock_analysis: dict[str, Any],
     output_path: Path,
     audio_filename: str = "song.ogg",
     song_name: str = "Test Song",
@@ -141,7 +142,7 @@ def _generate_chart_to_text(
     album: str = "Test Album",
     year: str = "2024",
     genre: str = "Rock",
-    difficulties: List[str] | None = None,
+    difficulties: list[str] | None = None,
     enable_lyrics: bool = True,
 ) -> str:
     """
@@ -578,9 +579,11 @@ class TestEventsSection:
         # The exact format depends on the lyrics generator, but there should
         # be _something_ beyond just section markers
         event_lines = [
-            l.strip() for l in events_body.splitlines() if l.strip() and "=" in l
+            line.strip()
+            for line in events_body.splitlines()
+            if line.strip() and "=" in line
         ]
-        section_lines = [l for l in event_lines if "section" in l.lower()]
+        section_lines = [el for el in event_lines if "section" in el.lower()]
         # With lyrics enabled, there should be more events than just sections
         # (unless lyrics generation itself is a no-op for the mock data)
         assert len(event_lines) >= len(section_lines), (
@@ -709,14 +712,7 @@ class TestEdgeCases:
 
     def test_no_onsets(self, tmp_path):
         """If there are no onsets, the chart should still be valid (maybe empty notes)."""
-        analysis = {
-            "tempo": 120.0,
-            "beat_times": [i * 0.5 for i in range(60)],
-            "onset_times": [],
-            "onset_strengths": [],
-            "duration": 30.0,
-            "segments": [],
-        }
+        beat_times_list: list[float] = [i * 0.5 for i in range(60)]
         out = tmp_path / "notes.chart"
         ok = generate_notes_chart(
             song_name="Empty",
@@ -725,7 +721,7 @@ class TestEdgeCases:
             year="",
             genre="",
             tempo=120.0,
-            beat_times=analysis["beat_times"],
+            beat_times=beat_times_list,
             onset_times=[],
             onset_strengths=[],
             duration=30.0,
@@ -1089,7 +1085,7 @@ class TestHelperFunctions:
         assert isinstance(result, list)
         for item in result:
             assert len(item) == 2
-            start_tick, duration = item
+            _start_tick, duration = item
             assert duration > 0, "Star power duration must be positive"
 
     def test_compute_star_power_sections_too_few_notes(self):

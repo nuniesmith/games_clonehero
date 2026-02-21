@@ -22,6 +22,8 @@ Key entry points:
 - ``organize_library_stream()``    — full library organize with SSE progress
 """
 
+from __future__ import annotations
+
 import configparser
 import hashlib
 import re
@@ -29,7 +31,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from loguru import logger
 
@@ -64,11 +66,9 @@ CAA_BASE = "https://coverartarchive.org"
 MB_USER_AGENT = "CloneHeroManager/1.0 (https://github.com/nuniesmith/games_clonehero)"
 _last_mb_request: float = 0.0
 
-
 # ---------------------------------------------------------------------------
 # Filename / path helpers
 # ---------------------------------------------------------------------------
-
 
 def sanitize_filename(name: str, max_len: int = MAX_FILENAME_LEN) -> str:
     """
@@ -84,7 +84,6 @@ def sanitize_filename(name: str, max_len: int = MAX_FILENAME_LEN) -> str:
         sanitized = sanitized[:max_len].rstrip(". ")
     return sanitized
 
-
 def normalize_for_matching(s: str) -> str:
     """
     Normalize a string for fuzzy matching — lowercase, strip punctuation,
@@ -96,7 +95,6 @@ def normalize_for_matching(s: str) -> str:
     s = re.sub(r"[^a-z0-9\s]", "", s)  # strip punctuation
     s = re.sub(r"\s+", " ", s).strip()  # collapse whitespace
     return s
-
 
 def get_organized_path(
     artist: str,
@@ -112,13 +110,11 @@ def get_organized_path(
     safe_song = sanitize_filename(song_name) if song_name else UNKNOWN_SONG
     return f"{base_path.rstrip('/')}/{safe_artist}/{safe_song}"
 
-
 # ---------------------------------------------------------------------------
 # Song.ini parsing (from text — no filesystem access needed)
 # ---------------------------------------------------------------------------
 
-
-def parse_song_ini_text(ini_text: str) -> Dict[str, str]:
+def parse_song_ini_text(ini_text: str) -> dict[str, str]:
     """
     Parse song.ini content and return a metadata dict.
 
@@ -146,8 +142,7 @@ def parse_song_ini_text(ini_text: str) -> Dict[str, str]:
 
     return meta
 
-
-def extract_artist_song_from_dirname(dirname: str) -> Tuple[str, str]:
+def extract_artist_song_from_dirname(dirname: str) -> tuple[str, str]:
     """
     Try to extract artist and song name from a directory name.
 
@@ -166,11 +161,9 @@ def extract_artist_song_from_dirname(dirname: str) -> Tuple[str, str]:
 
     return "", dirname.strip()
 
-
 # ---------------------------------------------------------------------------
 # Song validation (quick structural checks)
 # ---------------------------------------------------------------------------
-
 
 class SongIssue:
     """Represents a structural issue with a song folder."""
@@ -182,11 +175,10 @@ class SongIssue:
         self.severity = severity
         self.message = message
 
-    def to_dict(self) -> Dict[str, str]:
+    def to_dict(self) -> dict[str, str]:
         return {"severity": self.severity, "message": self.message}
 
-
-def validate_song_files(file_list: List[str]) -> Tuple[List[str], List[str]]:
+def validate_song_files(file_list: list[str]) -> tuple[list[str], list[str]]:
     """
     Check a list of filenames for missing critical/cosmetic files.
 
@@ -199,8 +191,8 @@ def validate_song_files(file_list: List[str]) -> Tuple[List[str], List[str]]:
     file_list : list[str]
         Filenames in the song folder (not full paths).
     """
-    critical: List[str] = []
-    cosmetic: List[str] = []
+    critical: list[str] = []
+    cosmetic: list[str] = []
     lower_files = {f.lower() for f in file_list}
 
     if "song.ini" not in lower_files:
@@ -216,11 +208,9 @@ def validate_song_files(file_list: List[str]) -> Tuple[List[str], List[str]]:
 
     return critical, cosmetic
 
-
 # ---------------------------------------------------------------------------
 # Duplicate detection
 # ---------------------------------------------------------------------------
-
 
 def compute_chart_hash(chart_bytes: bytes) -> str:
     """
@@ -231,9 +221,8 @@ def compute_chart_hash(chart_bytes: bytes) -> str:
     h = hashlib.sha256(chart_bytes)
     return h.hexdigest()[:16]
 
-
 def score_song_files(
-    file_list: List[str], file_sizes: Optional[Dict[str, int]] = None
+    file_list: list[str], file_sizes: dict[str, int] | None = None
 ) -> int:
     """
     Score a song folder by completeness.  Higher = better quality copy to keep.
@@ -275,20 +264,19 @@ def score_song_files(
 
     return score
 
-
 class DuplicateGroup:
     """A group of songs identified as duplicates of each other."""
 
     def __init__(self, key: str):
         self.key = key
-        self.entries: List[Dict[str, Any]] = []
+        self.entries: list[dict[str, Any]] = []
 
     def add(
         self,
         remote_path: str,
-        song_id: Optional[int],
+        song_id: int | None,
         score: int,
-        chart_hash: Optional[str] = None,
+        chart_hash: str | None = None,
         title: str = "",
         artist: str = "",
     ) -> None:
@@ -304,12 +292,12 @@ class DuplicateGroup:
         )
 
     @property
-    def keep(self) -> Dict[str, Any]:
+    def keep(self) -> dict[str, Any]:
         """The highest-scored entry (the one to keep)."""
         return sorted(self.entries, key=lambda e: -e["score"])[0]
 
     @property
-    def duplicates(self) -> List[Dict[str, Any]]:
+    def duplicates(self) -> list[dict[str, Any]]:
         """All entries except the one to keep."""
         sorted_entries = sorted(self.entries, key=lambda e: -e["score"])
         return sorted_entries[1:]
@@ -322,7 +310,7 @@ class DuplicateGroup:
     def duplicate_count(self) -> int:
         return max(0, len(self.entries) - 1)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         sorted_entries = sorted(self.entries, key=lambda e: -e["score"])
         return {
             "key": self.key,
@@ -331,10 +319,9 @@ class DuplicateGroup:
             "count": self.count,
         }
 
-
 def find_duplicates_from_metadata(
-    songs: List[Dict[str, Any]],
-) -> List[DuplicateGroup]:
+    songs: list[dict[str, Any]],
+) -> list[DuplicateGroup]:
     """
     Detect duplicate songs by normalized artist+title matching.
 
@@ -349,7 +336,7 @@ def find_duplicates_from_metadata(
     list[DuplicateGroup]
         Groups with 2+ entries (actual duplicates).
     """
-    by_name: Dict[str, List[Dict[str, Any]]] = {}
+    by_name: dict[str, list[dict[str, Any]]] = {}
 
     for song in songs:
         artist = song.get("artist", "").strip()
@@ -363,7 +350,7 @@ def find_duplicates_from_metadata(
         key = f"{normalize_for_matching(artist)}|{normalize_for_matching(title)}"
         by_name.setdefault(key, []).append(song)
 
-    groups: List[DuplicateGroup] = []
+    groups: list[DuplicateGroup] = []
     for key, entries in by_name.items():
         if len(entries) < 2:
             continue
@@ -380,13 +367,11 @@ def find_duplicates_from_metadata(
 
     return groups
 
-
 # ---------------------------------------------------------------------------
 # MusicBrainz / Cover Art Archive helpers
 # ---------------------------------------------------------------------------
 
-
-def _mb_request(url: str) -> Optional[dict]:
+def _mb_request(url: str) -> dict | None:
     """Make a rate-limited request to MusicBrainz API (max 1 req/sec)."""
     global _last_mb_request
     elapsed = time.monotonic() - _last_mb_request
@@ -410,8 +395,7 @@ def _mb_request(url: str) -> Optional[dict]:
         logger.debug("MusicBrainz request failed: {}", e)
         return None
 
-
-def _search_release(artist: str, song: str, album: str = "") -> Optional[str]:
+def _search_release(artist: str, song: str, album: str = "") -> str | None:
     """Search MusicBrainz for a release MBID.  Returns MBID or None."""
     # Strategy 1: artist + album
     if album:
@@ -458,8 +442,7 @@ def _search_release(artist: str, song: str, album: str = "") -> Optional[str]:
 
     return None
 
-
-def _download_cover_bytes(mbid: str) -> Optional[bytes]:
+def _download_cover_bytes(mbid: str) -> bytes | None:
     """Download front cover from Cover Art Archive.  Returns image bytes or None."""
     url = f"{CAA_BASE}/release/{mbid}/front-500"
     req = urllib.request.Request(url, headers={"User-Agent": MB_USER_AGENT})
@@ -480,8 +463,7 @@ def _download_cover_bytes(mbid: str) -> Optional[bytes]:
         logger.debug("Cover art download failed: {}", e)
         return None
 
-
-def fetch_album_art_bytes(artist: str, song: str, album: str = "") -> Optional[bytes]:
+def fetch_album_art_bytes(artist: str, song: str, album: str = "") -> bytes | None:
     """
     Search MusicBrainz for album art and return the image bytes.
 
@@ -501,16 +483,14 @@ def fetch_album_art_bytes(artist: str, song: str, album: str = "") -> Optional[b
         logger.info("Downloaded album art for: {} - {}", artist, song)
     return img
 
-
 # ---------------------------------------------------------------------------
 # Async Nextcloud integration
 # ---------------------------------------------------------------------------
 
-
 async def promote_song(
     song_id: int,
     dry_run: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Move a generated song from the Generator staging folder to the Songs library.
 
@@ -612,7 +592,7 @@ async def promote_song(
     try:
         # Read existing metadata so we can update the status field
         raw_meta = song.get("metadata")
-        meta_dict: Dict[str, Any] = {}
+        meta_dict: dict[str, Any] = {}
         if isinstance(raw_meta, dict):
             meta_dict = dict(raw_meta)
         elif isinstance(raw_meta, str):
@@ -642,11 +622,10 @@ async def promote_song(
         "message": f"Promoted to Songs library: {target_path}",
     }
 
-
 async def organize_song_folder(
     song_id: int,
     dry_run: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Move a song to the correct ``Artist/Song Title`` path on Nextcloud.
 
@@ -740,8 +719,7 @@ async def organize_song_folder(
         "message": f"Moved to {target_path}",
     }
 
-
-async def scan_library_issues() -> Dict[str, Any]:
+async def scan_library_issues() -> dict[str, Any]:
     """
     Scan the entire Nextcloud song library for organizational issues.
 
@@ -763,9 +741,9 @@ async def scan_library_issues() -> Dict[str, Any]:
     songs = await get_songs(limit=10000)
     total = len(songs)
 
-    misplaced: List[Dict[str, Any]] = []
-    missing_files: List[Dict[str, Any]] = []
-    missing_art: List[Dict[str, Any]] = []
+    misplaced: list[dict[str, Any]] = []
+    missing_files: list[dict[str, Any]] = []
+    missing_art: list[dict[str, Any]] = []
     healthy: int = 0
 
     for song in songs:
@@ -844,8 +822,7 @@ async def scan_library_issues() -> Dict[str, Any]:
         "duplicate_count": total_dupes,
     }
 
-
-async def find_duplicates_on_nextcloud() -> Dict[str, Any]:
+async def find_duplicates_on_nextcloud() -> dict[str, Any]:
     """
     Scan the Nextcloud library for duplicate songs.
 
@@ -898,11 +875,10 @@ async def find_duplicates_on_nextcloud() -> Dict[str, Any]:
         "total_songs_scanned": len(songs),
     }
 
-
 async def cleanup_duplicates(
-    group_keys: Optional[List[str]] = None,
+    group_keys: list[str] | None = None,
     dry_run: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Remove duplicate songs, keeping the highest-scored copy in each group.
 
@@ -929,8 +905,8 @@ async def cleanup_duplicates(
         return dup_result
 
     groups_data = dup_result.get("groups", [])
-    deleted: List[Dict[str, Any]] = []
-    errors: List[str] = []
+    deleted: list[dict[str, Any]] = []
+    errors: list[str] = []
 
     for group_data in groups_data:
         key = group_data.get("key", "")
@@ -989,8 +965,7 @@ async def cleanup_duplicates(
         "dry_run": dry_run,
     }
 
-
-async def fetch_missing_art_for_song(song_id: int) -> Dict[str, Any]:
+async def fetch_missing_art_for_song(song_id: int) -> dict[str, Any]:
     """
     Attempt to download album art for a single song from MusicBrainz.
 
@@ -1077,7 +1052,6 @@ async def fetch_missing_art_for_song(song_id: int) -> Dict[str, Any]:
     except Exception as e:
         return {"error": f"Upload error: {e}"}
 
-
 async def organize_library_stream(
     dry_run: bool = False,
     fix_paths: bool = True,
@@ -1121,7 +1095,7 @@ async def organize_library_stream(
     art_found = 0
     art_missing = 0
     dupes_removed = 0
-    errors: List[str] = []
+    errors: list[str] = []
 
     # Step 1: Organize paths
     if fix_paths:

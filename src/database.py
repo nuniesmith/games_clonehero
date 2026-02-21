@@ -10,9 +10,11 @@ kept for backwards compatibility but is no longer the primary identifier —
 `remote_path` is now the canonical location of a song.
 """
 
+from __future__ import annotations
+
 import sqlite3
 from contextlib import asynccontextmanager, contextmanager
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import aiosqlite
 from loguru import logger
@@ -82,7 +84,6 @@ _MIGRATIONS = [
     },
 ]
 
-
 def _run_migrations(conn: sqlite3.Connection) -> None:
     """Run any pending schema migrations."""
     for migration in _MIGRATIONS:
@@ -94,7 +95,6 @@ def _run_migrations(conn: sqlite3.Connection) -> None:
                 conn.execute(stmt)
             conn.commit()
             logger.success("✅ Migration applied: {}", migration["description"])
-
 
 # ---------------------------------------------------------------------------
 # Initialization
@@ -112,7 +112,6 @@ def init_db() -> None:
         logger.critical(f"❌ Failed to initialize database: {e}")
         raise
 
-
 # ---------------------------------------------------------------------------
 # Async context manager (for use in FastAPI routes)
 # ---------------------------------------------------------------------------
@@ -125,7 +124,6 @@ async def get_async_connection():
         yield db
     finally:
         await db.close()
-
 
 # ---------------------------------------------------------------------------
 # Sync context manager (for use in services / background tasks)
@@ -140,16 +138,14 @@ def get_connection():
     finally:
         conn.close()
 
-
 # ---------------------------------------------------------------------------
 # Helper: convert sqlite3.Row / aiosqlite.Row to plain dict
 # ---------------------------------------------------------------------------
-def row_to_dict(row) -> Dict[str, Any]:
+def row_to_dict(row) -> dict[str, Any]:
     """Convert a database row to a plain dictionary."""
     if row is None:
         return {}
     return dict(row)
-
 
 # ---------------------------------------------------------------------------
 # CRUD operations (async)
@@ -157,7 +153,7 @@ def row_to_dict(row) -> Dict[str, Any]:
 async def insert_song(
     title: str,
     artist: str,
-    album: Optional[str],
+    album: str | None,
     remote_path: str,
     metadata: str = "{}",
     file_path: str = "",
@@ -185,11 +181,10 @@ async def insert_song(
         logger.success(f"✅ Song added (id={song_id}): {title} - {artist}")
         return song_id
 
-
 async def upsert_song(
     title: str,
     artist: str,
-    album: Optional[str],
+    album: str | None,
     remote_path: str,
     metadata: str = "{}",
     file_path: str = "",
@@ -235,12 +230,11 @@ async def upsert_song(
             logger.success(f"✅ Song added (id={song_id}): {title} - {artist}")
             return song_id
 
-
 async def get_songs(
-    search: Optional[str] = None,
+    search: str | None = None,
     limit: int = 50,
     offset: int = 0,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Fetch songs with optional search and pagination."""
     async with get_async_connection() as db:
         if search and search.strip():
@@ -262,16 +256,14 @@ async def get_songs(
         rows = await cursor.fetchall()
         return [row_to_dict(r) for r in rows]
 
-
-async def get_song_by_id(song_id: int) -> Optional[Dict[str, Any]]:
+async def get_song_by_id(song_id: int) -> dict[str, Any] | None:
     """Fetch a single song by its id."""
     async with get_async_connection() as db:
         cursor = await db.execute("SELECT * FROM songs WHERE id = ?", (song_id,))
         row = await cursor.fetchone()
         return row_to_dict(row) if row else None
 
-
-async def get_song_by_remote_path(remote_path: str) -> Optional[Dict[str, Any]]:
+async def get_song_by_remote_path(remote_path: str) -> dict[str, Any] | None:
     """Fetch a single song by its Nextcloud remote path."""
     async with get_async_connection() as db:
         cursor = await db.execute(
@@ -280,14 +272,12 @@ async def get_song_by_remote_path(remote_path: str) -> Optional[Dict[str, Any]]:
         row = await cursor.fetchone()
         return row_to_dict(row) if row else None
 
-
-async def get_all_remote_paths() -> List[str]:
+async def get_all_remote_paths() -> list[str]:
     """Return a list of all remote_path values currently in the database."""
     async with get_async_connection() as db:
         cursor = await db.execute("SELECT remote_path FROM songs ORDER BY id")
         rows = await cursor.fetchall()
         return [r["remote_path"] for r in rows]
-
 
 async def update_song(song_id: int, **fields) -> bool:
     """Update specific fields of a song. Returns True if a row was modified."""
@@ -321,7 +311,6 @@ async def update_song(song_id: int, **fields) -> bool:
             logger.info(f"✏️ Song id={song_id} updated: {list(filtered.keys())}")
         return updated
 
-
 async def delete_song(song_id: int) -> bool:
     """Delete a song by id. Returns True if a row was deleted."""
     async with get_async_connection() as db:
@@ -333,7 +322,6 @@ async def delete_song(song_id: int) -> bool:
         else:
             logger.warning(f"⚠️ Song id={song_id} not found for deletion")
         return deleted
-
 
 async def delete_song_by_remote_path(remote_path: str) -> bool:
     """Delete a song by its remote_path. Returns True if a row was deleted."""
@@ -347,8 +335,7 @@ async def delete_song_by_remote_path(remote_path: str) -> bool:
             logger.info(f"🗑️ Song deleted (remote_path={remote_path})")
         return deleted
 
-
-async def get_artists(search: Optional[str] = None) -> List[Dict[str, Any]]:
+async def get_artists(search: str | None = None) -> list[dict[str, Any]]:
     """Return distinct artists with song counts, optionally filtered by search."""
     async with get_async_connection() as db:
         if search and search.strip():
@@ -375,11 +362,10 @@ async def get_artists(search: Optional[str] = None) -> List[Dict[str, Any]]:
         rows = await cursor.fetchall()
         return [row_to_dict(r) for r in rows]
 
-
 async def get_songs_by_artist(
     artist: str,
-    search: Optional[str] = None,
-) -> List[Dict[str, Any]]:
+    search: str | None = None,
+) -> list[dict[str, Any]]:
     """Fetch all songs for a specific artist, optionally filtered by search."""
     async with get_async_connection() as db:
         if search and search.strip():
@@ -405,8 +391,7 @@ async def get_songs_by_artist(
         rows = await cursor.fetchall()
         return [row_to_dict(r) for r in rows]
 
-
-async def get_artist_variants() -> List[Dict[str, Any]]:
+async def get_artist_variants() -> list[dict[str, Any]]:
     """
     Find artist names that differ only by case / minor punctuation.
 
@@ -430,7 +415,7 @@ async def get_artist_variants() -> List[Dict[str, Any]]:
     # Group by lower-cased + stripped key
     from collections import OrderedDict
 
-    groups: OrderedDict[str, list] = OrderedDict()
+    groups: Ordereddict[str, list] = OrderedDict()
     for row in rows:
         r = row_to_dict(row)
         key = r["artist"].strip().lower()
@@ -442,7 +427,6 @@ async def get_artist_variants() -> List[Dict[str, Any]]:
         for key, variants in groups.items()
         if len(variants) > 1
     ]
-
 
 async def rename_artist(old_name: str, new_name: str) -> int:
     """
@@ -466,8 +450,7 @@ async def rename_artist(old_name: str, new_name: str) -> int:
             )
         return updated
 
-
-async def count_songs(search: Optional[str] = None) -> int:
+async def count_songs(search: str | None = None) -> int:
     """Return total number of songs, optionally filtered by search."""
     async with get_async_connection() as db:
         if search and search.strip():
@@ -484,8 +467,7 @@ async def count_songs(search: Optional[str] = None) -> int:
         row = await cursor.fetchone()
         return row["cnt"] if row else 0
 
-
-async def purge_stale_songs(valid_remote_paths: List[str]) -> int:
+async def purge_stale_songs(valid_remote_paths: list[str]) -> int:
     """
     Remove songs whose ``remote_path`` is **not** in *valid_remote_paths*.
 
@@ -517,13 +499,11 @@ async def purge_stale_songs(valid_remote_paths: List[str]) -> int:
         )
         return len(ids_to_delete)
 
-
 # ---------------------------------------------------------------------------
 # Tag helpers
 # ---------------------------------------------------------------------------
 
-
-def parse_tags(raw) -> List[str]:
+def parse_tags(raw) -> list[str]:
     """Parse a tags value from the database into a Python list of strings.
 
     Tags are stored as a JSON array (e.g. ``'["rock","metal"]'``).
@@ -544,7 +524,7 @@ def parse_tags(raw) -> List[str]:
         tags = []
     # Normalise: strip whitespace, lowercase, deduplicate, sort
     seen: set[str] = set()
-    out: List[str] = []
+    out: list[str] = []
     for t in tags:
         t_clean = str(t).strip().lower()
         if t_clean and t_clean not in seen:
@@ -553,8 +533,7 @@ def parse_tags(raw) -> List[str]:
     out.sort()
     return out
 
-
-async def get_all_tags() -> List[Dict[str, Any]]:
+async def get_all_tags() -> list[dict[str, Any]]:
     """Return every distinct tag across all songs with usage counts.
 
     Returns a list of ``{"tag": str, "count": int}`` dicts sorted
@@ -568,15 +547,14 @@ async def get_all_tags() -> List[Dict[str, Any]]:
         )
         rows = await cursor.fetchall()
 
-    tag_counts: Dict[str, int] = {}
+    tag_counts: dict[str, int] = {}
     for row in rows:
         for tag in parse_tags(row["tags"]):
             tag_counts[tag] = tag_counts.get(tag, 0) + 1
 
     return [{"tag": tag, "count": count} for tag, count in sorted(tag_counts.items())]
 
-
-async def get_song_tags(song_id: int) -> List[str]:
+async def get_song_tags(song_id: int) -> list[str]:
     """Return the tag list for a single song."""
     async with get_async_connection() as db:
         cursor = await db.execute("SELECT tags FROM songs WHERE id = ?", (song_id,))
@@ -585,8 +563,7 @@ async def get_song_tags(song_id: int) -> List[str]:
         return []
     return parse_tags(row["tags"])
 
-
-async def set_song_tags(song_id: int, tags: List[str]) -> bool:
+async def set_song_tags(song_id: int, tags: list[str]) -> bool:
     """Replace all tags on a song. Returns True if the row was updated."""
     import json as _json
 
@@ -603,8 +580,7 @@ async def set_song_tags(song_id: int, tags: List[str]) -> bool:
             logger.info("🏷️ Song id={} tags set to {}", song_id, clean)
         return updated
 
-
-async def add_song_tag(song_id: int, tag: str) -> List[str]:
+async def add_song_tag(song_id: int, tag: str) -> list[str]:
     """Add a single tag to a song (idempotent). Returns the new tag list."""
     import json as _json
 
@@ -626,8 +602,7 @@ async def add_song_tag(song_id: int, tag: str) -> List[str]:
     logger.info("🏷️ Song id={} +tag '{}'", song_id, tag_clean)
     return current
 
-
-async def remove_song_tag(song_id: int, tag: str) -> List[str]:
+async def remove_song_tag(song_id: int, tag: str) -> list[str]:
     """Remove a single tag from a song. Returns the new tag list."""
     import json as _json
 
@@ -646,13 +621,12 @@ async def remove_song_tag(song_id: int, tag: str) -> List[str]:
     logger.info("🏷️ Song id={} -tag '{}'", song_id, tag_clean)
     return current
 
-
 async def get_songs_by_tag(
     tag: str,
-    search: Optional[str] = None,
+    search: str | None = None,
     limit: int = 200,
     offset: int = 0,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Fetch songs that contain a specific tag, with optional search filter.
 
     Tags are stored as JSON arrays so we use a LIKE match on the
@@ -695,8 +669,7 @@ async def get_songs_by_tag(
         rows = await cursor.fetchall()
         return [row_to_dict(r) for r in rows]
 
-
-async def count_songs_by_tag(tag: str, search: Optional[str] = None) -> int:
+async def count_songs_by_tag(tag: str, search: str | None = None) -> int:
     """Return the number of songs that have a given tag."""
     tag_clean = tag.strip().lower()
     tag_pattern = f'%"{tag_clean}"%'
@@ -720,14 +693,13 @@ async def count_songs_by_tag(tag: str, search: Optional[str] = None) -> int:
         row = await cursor.fetchone()
         return row["cnt"] if row else 0
 
-
 # ---------------------------------------------------------------------------
 # Sync CRUD helpers (for use in non-async service code)
 # ---------------------------------------------------------------------------
 def insert_song_sync(
     title: str,
     artist: str,
-    album: Optional[str],
+    album: str | None,
     remote_path: str,
     metadata: str = "{}",
     file_path: str = "",
@@ -754,11 +726,10 @@ def insert_song_sync(
         logger.success(f"✅ Song added (id={song_id}): {title} - {artist}")
         return song_id
 
-
 def upsert_song_sync(
     title: str,
     artist: str,
-    album: Optional[str],
+    album: str | None,
     remote_path: str,
     metadata: str = "{}",
     file_path: str = "",

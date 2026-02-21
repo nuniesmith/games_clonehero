@@ -16,11 +16,13 @@ Key entry points:
 - ``validate_and_fix_chart()``  — validate + apply fixes, return result
 """
 
+from __future__ import annotations
+
 import re
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from loguru import logger
 
@@ -97,13 +99,16 @@ DRUMS_EXTENDED_NOTES = DRUMS_VALID_NOTES | set(range(32, 69))
 class Issue:
     """Represents a single validation issue found in a chart."""
 
-    CRITICAL = "critical"
-    WARNING = "warning"
-    INFO = "info"
+    CRITICAL: str = "critical"
+    WARNING: str = "warning"
+    INFO: str = "info"
 
-    def __init__(
-        self, severity: str, code: str, message: str, line: Optional[int] = None
-    ):
+    severity: str
+    code: str
+    message: str
+    line: int | None
+
+    def __init__(self, severity: str, code: str, message: str, line: int | None = None):
         self.severity = severity
         self.code = code
         self.message = message
@@ -122,7 +127,7 @@ class Issue:
             f"{self.message!r}, line={self.line})"
         )
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "severity": self.severity,
             "code": self.code,
@@ -134,12 +139,15 @@ class Issue:
 class ValidationResult:
     """Aggregated validation results for a single chart."""
 
+    chart_path: str
+
     def __init__(self, chart_path: str = "<in-memory>"):
         self.chart_path = chart_path
-        self.issues: List[Issue] = []
-        self.fixes_applied: List[str] = []
-        self.sections_found: List[str] = []
-        self.metadata: Dict[str, str] = {}
+        self.issues: list[Issue] = []
+        self.fixes_applied: list[str] = []
+        self.sections_found: list[str] = []
+        self.metadata: dict[str, str] = {}
+        self._fixed_lines: list[str] | None = None
 
     @property
     def has_critical(self) -> bool:
@@ -154,7 +162,7 @@ class ValidationResult:
         return not self.has_critical
 
     def add(
-        self, severity: str, code: str, message: str, line: Optional[int] = None
+        self, severity: str, code: str, message: str, line: int | None = None
     ) -> None:
         self.issues.append(Issue(severity, code, message, line))
 
@@ -183,7 +191,7 @@ class ValidationResult:
             parts.append(f"  {len(self.fixes_applied)} fix(es) applied")
         return "\n".join(parts)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "chart_path": self.chart_path,
             "valid": self.is_valid,
@@ -204,17 +212,17 @@ class ValidationResult:
 # ---------------------------------------------------------------------------
 
 
-def parse_chart_sections(lines: List[str]) -> Dict[str, Tuple[int, int, List[str]]]:
+def parse_chart_sections(lines: list[str]) -> dict[str, tuple[int, int, list[str]]]:
     """
     Parse a .chart file into sections.
 
     Returns a dict mapping section name (e.g. ``"[Song]"``) to a tuple of
     ``(start_line, end_line, content_lines)``.
     """
-    sections: Dict[str, Tuple[int, int, List[str]]] = {}
-    current_section: Optional[str] = None
+    sections: dict[str, tuple[int, int, list[str]]] = {}
+    current_section: str | None = None
     section_start = 0
-    section_lines: List[str] = []
+    section_lines: list[str] = []
     in_section = False
 
     for i, raw_line in enumerate(lines):
@@ -241,9 +249,9 @@ def parse_chart_sections(lines: List[str]) -> Dict[str, Tuple[int, int, List[str
     return sections
 
 
-def parse_song_metadata(content_lines: List[str]) -> Dict[str, str]:
+def parse_song_metadata(content_lines: list[str]) -> dict[str, str]:
     """Parse key-value pairs from the [Song] section."""
-    metadata: Dict[str, str] = {}
+    metadata: dict[str, str] = {}
     for line in content_lines:
         match = re.match(r"^\s*(\w+)\s*=\s*(.+)$", line)
         if match:
@@ -260,7 +268,7 @@ def parse_song_metadata(content_lines: List[str]) -> Dict[str, str]:
 
 def validate_file_basics(
     chart_path: Path, song_dir: Path, result: ValidationResult
-) -> Optional[List[str]]:
+) -> list[str] | None:
     """Validate that the file exists, is readable, and has correct encoding."""
     if not chart_path.exists():
         result.add(
@@ -317,7 +325,7 @@ def validate_file_basics(
     return lines
 
 
-def validate_content_basics(text: str, result: ValidationResult) -> Optional[List[str]]:
+def validate_content_basics(text: str, result: ValidationResult) -> list[str] | None:
     """
     Validate chart content provided as a string.
 
@@ -341,8 +349,8 @@ def validate_content_basics(text: str, result: ValidationResult) -> Optional[Lis
 
 
 def validate_sections(
-    lines: List[str], result: ValidationResult
-) -> Dict[str, Tuple[int, int, List[str]]]:
+    lines: list[str], result: ValidationResult
+) -> dict[str, tuple[int, int, list[str]]]:
     """Validate that required sections exist and braces are balanced."""
     sections = parse_chart_sections(lines)
     result.sections_found = list(sections.keys())
@@ -389,10 +397,10 @@ def validate_sections(
 
 
 def validate_song_section(
-    sections: Dict[str, Tuple[int, int, List[str]]],
-    song_dir: Optional[Path],
+    sections: dict[str, tuple[int, int, list[str]]],
+    song_dir: Path | None,
     result: ValidationResult,
-) -> Dict[str, str]:
+) -> dict[str, str]:
     """Validate the [Song] metadata section."""
     if "[Song]" not in sections:
         return {}
@@ -475,7 +483,7 @@ def validate_song_section(
 
 
 def validate_sync_track(
-    sections: Dict[str, Tuple[int, int, List[str]]], result: ValidationResult
+    sections: dict[str, tuple[int, int, list[str]]], result: ValidationResult
 ) -> None:
     """Validate the [SyncTrack] section for BPM and time signature entries."""
     if "[SyncTrack]" not in sections:
@@ -598,7 +606,7 @@ def validate_sync_track(
 
 
 def validate_note_sections(
-    sections: Dict[str, Tuple[int, int, List[str]]], result: ValidationResult
+    sections: dict[str, tuple[int, int, list[str]]], result: ValidationResult
 ) -> None:
     """Validate note data in difficulty sections."""
     for section_name, (start_line, _, content) in sections.items():
@@ -708,7 +716,7 @@ def validate_note_sections(
 
 
 def validate_events(
-    sections: Dict[str, Tuple[int, int, List[str]]], result: ValidationResult
+    sections: dict[str, tuple[int, int, list[str]]], result: ValidationResult
 ) -> None:
     """Validate the [Events] section."""
     if "[Events]" not in sections:
@@ -787,7 +795,7 @@ def validate_events(
 
 
 def validate_audio_files(
-    song_dir: Path, metadata: Dict[str, str], result: ValidationResult
+    song_dir: Path, metadata: dict[str, str], result: ValidationResult
 ) -> None:
     """Check that audio files exist and are in a supported format."""
     music_stream = metadata.get("MusicStream", "")
@@ -814,7 +822,7 @@ def validate_audio_files(
 
 
 def validate_audio_files_remote(
-    file_list: List[str], metadata: Dict[str, str], result: ValidationResult
+    file_list: list[str], metadata: dict[str, str], result: ValidationResult
 ) -> None:
     """
     Check audio files based on a list of filenames (for Nextcloud validation
@@ -929,14 +937,14 @@ def _validate_song_ini_text(ini_text: str, result: ValidationResult) -> None:
 
 
 def apply_fixes(
-    chart_path: Optional[Path],
-    song_dir: Optional[Path],
-    lines: List[str],
-    sections: Dict[str, Tuple[int, int, List[str]]],
-    metadata: Dict[str, str],
+    chart_path: Path | None,
+    song_dir: Path | None,
+    lines: list[str],
+    sections: dict[str, tuple[int, int, list[str]]],
+    metadata: dict[str, str],
     result: ValidationResult,
     write_to_disk: bool = True,
-) -> List[str]:
+) -> list[str]:
     """
     Apply automatic fixes to the chart lines.  Returns modified lines.
 
@@ -960,7 +968,7 @@ def apply_fixes(
         content back to disk.  Set to False for in-memory-only fixes.
     """
     fixed_lines = list(lines)
-    changes: List[str] = []
+    changes: list[str] = []
 
     needs_bom = False
     if chart_path is not None and chart_path.exists():
@@ -978,7 +986,7 @@ def apply_fixes(
                     break
 
         if audio_file:
-            start, end, _ = sections["[Song]"]
+            start, _end, _ = sections["[Song]"]
             insert_line = f'  MusicStream = "{audio_file}"'
             for i in range(len(fixed_lines) - 1, start, -1):
                 if fixed_lines[i].strip() == "}":
@@ -988,7 +996,7 @@ def apply_fixes(
 
     # Fix 2: Add missing Offset
     if "Offset" not in metadata and "[Song]" in sections:
-        start, end, _ = sections["[Song]"]
+        start, _end, _ = sections["[Song]"]
         for i in range(start, min(start + 30, len(fixed_lines))):
             if "Resolution" in fixed_lines[i]:
                 fixed_lines.insert(i, "  Offset = 0")
@@ -1019,7 +1027,7 @@ def apply_fixes(
 
     # Fix 5: Sort out-of-order events in [Events] section
     if "[Events]" in sections:
-        ev_start, ev_end, ev_content = sections["[Events]"]
+        _ev_start, _ev_end, ev_content = sections["[Events]"]
         prev_ev_tick = -1
         needs_sort = False
         for ev_line in ev_content:
@@ -1094,7 +1102,7 @@ def apply_fixes(
     return fixed_lines
 
 
-def get_fixed_chart_text(lines: List[str], add_bom: bool = True) -> bytes:
+def get_fixed_chart_text(lines: list[str], add_bom: bool = True) -> bytes:
     """
     Serialize chart lines back to bytes suitable for writing.
 
@@ -1186,7 +1194,7 @@ def try_convert_audio(song_dir: Path, result: ValidationResult) -> bool:
 
 def validate_chart(
     chart_path: Path,
-    song_dir: Optional[Path] = None,
+    song_dir: Path | None = None,
     fix: bool = False,
     verbose: bool = False,
 ) -> ValidationResult:
@@ -1270,8 +1278,8 @@ def validate_chart(
 def validate_chart_content(
     chart_text: str,
     chart_label: str = "<in-memory>",
-    file_list: Optional[List[str]] = None,
-    song_ini_text: Optional[str] = None,
+    file_list: list[str] | None = None,
+    song_ini_text: str | None = None,
     fix: bool = False,
 ) -> ValidationResult:
     """
@@ -1359,14 +1367,14 @@ def validate_chart_content(
             write_to_disk=False,
         )
         # Store the fixed lines on the result so callers can retrieve them
-        result._fixed_lines = fixed_lines  # type: ignore[attr-defined]
+        result._fixed_lines = fixed_lines
 
     return result
 
 
 def validate_and_fix_chart(
     chart_path: Path,
-    song_dir: Optional[Path] = None,
+    song_dir: Path | None = None,
 ) -> ValidationResult:
     """
     Convenience wrapper: validate a chart and apply all available fixes.
@@ -1453,7 +1461,7 @@ async def validate_song_on_nextcloud(
             chart_text = chart_bytes.decode("latin-1")
 
     # List files in the song folder for audio validation
-    file_list: Optional[List[str]] = None
+    file_list: list[str] | None = None
     try:
         items = await list_song_folder_files(remote_path)
         if items:
@@ -1462,7 +1470,7 @@ async def validate_song_on_nextcloud(
         logger.warning("Could not list files for audio validation: {}", e)
 
     # Download song.ini if available
-    song_ini_text: Optional[str] = None
+    song_ini_text: str | None = None
     try:
         ini_bytes = await download_file(ini_remote)
         if ini_bytes:
@@ -1520,7 +1528,7 @@ async def validate_generated_chart(
     song_name: str = "",
     artist: str = "",
     fix: bool = True,
-) -> Tuple[ValidationResult, str]:
+) -> tuple[ValidationResult, str]:
     """
     Validate a chart that was just generated, apply fixes, and return
     the (possibly corrected) chart text.
@@ -1572,7 +1580,7 @@ async def validate_generated_chart(
 
 
 async def batch_validate_library(
-    song_ids: Optional[List[int]] = None,
+    song_ids: list[int] | None = None,
     fix: bool = False,
 ):
     """
@@ -1617,7 +1625,7 @@ async def batch_validate_library(
     valid_count = 0
     invalid_count = 0
     fixed_count = 0
-    errors: List[Dict[str, Any]] = []
+    errors: list[dict[str, Any]] = []
 
     for i, song in enumerate(songs, 1):
         song_id: int = song.get("id", 0)

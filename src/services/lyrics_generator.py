@@ -27,9 +27,11 @@ This module provides:
     - Integration with the chart generation pipeline
 """
 
+from __future__ import annotations
+
 import random
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import httpx
 from loguru import logger
@@ -628,7 +630,7 @@ def _clean_for_api(text: str) -> str:
     return text.strip()
 
 
-def _parse_lrc_line(line: str) -> Optional[Tuple[float, str]]:
+def _parse_lrc_line(line: str) -> tuple[float, str] | None:
     """
     Parse a single LRC-format line into (time_seconds, text).
 
@@ -647,14 +649,14 @@ def _parse_lrc_line(line: str) -> Optional[Tuple[float, str]]:
     return (time_s, text)
 
 
-def _parse_lrc_lyrics(lrc_text: str) -> List[Tuple[float, str]]:
+def _parse_lrc_lyrics(lrc_text: str) -> list[tuple[float, str]]:
     """
     Parse full LRC-format lyrics into a list of (time_seconds, line_text).
 
     Filters out metadata tags like [ar:Artist], [ti:Title], etc.
     Returns lines sorted by time.
     """
-    results: List[Tuple[float, str]] = []
+    results: list[tuple[float, str]] = []
     for line in lrc_text.splitlines():
         line = line.strip()
         if not line:
@@ -672,8 +674,8 @@ def _parse_lrc_lyrics(lrc_text: str) -> List[Tuple[float, str]]:
 def fetch_lyrics_lrclib(
     artist: str,
     title: str,
-    duration: Optional[float] = None,
-) -> Optional[Tuple[str, Optional[str]]]:
+    duration: float | None = None,
+) -> tuple[str, str | None] | None:
     """
     Fetch lyrics from lrclib.net API (free, no key required).
 
@@ -756,7 +758,7 @@ def fetch_lyrics_lrclib(
     return None
 
 
-def fetch_lyrics_ovh(artist: str, title: str) -> Optional[str]:
+def fetch_lyrics_ovh(artist: str, title: str) -> str | None:
     """
     Fetch plain lyrics from lyrics.ovh API (free, no key required).
 
@@ -810,8 +812,8 @@ def fetch_lyrics_ovh(artist: str, title: str) -> Optional[str]:
 def fetch_real_lyrics(
     artist: str,
     title: str,
-    duration: Optional[float] = None,
-) -> Tuple[Optional[str], Optional[List[Tuple[float, str]]]]:
+    duration: float | None = None,
+) -> tuple[str | None, list[tuple[float, str]] | None]:
     """
     Try to fetch real lyrics from multiple free APIs.
 
@@ -864,12 +866,12 @@ def fetch_real_lyrics(
 
 
 def _synced_lyrics_to_chart_events(
-    synced_lines: List[Tuple[float, str]],
+    synced_lines: list[tuple[float, str]],
     tempo: float,
     duration: float,
-    beat_times: List[float],
-    tempo_map: Optional[List[Tuple[float, float]]] = None,
-) -> List[str]:
+    beat_times: list[float],
+    tempo_map: list[tuple[float, float]] | None = None,
+) -> list[str]:
     """
     Convert time-synced lyric lines into Clone Hero chart event lines.
 
@@ -900,7 +902,7 @@ def _synced_lyrics_to_chart_events(
     if not synced_lines:
         return []
 
-    events: List[str] = []
+    events: list[str] = []
 
     for i, (line_time, line_text) in enumerate(synced_lines):
         # Skip lines that are before the song starts or after it ends
@@ -961,10 +963,10 @@ def _plain_lyrics_to_chart_events(
     plain_lyrics: str,
     tempo: float,
     duration: float,
-    beat_times: List[float],
-    segments: List[Dict[str, Any]],
-    tempo_map: Optional[List[Tuple[float, float]]] = None,
-) -> List[str]:
+    beat_times: list[float],
+    segments: list[dict[str, Any]],
+    tempo_map: list[tuple[float, float]] | None = None,
+) -> list[str]:
     """
     Convert plain (un-synced) lyrics into timed Clone Hero chart events.
 
@@ -997,10 +999,10 @@ def _plain_lyrics_to_chart_events(
     if not lines or len(beat_times) < 4:
         return []
 
-    events: List[str] = []
+    events: list[str] = []
 
     # Build singable time ranges from segments (skip intro/outro/instrumental)
-    singable_ranges: List[Tuple[float, float]] = []
+    singable_ranges: list[tuple[float, float]] = []
     for i, seg in enumerate(segments):
         seg_type = _classify_section(seg.get("label", "verse"))
         if seg_type in ("intro", "outro", "instrumental"):
@@ -1190,7 +1192,7 @@ def _select_theme(genre: str, song_name: str) -> str:
 # Phrase generation
 # ---------------------------------------------------------------------------
 def _generate_word(
-    tag: str, theme_words: Dict[str, List[str]], rng: random.Random
+    tag: str, theme_words: dict[str, list[str]], rng: random.Random
 ) -> str:
     """Generate a single word based on its part-of-speech tag."""
     if tag == "N":
@@ -1214,11 +1216,11 @@ def _generate_word(
 
 
 def _generate_phrase(
-    template: List[str],
-    theme_words: Dict[str, List[str]],
+    template: list[str],
+    theme_words: dict[str, list[str]],
     rng: random.Random,
-    avoid_words: Optional[set] = None,  # type: ignore[type-arg]
-) -> List[str]:
+    avoid_words: set[str] | None = None,
+) -> list[str]:
     """
     Generate a phrase (list of words) from a template.
 
@@ -1241,11 +1243,11 @@ def _generate_phrase(
 
 
 def _generate_chorus_phrase(
-    theme_words: Dict[str, List[str]],
+    theme_words: dict[str, list[str]],
     rng: random.Random,
-    chorus_cache: List[List[str]],
+    chorus_cache: list[list[str]],
     phrase_index: int,
-) -> List[str]:
+) -> list[str]:
     """
     Generate or recall a chorus phrase.
 
@@ -1268,7 +1270,7 @@ def _seconds_to_ticks(
     time_s: float,
     tempo: float,
     resolution: int = RESOLUTION,
-    tempo_map: Optional[List[Tuple[float, float]]] = None,
+    tempo_map: list[tuple[float, float]] | None = None,
 ) -> int:
     """Convert a time in seconds to chart ticks.
 
@@ -1316,7 +1318,7 @@ def _seconds_to_ticks(
 
 def _snap_to_nearest_beat(
     time_s: float,
-    beat_times: List[float],
+    beat_times: list[float],
     max_snap_window: float = 0.15,
 ) -> float:
     """Snap a timestamp to the nearest detected beat if close enough.
@@ -1357,16 +1359,16 @@ def _snap_to_nearest_beat(
 # ---------------------------------------------------------------------------
 def generate_lyrics(
     tempo: float,
-    beat_times: List[float],
-    onset_times: List[float],
-    onset_strengths: List[float],
+    beat_times: list[float],
+    onset_times: list[float],
+    onset_strengths: list[float],
     duration: float,
-    segments: List[Dict[str, Any]],
+    segments: list[dict[str, Any]],
     song_name: str = "",
     genre: str = "",
-    seed: Optional[int] = None,
-    tempo_map: Optional[List[Tuple[float, float]]] = None,
-) -> List[str]:
+    seed: int | None = None,
+    tempo_map: list[tuple[float, float]] | None = None,
+) -> list[str]:
     """
     Generate lyric events for a Clone Hero chart.
 
@@ -1415,7 +1417,7 @@ def generate_lyrics(
         logger.warning("⚠️ Too few beats for lyrics generation ({})", len(beat_times))
         return []
 
-    events: List[str] = []
+    events: list[str] = []
 
     # Build a beat index for quick lookup
     beat_set = set()
@@ -1423,17 +1425,17 @@ def generate_lyrics(
         beat_set.add(round(bt, 3))
 
     # Build segment ranges: [(start_time, end_time, label), ...]
-    seg_ranges: List[Tuple[float, float, str]] = []
+    seg_ranges: list[tuple[float, float, str]] = []
     for i, seg in enumerate(segments):
         start = seg["time"]
         end = segments[i + 1]["time"] if i + 1 < len(segments) else duration
         seg_ranges.append((start, end, seg["label"]))
 
     # Chorus cache for repeating lyrics
-    chorus_cache: List[List[str]] = []
+    chorus_cache: list[list[str]] = []
 
     # Track recently used words to promote variety
-    recent_words: set = set()  # type: ignore[type-arg]
+    recent_words: set[str] = set()
 
     # Process each segment
     for seg_start, seg_end, seg_label in seg_ranges:
@@ -1578,17 +1580,17 @@ def generate_lyrics(
 
 def generate_lyrics_for_chart(
     tempo: float,
-    beat_times: List[float],
-    onset_times: List[float],
-    onset_strengths: List[float],
+    beat_times: list[float],
+    onset_times: list[float],
+    onset_strengths: list[float],
     duration: float,
-    segments: List[Dict[str, Any]],
+    segments: list[dict[str, Any]],
     song_name: str = "",
     artist: str = "",
     genre: str = "",
-    seed: Optional[int] = None,
-    tempo_map: Optional[List[Tuple[float, float]]] = None,
-) -> List[str]:
+    seed: int | None = None,
+    tempo_map: list[tuple[float, float]] | None = None,
+) -> list[str]:
     """
     Generate lyric events for a Clone Hero chart.
 
@@ -1706,15 +1708,15 @@ def generate_lyrics_for_chart(
 # ---------------------------------------------------------------------------
 # Utility: extract plain-text lyrics from generated events
 # ---------------------------------------------------------------------------
-def extract_plain_lyrics(events: List[str]) -> str:
+def extract_plain_lyrics(events: list[str]) -> str:
     """
     Extract plain-text lyrics from chart event lines.
 
     Useful for displaying lyrics in the web UI or saving to a lyrics file.
     Returns a multi-line string with one phrase per line.
     """
-    lines: List[str] = []
-    current_phrase: List[str] = []
+    lines: list[str] = []
+    current_phrase: list[str] = []
 
     for event in events:
         stripped = event.strip()

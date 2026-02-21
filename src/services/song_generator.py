@@ -12,13 +12,15 @@ Generated songs are uploaded to Nextcloud via WebDAV and registered in the
 local metadata cache.  Local disk is only used as a transient staging area.
 """
 
+from __future__ import annotations
+
 import json
 import random
 import shutil
 import subprocess
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import librosa
 import numpy as np
@@ -64,7 +66,7 @@ def convert_audio_to_ogg(
     dest_dir: Path,
     target_filename: str = "song.ogg",
     bitrate: str = "192k",
-) -> Optional[Path]:
+) -> Path | None:
     """
     Convert an audio file to OGG Vorbis using ffmpeg.
 
@@ -134,7 +136,7 @@ def convert_audio_to_ogg(
 # ---------------------------------------------------------------------------
 # Audio analysis
 # ---------------------------------------------------------------------------
-def analyze_audio(file_path: str) -> Dict[str, Any]:
+def analyze_audio(file_path: str) -> dict[str, Any]:
     """
     Analyse an audio file to extract musical features.
 
@@ -214,8 +216,8 @@ def analyze_audio(file_path: str) -> Dict[str, Any]:
 
 
 def _detect_segments(
-    y: np.ndarray, sr: int, duration: float, beat_times: List[float]
-) -> List[Dict[str, Any]]:
+    y: np.ndarray, sr: int, duration: float, beat_times: list[float]
+) -> list[dict[str, Any]]:
     """
     Detect structural segments in the audio (intro, verse, chorus, etc.).
 
@@ -243,9 +245,8 @@ def _detect_segments(
         # structural boundaries (verse→chorus, chorus→bridge, etc.)
         try:
             # Smooth chroma to reduce noise
-            chroma_smooth = librosa.util.sync(
-                chroma, librosa.beat.beat_track(y=y, sr=sr)[1]
-            )
+            beat_frames = librosa.beat.beat_track(y=y, sr=sr)[1]
+            chroma_smooth = librosa.util.sync(chroma, list(int(f) for f in beat_frames))
             if chroma_smooth.shape[1] < 4:
                 raise ValueError("Too few chroma frames after sync")
 
@@ -401,10 +402,10 @@ def _detect_segments(
 
 
 def _label_segments_by_similarity(
-    segments: List[Dict[str, Any]],
-    seg_chromas: List[np.ndarray],
+    segments: list[dict[str, Any]],
+    seg_chromas: list[np.ndarray],
     similarity_threshold: float = 0.85,
-) -> List[str]:
+) -> list[str]:
     """
     Label segments using energy, position, and chroma similarity to
     detect repeating sections (verse/chorus).
@@ -428,7 +429,7 @@ def _label_segments_by_similarity(
     # Compute pairwise cosine similarity between segment chromas
     from numpy.linalg import norm as np_norm
 
-    sim_groups: List[int] = [-1] * n  # group ID for each segment
+    sim_groups: list[int] = [-1] * n  # group ID for each segment
     group_id = 0
 
     for i in range(n):
@@ -461,14 +462,14 @@ def _label_segments_by_similarity(
     # Compute energy statistics for labeling
     energies = [s["energy"] for s in segments]
     max_energy = max(energies) if energies else 1.0
-    avg_energy = sum(energies) / len(energies) if energies else 0.5
+    _avg_energy = sum(energies) / len(energies) if energies else 0.5
     if max_energy <= 0:
         max_energy = 1.0
 
     # Assign structural roles
-    labels: List[str] = [""] * n
-    group_label_map: Dict[int, str] = {}  # group_id → base label
-    label_counters: Dict[str, int] = {}  # base label → occurrence count
+    labels: list[str] = [""] * n
+    group_label_map: dict[int, str] = {}  # group_id → base label
+    label_counters: dict[str, int] = {}  # base label → occurrence count
 
     for i in range(n):
         if i == 0:
@@ -510,7 +511,7 @@ def _label_segments_by_similarity(
     return labels
 
 
-def _generate_section_labels(count: int) -> List[str]:
+def _generate_section_labels(count: int) -> list[str]:
     """Generate musically sensible section labels for a given segment count."""
     # Templates for different song lengths
     templates = {
@@ -564,7 +565,7 @@ def _generate_section_labels(count: int) -> List[str]:
     return labels[:count]
 
 
-def _fallback_segments(duration: float) -> List[Dict[str, Any]]:
+def _fallback_segments(duration: float) -> list[dict[str, Any]]:
     """Generate evenly-spaced fallback segments."""
     num_sections = max(4, min(8, int(duration / 30)))
     interval = duration / num_sections
@@ -581,7 +582,7 @@ def _fallback_segments(duration: float) -> List[Dict[str, Any]]:
     return segments
 
 
-def analyze_audio_detailed(file_path: str) -> Dict[str, Any]:
+def analyze_audio_detailed(file_path: str) -> dict[str, Any]:
     """
     Extended audio analysis including spectral features.
     Useful for more intelligent note generation in future iterations.
@@ -705,7 +706,7 @@ def _seconds_to_ticks(
     time_s: float,
     tempo: float,
     resolution: int = RESOLUTION,
-    tempo_map: Optional[List[Tuple[int, int]]] = None,
+    tempo_map: list[tuple[int, int]] | None = None,
 ) -> int:
     """Convert a time in seconds to chart ticks.
 
@@ -774,7 +775,7 @@ def _seconds_to_ticks(
 
 def _snap_to_nearest_beat(
     time_s: float,
-    beat_times: List[float],
+    beat_times: list[float],
     max_snap_window: float = 0.15,
 ) -> float:
     """Snap a timestamp to the nearest detected beat if close enough.
@@ -826,11 +827,11 @@ def _bpm_to_chart_value(bpm: float) -> int:
 
 def _compute_stable_tempo_map(
     tempo: float,
-    beat_times: List[float],
+    beat_times: list[float],
     resolution: int = RESOLUTION,
     change_threshold: float = 0.15,
     min_stable_beats: int = 8,
-) -> List[Tuple[int, int]]:
+) -> list[tuple[int, int]]:
     """
     Compute a stable tempo map from beat times.
 
@@ -844,7 +845,7 @@ def _compute_stable_tempo_map(
     if len(beat_times) < 4:
         return [(0, _bpm_to_chart_value(tempo))]
 
-    markers: List[Tuple[int, int]] = []
+    markers: list[tuple[int, int]] = []
     markers.append((0, _bpm_to_chart_value(tempo)))
 
     # Compute inter-beat intervals
@@ -974,9 +975,9 @@ def _select_note(
     difficulty: str,
     section_index: int,
     rng: random.Random,
-    profile: Dict[str, Any],
-    pitch_lane: Optional[int] = None,
-) -> List[int]:
+    profile: dict[str, Any],
+    pitch_lane: int | None = None,
+) -> list[int]:
     """
     Select which lane(s) a note should be on.
 
@@ -1050,9 +1051,9 @@ def _select_note(
 def _should_hopo(
     tick: int,
     prev_tick: int,
-    prev_lanes: List[int],
-    lanes: List[int],
-    profile: Dict[str, Any],
+    prev_lanes: list[int],
+    lanes: list[int],
+    profile: dict[str, Any],
     rng: random.Random,
     current_strength: float = 0.5,
     prev_strength: float = 0.5,
@@ -1128,10 +1129,10 @@ def _should_hopo(
 
 
 def _detect_tap_runs(
-    note_events: List[Tuple[int, float]],
-    pitch_lanes: Optional[List[int]],
-    profile: Dict[str, Any],
-) -> List[bool]:
+    note_events: list[tuple[int, float]],
+    pitch_lanes: list[int] | None,
+    profile: dict[str, Any],
+) -> list[bool]:
     """
     Identify notes that should receive the force-tap modifier (``N 6 0``).
 
@@ -1210,9 +1211,9 @@ def _detect_tap_runs(
 
 def _compute_sustain(
     tick: int,
-    next_tick: Optional[int],
+    next_tick: int | None,
     onset_strength: float,
-    profile: Dict[str, Any],
+    profile: dict[str, Any],
     rng: random.Random,
 ) -> int:
     """
@@ -1246,9 +1247,9 @@ def _compute_sustain(
 # Star power placement
 # ---------------------------------------------------------------------------
 def _compute_star_power_sections(
-    onset_ticks: List[int],
+    onset_ticks: list[int],
     total_ticks: int,
-) -> List[Tuple[int, int]]:
+) -> list[tuple[int, int]]:
     """
     Place star power (SP) sections throughout the chart.
 
@@ -1282,19 +1283,19 @@ def generate_notes_chart(
     year: str,
     genre: str,
     tempo: float,
-    beat_times: List[float],
-    onset_times: List[float],
-    onset_strengths: List[float],
+    beat_times: list[float],
+    onset_times: list[float],
+    onset_strengths: list[float],
     duration: float,
     output_path: Path,
     audio_filename: str = "song.ogg",
-    segments: Optional[List[Dict[str, Any]]] = None,
-    difficulties: Optional[List[str]] = None,
-    seed: Optional[int] = None,
+    segments: list[dict[str, Any]] | None = None,
+    difficulties: list[str] | None = None,
+    seed: int | None = None,
     enable_lyrics: bool = True,
     charter: str = "nuniesmith",
     instrument: str = "guitar",
-    stem_analysis: Optional[StemAnalysis] = None,
+    stem_analysis: StemAnalysis | None = None,
 ) -> bool:
     """
     Generate a Clone Hero compatible notes.chart file.
@@ -1328,7 +1329,7 @@ def generate_notes_chart(
         while len(onset_strengths) < len(onset_times):
             onset_strengths.append(0.5)
 
-        lines: List[str] = []
+        lines: list[str] = []
 
         # --- [Song] section ---
         lines.append("[Song]")
@@ -1338,7 +1339,7 @@ def generate_notes_chart(
         lines.append(f'  Album = "{album}"')
         lines.append(f'  Year = ", {year}"')
         lines.append(f'  Charter = "{charter}"')
-        lines.append(f"  Offset = 0")
+        lines.append("  Offset = 0")
         lines.append(f"  Resolution = {RESOLUTION}")
         lines.append("  Player2 = bass")
         lines.append("  Difficulty = 0")
@@ -1377,7 +1378,7 @@ def generate_notes_chart(
         )
 
         # Gather section markers as (tick, line) tuples
-        event_entries: List[Tuple[int, str]] = []
+        event_entries: list[tuple[int, str]] = []
         for seg in used_segments:
             tick = _seconds_to_ticks(seg["time"], tempo, tempo_map=tempo_map)
             label = seg["label"]
@@ -1397,7 +1398,9 @@ def generate_notes_chart(
                     artist=artist,
                     genre=genre,
                     seed=seed or hash(song_name + artist),
-                    tempo_map=tempo_map,
+                    tempo_map=[(float(t), float(b)) for t, b in tempo_map]
+                    if tempo_map
+                    else None,
                 )
                 if lyric_lines:
                     # Parse the tick from each lyric line for sorting
@@ -1426,8 +1429,8 @@ def generate_notes_chart(
         # over the full-mix onset data passed in as arguments.
         effective_onsets = onset_times
         effective_strengths = onset_strengths
-        effective_pitch_contour: Optional[List[float]] = None
-        effective_drum_lanes: Optional[List[int]] = None
+        effective_pitch_contour: list[float] | None = None
+        effective_drum_lanes: list[int] | None = None
 
         if stem_analysis is not None and stem_analysis.onset_times:
             effective_onsets = stem_analysis.onset_times
@@ -1499,21 +1502,21 @@ def generate_notes_chart(
 
 
 def _generate_difficulty_section(
-    lines: List[str],
-    profile: Dict[str, Any],
+    lines: list[str],
+    profile: dict[str, Any],
     difficulty: str,
     tempo: float,
-    onset_times: List[float],
-    onset_strengths: List[float],
-    beat_times: List[float],
+    onset_times: list[float],
+    onset_strengths: list[float],
+    beat_times: list[float],
     duration: float,
-    segments: List[Dict[str, Any]],
+    segments: list[dict[str, Any]],
     rng: random.Random,
     instrument: str = "guitar",
-    pitch_contour: Optional[List[float]] = None,
-    drum_lanes: Optional[List[int]] = None,
-    tempo_map: Optional[List[Tuple[int, int]]] = None,
-    stem_analysis: Optional["StemAnalysis"] = None,
+    pitch_contour: list[float] | None = None,
+    drum_lanes: list[int] | None = None,
+    tempo_map: list[tuple[int, int]] | None = None,
+    stem_analysis: StemAnalysis | None = None,
 ) -> None:
     """Generate a single difficulty section and append it to *lines*.
 
@@ -1551,7 +1554,7 @@ def _generate_difficulty_section(
         return
 
     # Convert to ticks and enforce minimum gap
-    note_events: List[Tuple[int, float]] = []  # (tick, strength)
+    note_events: list[tuple[int, float]] = []  # (tick, strength)
     prev_tick = -min_gap - 1
     for idx in selected_indices:
         t = onset_times[idx]
@@ -1588,10 +1591,10 @@ def _generate_difficulty_section(
 
     # Generate notes
     prev_tick = -999
-    prev_lanes: List[int] = []
+    prev_lanes: list[int] = []
 
     # Pre-compute pitch-derived lane assignments if available
-    pitch_lanes: Optional[List[int]] = None
+    pitch_lanes: list[int] | None = None
     if instrument == "drums" and drum_lanes is not None:
         # For drums, map the pre-analysed drum lane assignments to our
         # selected subset of onsets
@@ -1615,8 +1618,8 @@ def _generate_difficulty_section(
             all_open = stem_analysis.is_open_note
             n_orig = len(all_freqs)
             n_sel = len(note_events)
-            sel_freqs: List[float] = []
-            sel_open: List[bool] = []
+            sel_freqs: list[float] = []
+            sel_open: list[bool] = []
             for si in range(n_sel):
                 src_idx = int(si * n_orig / n_sel) if n_sel > 0 else 0
                 src_idx = min(src_idx, n_orig - 1)
@@ -1654,7 +1657,7 @@ def _generate_difficulty_section(
                 )
 
     # --- Pre-compute tap runs ---
-    tap_flags: List[bool] = []
+    tap_flags: list[bool] = []
     if instrument != "drums":
         tap_flags = _detect_tap_runs(note_events, pitch_lanes, profile)
     else:
@@ -1665,7 +1668,7 @@ def _generate_difficulty_section(
         section_idx = _section_for_time(t_seconds)
 
         # Determine the pitch-derived lane for this note (if available)
-        p_lane: Optional[int] = None
+        p_lane: int | None = None
         if pitch_lanes is not None and i < len(pitch_lanes):
             p_lane = pitch_lanes[i]
 
@@ -1740,10 +1743,10 @@ def _generate_difficulty_section(
 # Song file processing pipeline
 # ---------------------------------------------------------------------------
 def _map_pitch_to_selected(
-    pitch_contour: List[float],
-    all_onset_times: List[float],
-    note_events: List[Tuple[int, float]],
-) -> List[float]:
+    pitch_contour: list[float],
+    all_onset_times: list[float],
+    note_events: list[tuple[int, float]],
+) -> list[float]:
     """Map full pitch contour to the subset of onsets used in note_events.
 
     The pitch_contour has one value per onset in the stem analysis, but
@@ -1757,7 +1760,7 @@ def _map_pitch_to_selected(
 
     n_original = len(pitch_contour)
     n_selected = len(note_events)
-    result: List[float] = []
+    result: list[float] = []
 
     for i in range(n_selected):
         # Proportional index into the original contour
@@ -1769,11 +1772,11 @@ def _map_pitch_to_selected(
 
 
 def _map_drum_lanes_to_selected(
-    drum_lanes: List[int],
-    all_onset_times: List[float],
-    note_events: List[Tuple[int, float]],
-    profile: Dict[str, Any],
-) -> List[int]:
+    drum_lanes: list[int],
+    all_onset_times: list[float],
+    note_events: list[tuple[int, float]],
+    profile: dict[str, Any],
+) -> list[int]:
     """Map drum lane assignments to the subset of onsets in note_events.
 
     Uses proportional index mapping since note_events is a sparse subset
@@ -1799,8 +1802,8 @@ def _map_drum_lanes_to_selected(
 
 def process_song_file(
     file_path: str,
-    song_name: Optional[str] = None,
-    artist: Optional[str] = None,
+    song_name: str | None = None,
+    artist: str | None = None,
     difficulty: str = "expert",
     enable_lyrics: bool = True,
     enable_album_art: bool = True,
@@ -1808,10 +1811,10 @@ def process_song_file(
     album: str = "Generated",
     year: str = "",
     genre: str = "Generated",
-    cover_art_path: Optional[str] = None,
+    cover_art_path: str | None = None,
     instrument: str = "guitar",
     auto_validate: bool = True,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Full pipeline: analyse audio -> generate chart -> stage locally.
 
@@ -1887,7 +1890,7 @@ def process_song_file(
         segments = analysis.get("segments", [])
 
         # Step 1b: Instrument-specific stem analysis
-        stem_analysis: Optional[StemAnalysis] = None
+        stem_analysis: StemAnalysis | None = None
         if instrument and instrument != "full_mix":
             try:
                 logger.info("🎛️ Separating {} stem...", instrument)
@@ -2016,7 +2019,7 @@ def process_song_file(
                 if ext in (".jpg", ".jpeg"):
                     # Convert JPEG to PNG for Clone Hero compatibility
                     try:
-                        from PIL import Image
+                        from PIL import Image  # pyright: ignore[reportMissingImports]
 
                         img = Image.open(cover_art_path)
                         img.save(str(album_art_dest), "PNG")
@@ -2135,7 +2138,7 @@ def process_song_file(
         return {"error": str(e)}
 
 
-def generate_all_difficulties(file_path: str, **kwargs) -> Dict[str, Any]:
+def generate_all_difficulties(file_path: str, **kwargs) -> dict[str, Any]:
     """
     Generate charts for all four difficulty levels from a single audio file.
 
@@ -2147,8 +2150,8 @@ def generate_all_difficulties(file_path: str, **kwargs) -> Dict[str, Any]:
 
 async def process_and_upload_song(
     file_path: str,
-    song_name: Optional[str] = None,
-    artist: Optional[str] = None,
+    song_name: str | None = None,
+    artist: str | None = None,
     difficulty: str = "expert",
     enable_lyrics: bool = True,
     enable_album_art: bool = True,
@@ -2156,9 +2159,9 @@ async def process_and_upload_song(
     album: str = "Generated",
     year: str = "",
     genre: str = "Generated",
-    cover_art_path: Optional[str] = None,
+    cover_art_path: str | None = None,
     instrument: str = "guitar",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     High-level async pipeline: generate chart -> upload to Nextcloud -> register in DB.
 

@@ -9,12 +9,10 @@ Provides reusable fixtures for:
 - Helpers for creating test song folder structures
 """
 
-import json
-import os
-import shutil
-import tempfile
+from __future__ import annotations
+
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import numpy as np
 import pytest
@@ -109,7 +107,7 @@ def chart_missing_music_stream(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def mock_audio_analysis() -> Dict[str, Any]:
+def mock_audio_analysis() -> dict[str, Any]:
     """
     Return a dict mimicking the output of song_generator.analyze_audio().
 
@@ -154,7 +152,7 @@ def mock_audio_analysis() -> Dict[str, Any]:
 
 
 @pytest.fixture
-def mock_audio_analysis_short() -> Dict[str, Any]:
+def mock_audio_analysis_short() -> dict[str, Any]:
     """Short 30-second analysis for quick tests."""
     duration = 30.0
     tempo = 140.0
@@ -187,7 +185,7 @@ def mock_audio_analysis_short() -> Dict[str, Any]:
 
 
 @pytest.fixture
-def sample_song_data() -> Dict[str, Any]:
+def sample_song_data() -> dict[str, Any]:
     """Return a dict suitable for write_song_ini()."""
     return {
         "title": "Test Song",
@@ -218,7 +216,7 @@ def sample_song_data() -> Dict[str, Any]:
 
 
 @pytest.fixture
-def filename_test_cases() -> List[Dict[str, str]]:
+def filename_test_cases() -> list[dict[str, str]]:
     """
     Return a list of filename → expected parse result mappings.
 
@@ -439,14 +437,13 @@ delay = 0
 loading_phrase = Auto-generated chart at 120 BPM
 """
 
-
 # ---------------------------------------------------------------------------
 # MusicBrainz mock response fixtures
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture
-def mock_musicbrainz_response() -> Dict[str, Any]:
+def mock_musicbrainz_response() -> dict[str, Any]:
     """Return a mock MusicBrainz recording search response."""
     return {
         "recordings": [
@@ -481,7 +478,7 @@ def mock_musicbrainz_response() -> Dict[str, Any]:
 
 
 @pytest.fixture
-def mock_musicbrainz_empty_response() -> Dict[str, Any]:
+def mock_musicbrainz_empty_response() -> dict[str, Any]:
     """Return a mock MusicBrainz response with no results."""
     return {"recordings": []}
 

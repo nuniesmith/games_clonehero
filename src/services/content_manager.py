@@ -13,6 +13,8 @@ All persistent storage lives on Nextcloud.  Local disk is only used as a
 transient staging area for extraction and processing before upload.
 """
 
+from __future__ import annotations
+
 import configparser
 import json
 import shutil
@@ -20,7 +22,7 @@ import tempfile
 import uuid
 import zipfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import rarfile
 from loguru import logger
@@ -32,7 +34,6 @@ from src.config import (
     TEMP_DIR,
 )
 
-
 # ---------------------------------------------------------------------------
 # Directory helpers
 # ---------------------------------------------------------------------------
@@ -41,11 +42,10 @@ def get_temp_staging_dir(prefix: str = "ch_stage_") -> Path:
     TEMP_DIR.mkdir(parents=True, exist_ok=True)
     return Path(tempfile.mkdtemp(prefix=prefix, dir=str(TEMP_DIR)))
 
-
 # ---------------------------------------------------------------------------
 # Song.ini parsing
 # ---------------------------------------------------------------------------
-def parse_song_ini(ini_path: Path) -> Optional[Dict[str, Any]]:
+def parse_song_ini(ini_path: Path) -> dict[str, Any] | None:
     """
     Parse a song.ini file and return structured metadata.
 
@@ -87,8 +87,7 @@ def parse_song_ini(ini_path: Path) -> Optional[Dict[str, Any]]:
         "metadata": metadata,
     }
 
-
-def write_song_ini(ini_path: Path, song_data: Dict[str, Any]) -> bool:
+def write_song_ini(ini_path: Path, song_data: dict[str, Any]) -> bool:
     """
     Write or update a song.ini file with the provided data.
 
@@ -123,11 +122,10 @@ def write_song_ini(ini_path: Path, song_data: Dict[str, Any]) -> bool:
         logger.error(f"❌ Failed to write song.ini at {ini_path}: {e}")
         return False
 
-
 # ---------------------------------------------------------------------------
 # Archive extraction
 # ---------------------------------------------------------------------------
-def extract_archive(file_path: str, extract_dir: str) -> Dict[str, Any]:
+def extract_archive(file_path: str, extract_dir: str) -> dict[str, Any]:
     """
     Extract a .zip or .rar archive to the given directory.
 
@@ -165,14 +163,13 @@ def extract_archive(file_path: str, extract_dir: str) -> Dict[str, Any]:
         logger.exception(f"❌ Error extracting {file_path}: {e}")
         return {"error": str(e)}
 
-
 # ---------------------------------------------------------------------------
 # Non-song asset upload to Nextcloud
 # ---------------------------------------------------------------------------
 async def _upload_asset_to_nextcloud(
     local_path: Path,
     content_type: str,
-) -> Optional[str]:
+) -> str | None:
     """
     Upload a single non-song asset file to the appropriate Nextcloud folder.
 
@@ -208,11 +205,10 @@ async def _upload_asset_to_nextcloud(
         logger.error(f"❌ Error uploading asset {local_path.name}: {e}")
         return None
 
-
 # ---------------------------------------------------------------------------
 # Content processing pipeline  (Nextcloud-first)
 # ---------------------------------------------------------------------------
-async def process_extracted_songs(extract_dir: str) -> List[Dict[str, Any]]:
+async def process_extracted_songs(extract_dir: str) -> list[dict[str, Any]]:
     """
     Walk an extracted directory, find all song.ini files, parse them,
     upload each song folder to Nextcloud, and register in the DB.
@@ -222,7 +218,7 @@ async def process_extracted_songs(extract_dir: str) -> List[Dict[str, Any]]:
     from src.database import upsert_song
     from src.webdav import is_configured, upload_song_folder
 
-    stored_songs: List[Dict[str, Any]] = []
+    stored_songs: list[dict[str, Any]] = []
     extract_path = Path(extract_dir)
 
     for ini_path in extract_path.rglob("song.ini"):
@@ -281,8 +277,7 @@ async def process_extracted_songs(extract_dir: str) -> List[Dict[str, Any]]:
 
     return stored_songs
 
-
-async def process_upload(file_path: str, content_type: str = "songs") -> Dict[str, Any]:
+async def process_upload(file_path: str, content_type: str = "songs") -> dict[str, Any]:
     """
     Full pipeline: extract archive -> process content -> upload to Nextcloud -> cleanup.
 
@@ -351,8 +346,8 @@ async def process_upload(file_path: str, content_type: str = "songs") -> Dict[st
                 }
         else:
             # For non-song content, upload all extracted files to Nextcloud
-            uploaded_files: List[str] = []
-            failed_files: List[str] = []
+            uploaded_files: list[str] = []
+            failed_files: list[str] = []
 
             for item in temp_dir.rglob("*"):
                 if item.is_file():
@@ -382,13 +377,12 @@ async def process_upload(file_path: str, content_type: str = "songs") -> Dict[st
         # Always clean up temp directory
         shutil.rmtree(temp_dir, ignore_errors=True)
 
-
 # ---------------------------------------------------------------------------
 # Nextcloud library sync
 # ---------------------------------------------------------------------------
 
 # Module-level sync state so the UI can query what's happening
-_sync_state: Dict[str, Any] = {
+_sync_state: dict[str, Any] = {
     "running": False,
     "phase": "",  # "idle", "discovering", "parsing", "purging", "done"
     "total_folders": 0,
@@ -401,11 +395,9 @@ _sync_state: Dict[str, Any] = {
     "errors": [],
 }
 
-
-def get_sync_state() -> Dict[str, Any]:
+def get_sync_state() -> dict[str, Any]:
     """Return a snapshot of the current sync state."""
     return dict(_sync_state)
-
 
 async def sync_library_from_nextcloud_stream():
     """
@@ -479,7 +471,7 @@ async def sync_library_from_nextcloud_stream():
         # --- Step 2: Parse each song.ini and upsert ---
         synced = 0
         failed = 0
-        errors: List[str] = []
+        errors: list[str] = []
 
         for i, folder in enumerate(folders, 1):
             _sync_state["processed"] = i
@@ -605,8 +597,7 @@ async def sync_library_from_nextcloud_stream():
             )
             _sync_state["phase"] = "idle"
 
-
-async def sync_library_from_nextcloud() -> Dict[str, Any]:
+async def sync_library_from_nextcloud() -> dict[str, Any]:
     """
     Scan the Nextcloud songs directory, parse every song.ini found,
     and upsert the metadata into the local database.
@@ -619,7 +610,7 @@ async def sync_library_from_nextcloud() -> Dict[str, Any]:
     :func:`sync_library_from_nextcloud_stream`.  It consumes all progress
     events and returns only the final summary.
     """
-    last_event: Dict[str, Any] = {}
+    last_event: dict[str, Any] = {}
     async for event in sync_library_from_nextcloud_stream():
         last_event = event
 
@@ -638,7 +629,6 @@ async def sync_library_from_nextcloud() -> Dict[str, Any]:
         "total_on_nextcloud": last_event.get("total_on_nextcloud", 0),
         "errors": last_event.get("errors", []),
     }
-
 
 async def delete_song_from_nextcloud(remote_path: str) -> bool:
     """
@@ -669,7 +659,6 @@ async def delete_song_from_nextcloud(remote_path: str) -> bool:
     else:
         logger.error("❌ Failed to delete from Nextcloud: {}", remote_path)
     return ok
-
 
 # ---------------------------------------------------------------------------
 # Utility

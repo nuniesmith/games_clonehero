@@ -1,0 +1,41 @@
+{
+    "include": ["src", "tests"],
+    "pythonVersion": "3.12",
+    "pythonPlatform": "Linux",
+    "typeCheckingMode": "standard",
+    "reportMissingImports": "warning",
+    "reportMissingTypeStubs": false,
+    "reportUnknownMemberType": false,
+    "reportUnknownArgumentType": false,
+    "reportUnknownVariableType": false,
+    "reportUnknownParameterType": false,
+    "reportUnknownLambdaType": false,
+    "reportAny": false,
+    "reportImplicitStringConcatenation": false,
+    "reportUnusedVariable": "warning",
+    "reportUnusedImport": "warning",
+    "reportUnusedFunction": "warning",
+    "reportUnusedExpression": "warning",
+    "reportUnnecessaryTypeIgnoreComment": "warning",
+    "reportDuplicateImport": "warning",
+    "reportPrivateUsage": false,
+    "reportMissingParameterType": false,
+    "reportDeprecated": false,
+    "reportUnusedCallResult": false,
+    "reportImplicitOverride": false,
+    "reportMissingModuleSource": false,
+    "reportOptionalMemberAccess": true,
+    "reportOptionalCall": true,
+    "reportOptionalIterable": true,
+    "reportOptionalSubscript": true,
+    "reportUndefinedVariable": "error",
+    "executionEnvironments": [
+        {
+            "root": "tests",
+            "reportMissingParameterType": false,
+            "reportUnknownMemberType": false,
+            "reportUnknownArgumentType": false,
+            "reportUnknownVariableType": false
+        }
+    ]
+}

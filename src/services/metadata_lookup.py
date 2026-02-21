@@ -10,10 +10,12 @@ All lookups are best-effort: failures are logged and empty results returned
 so the generator pipeline is never blocked by external API issues.
 """
 
+from __future__ import annotations
+
 import asyncio
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 from urllib.parse import quote
 
 import httpx
@@ -90,11 +92,9 @@ _LOWERCASE_WORDS = {
     "vs.",
 }
 
-
 # ---------------------------------------------------------------------------
 # Filename parsing
 # ---------------------------------------------------------------------------
-
 
 def clean_name(raw: str) -> str:
     """
@@ -127,7 +127,6 @@ def clean_name(raw: str) -> str:
 
     return text
 
-
 def _smart_title_case(text: str) -> str:
     """
     Apply title case that respects common English articles/prepositions
@@ -151,8 +150,7 @@ def _smart_title_case(text: str) -> str:
             result.append(word.capitalize())
     return " ".join(result)
 
-
-def parse_filename(filename: str) -> Dict[str, str]:
+def parse_filename(filename: str) -> dict[str, str]:
     """
     Parse an audio filename to extract artist and song title.
 
@@ -236,17 +234,15 @@ def parse_filename(filename: str) -> Dict[str, str]:
         "artist": artist,
     }
 
-
 # ---------------------------------------------------------------------------
 # MusicBrainz lookups
 # ---------------------------------------------------------------------------
-
 
 async def lookup_song_metadata(
     title: str,
     artist: str = "",
     timeout: float = 10.0,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Look up song metadata from MusicBrainz by title and optional artist.
 
@@ -302,7 +298,7 @@ async def lookup_song_metadata(
 
             # Pick the best match (first result with highest score)
             recording = recordings[0]
-            result: Dict[str, Any] = {}
+            result: dict[str, Any] = {}
 
             result["title"] = recording.get("title", title)
             result["musicbrainz_id"] = recording.get("id", "")
@@ -386,12 +382,11 @@ async def lookup_song_metadata(
         logger.warning("⚠️ MusicBrainz lookup error: {}", e)
         return {}
 
-
 async def _lookup_release_group_tags(
     client: httpx.AsyncClient,
     release_group_mbid: str,
-    headers: Dict[str, str],
-) -> Dict[str, Any]:
+    headers: dict[str, str],
+) -> dict[str, Any]:
     """Fetch genre tags from a release group."""
     try:
         url = f"{MUSICBRAINZ_API_URL}/release-group/{release_group_mbid}"
@@ -414,7 +409,6 @@ async def _lookup_release_group_tags(
 
     return {}
 
-
 def _mb_escape(text: str) -> str:
     """Escape special Lucene query characters for MusicBrainz search."""
     # MusicBrainz uses Lucene query syntax
@@ -427,17 +421,15 @@ def _mb_escape(text: str) -> str:
             escaped += ch
     return escaped
 
-
 # ---------------------------------------------------------------------------
 # Cover Art Archive
 # ---------------------------------------------------------------------------
-
 
 async def lookup_cover_art(
     release_mbid: str = "",
     release_group_mbid: str = "",
     timeout: float = 15.0,
-) -> Optional[bytes]:
+) -> bytes | None:
     """
     Download album cover art from the Cover Art Archive.
 
@@ -462,12 +454,11 @@ async def lookup_cover_art(
 
     return None
 
-
 async def _fetch_cover(
     client: httpx.AsyncClient,
     entity_type: str,
     mbid: str,
-) -> Optional[bytes]:
+) -> bytes | None:
     """Fetch the front cover image from the Cover Art Archive."""
     url = f"{COVER_ART_ARCHIVE_URL}/{entity_type}/{mbid}/front-500"
     try:
@@ -496,17 +487,15 @@ async def _fetch_cover(
 
     return None
 
-
 # ---------------------------------------------------------------------------
 # High-level helper: look up everything for a song
 # ---------------------------------------------------------------------------
-
 
 async def lookup_all(
     title: str,
     artist: str = "",
     download_art: bool = True,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Look up all available metadata for a song.
 
@@ -517,7 +506,7 @@ async def lookup_all(
 
     This is the main entry point for the generator pipeline.
     """
-    result: Dict[str, Any] = {
+    result: dict[str, Any] = {
         "lookup_source": "",
         "cover_art_bytes": None,
     }

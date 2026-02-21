@@ -16,6 +16,8 @@ Provides all REST API endpoints for:
 - Health check
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
 import os
@@ -23,7 +25,7 @@ import tempfile
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
 import aiofiles
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
@@ -96,25 +98,22 @@ _START_TIME = time.time()
 # Track last DB upload time (updated by main.py after each upload)
 _last_db_upload: float | None = None
 
-
 # ---------------------------------------------------------------------------
 # Pydantic models
 # ---------------------------------------------------------------------------
 class SongUpdate(BaseModel):
-    title: Optional[str] = None
-    artist: Optional[str] = None
-    album: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = None
-    tags: Optional[list[str]] = None
-
+    title: str | None = None
+    artist: str | None = None
+    album: str | None = None
+    metadata: dict[str, Any] | None = None
+    tags: list[str] | None = None
 
 class TagUpdateRequest(BaseModel):
     """Set, add, or remove tags on a song."""
 
-    tags: Optional[list[str]] = None  # replace all tags
-    add: Optional[list[str]] = None  # add these tags
-    remove: Optional[list[str]] = None  # remove these tags
-
+    tags: list[str] | None = None  # replace all tags
+    add: list[str] | None = None  # add these tags
+    remove: list[str] | None = None  # remove these tags
 
 class ArtistMergeRequest(BaseModel):
     """Merge multiple artist name variants into a single canonical name."""
@@ -122,39 +121,32 @@ class ArtistMergeRequest(BaseModel):
     canonical: str
     variants: list[str]
 
-
 class WebDAVDownloadRequest(BaseModel):
     remote_path: str
     content_type: str = "songs"
 
-
 class WebDAVUploadRequest(BaseModel):
     remote_path: str
 
-
 class GenerateSongRequest(BaseModel):
-    song_name: Optional[str] = None
-    artist: Optional[str] = None
+    song_name: str | None = None
+    artist: str | None = None
     difficulty: str = "expert"
     enable_lyrics: bool = True
     enable_album_art: bool = True
 
-
 class FilenameParseRequest(BaseModel):
     filename: str
-
 
 class MetadataLookupRequest(BaseModel):
     title: str
     artist: str = ""
 
-
 class ChartViewRequest(BaseModel):
-    difficulty: Optional[str] = None
-    start_time: Optional[float] = None
-    end_time: Optional[float] = None
+    difficulty: str | None = None
+    start_time: float | None = None
+    end_time: float | None = None
     max_notes: int = 5000
-
 
 # ---------------------------------------------------------------------------
 # Health
@@ -175,7 +167,6 @@ async def health_check():
         "uptime_seconds": uptime,
         "version": APP_VERSION,
     }
-
 
 # ---------------------------------------------------------------------------
 # System Status (background activity reporting)
@@ -216,7 +207,6 @@ async def api_system_status():
 
     return result
 
-
 @router.get("/system/sync-state")
 async def api_sync_state():
     """
@@ -227,13 +217,12 @@ async def api_sync_state():
     """
     return get_sync_state()
 
-
 # ---------------------------------------------------------------------------
 # Songs CRUD (metadata cached locally, files on Nextcloud)
 # ---------------------------------------------------------------------------
 @router.get("/songs")
 async def api_list_songs(
-    search: Optional[str] = Query(None),
+    search: str | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):
@@ -259,23 +248,21 @@ async def api_list_songs(
         "songs": songs,
     }
 
-
 # ---------------------------------------------------------------------------
 # Artists (grouped view)
 # ---------------------------------------------------------------------------
 @router.get("/artists")
 async def api_list_artists(
-    search: Optional[str] = Query(None),
+    search: str | None = Query(None),
 ):
     """List all artists with song counts, optionally filtered by search."""
     artists = await get_artists(search=search.strip() if search else None)
     return {"total": len(artists), "artists": artists}
 
-
 @router.get("/artists/{artist_name}/songs")
 async def api_artist_songs(
     artist_name: str,
-    search: Optional[str] = Query(None),
+    search: str | None = Query(None),
 ):
     """Get all songs for a specific artist."""
     search_query = search.strip() if search else None
@@ -293,7 +280,6 @@ async def api_artist_songs(
 
     return {"artist": artist_name, "total": len(songs), "songs": songs}
 
-
 @router.get("/artists/duplicates")
 async def api_artist_duplicates():
     """
@@ -304,7 +290,6 @@ async def api_artist_duplicates():
     """
     groups = await get_artist_variants()
     return {"total": len(groups), "groups": groups}
-
 
 @router.post("/artists/merge")
 async def api_merge_artists(body: ArtistMergeRequest):
@@ -357,7 +342,7 @@ async def api_merge_artists(body: ArtistMergeRequest):
                         f"Failed to update song.ini for '{song.get('title', '?')}' at {remote_path}"
                     )
 
-    result: Dict[str, Any] = {
+    result: dict[str, Any] = {
         "message": f"Merged {len(variants)} variant(s) into '{canonical}'",
         "canonical": canonical,
         "variants_merged": variants,
@@ -368,7 +353,6 @@ async def api_merge_artists(body: ArtistMergeRequest):
 
     return result
 
-
 # ---------------------------------------------------------------------------
 # Tags
 # ---------------------------------------------------------------------------
@@ -378,7 +362,6 @@ async def api_list_tags():
     tags = await get_all_tags()
     return {"total": len(tags), "tags": tags}
 
-
 @router.get("/songs/{song_id}/tags")
 async def api_get_song_tags(song_id: int):
     """Get tags for a single song."""
@@ -387,7 +370,6 @@ async def api_get_song_tags(song_id: int):
         raise HTTPException(status_code=404, detail="Song not found")
     tags = await get_song_tags(song_id)
     return {"song_id": song_id, "tags": tags}
-
 
 @router.put("/songs/{song_id}/tags")
 async def api_update_song_tags(song_id: int, body: TagUpdateRequest):
@@ -422,11 +404,10 @@ async def api_update_song_tags(song_id: int, body: TagUpdateRequest):
 
     return {"song_id": song_id, "tags": new_tags}
 
-
 @router.get("/songs/by-tag/{tag}")
 async def api_songs_by_tag(
     tag: str,
-    search: Optional[str] = Query(None),
+    search: str | None = Query(None),
     limit: int = Query(200, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
@@ -444,7 +425,6 @@ async def api_songs_by_tag(
         song["tags"] = parse_tags(song.get("tags"))
 
     return {"tag": tag, "total": total, "songs": songs}
-
 
 @router.get("/songs/{song_id}")
 async def api_get_song(song_id: int):
@@ -464,7 +444,6 @@ async def api_get_song(song_id: int):
 
     return song
 
-
 @router.put("/songs/{song_id}")
 async def api_update_song(song_id: int, body: SongUpdate):
     """
@@ -477,7 +456,7 @@ async def api_update_song(song_id: int, body: SongUpdate):
     if not song:
         raise HTTPException(status_code=404, detail="Song not found")
 
-    fields: Dict[str, Any] = {}
+    fields: dict[str, Any] = {}
     if body.title is not None:
         fields["title"] = body.title
     if body.artist is not None:
@@ -522,7 +501,6 @@ async def api_update_song(song_id: int, body: SongUpdate):
 
     return {"message": f"Song {song_id} updated successfully"}
 
-
 @router.delete("/songs/{song_id}")
 async def api_delete_song(song_id: int):
     """Delete a song from the database AND from Nextcloud."""
@@ -550,14 +528,12 @@ async def api_delete_song(song_id: int):
 
     return {"message": f"Song {song_id} deleted successfully"}
 
-
 # ---------------------------------------------------------------------------
 # Content Upload (songs go to Nextcloud)
 # ---------------------------------------------------------------------------
 def _get_temp_path(filename: str) -> str:
     """Generate a secure temporary file path."""
     return os.path.join(tempfile.gettempdir(), f"ch_{uuid.uuid4().hex}_{filename}")
-
 
 def _validate_extension(filename: str, allowed: set[str]) -> str:
     """Validate and return the file extension, raising HTTPException if invalid."""
@@ -568,7 +544,6 @@ def _validate_extension(filename: str, allowed: set[str]) -> str:
             detail=f"Invalid file extension: {ext}. Allowed: {', '.join(sorted(allowed))}",
         )
     return ext
-
 
 @router.post("/upload")
 async def api_upload_content(
@@ -647,7 +622,6 @@ async def api_upload_content(
         except FileNotFoundError:
             pass
 
-
 # ---------------------------------------------------------------------------
 # Song Generator (output uploaded to Nextcloud)
 # ---------------------------------------------------------------------------
@@ -655,8 +629,8 @@ async def api_upload_content(
 async def api_generate_song(
     request: Request,
     file: UploadFile = File(...),
-    song_name: Optional[str] = Form(None),
-    artist: Optional[str] = Form(None),
+    song_name: str | None = Form(None),
+    artist: str | None = Form(None),
     difficulty: str = Form("expert"),
     instrument: str = Form("guitar"),
     enable_lyrics: bool = Form(True),
@@ -725,7 +699,7 @@ async def api_generate_song(
         )
 
         # --- Metadata lookup ---
-        lookup_data: Dict[str, Any] = {}
+        lookup_data: dict[str, Any] = {}
         effective_name = song_name or parsed.get("song_name") or Path(filename).stem
         effective_artist = artist or parsed.get("artist", "")
 
@@ -840,7 +814,6 @@ async def api_generate_song(
                 except FileNotFoundError:
                     pass
 
-
 # ---------------------------------------------------------------------------
 # Filename Parsing & Metadata Lookup
 # ---------------------------------------------------------------------------
@@ -855,7 +828,6 @@ async def api_parse_filename(req: FilenameParseRequest):
     """
     result = parse_filename(req.filename)
     return result
-
 
 @router.post("/lookup-metadata")
 async def api_lookup_metadata(req: MetadataLookupRequest):
@@ -930,7 +902,6 @@ async def api_lookup_metadata(req: MetadataLookupRequest):
         logger.warning("Metadata lookup error: {}", e)
         return {"found": False, "error": str(e)}
 
-
 # ---------------------------------------------------------------------------
 # Library Sync (scan Nextcloud → refresh local DB cache)
 # ---------------------------------------------------------------------------
@@ -956,7 +927,6 @@ async def api_sync_library():
         raise HTTPException(status_code=502, detail=result["error"])
 
     return result
-
 
 @router.get("/library/sync/stream")
 async def api_sync_library_stream():
@@ -1046,7 +1016,6 @@ async def api_sync_library_stream():
         },
     )
 
-
 @router.get("/library/status")
 async def api_library_status():
     """Return library statistics and Nextcloud connection info."""
@@ -1067,7 +1036,6 @@ async def api_library_status():
             result["webdav_error"] = status["error"]
 
     return result
-
 
 # ---------------------------------------------------------------------------
 # WebDAV / Nextcloud endpoints (general file browser)
@@ -1090,7 +1058,6 @@ async def api_webdav_status():
         "error": status.get("error"),
     }
 
-
 @router.get("/webdav/browse")
 async def api_webdav_browse(path: str = Query("/", alias="path")):
     """List files and directories at a given Nextcloud path."""
@@ -1105,7 +1072,6 @@ async def api_webdav_browse(path: str = Query("/", alias="path")):
         "total": len(items),
         "items": [item.to_dict() for item in items],
     }
-
 
 @router.post("/webdav/import")
 async def api_webdav_import_song(remote_path: str = Form(...)):
@@ -1145,7 +1111,6 @@ async def api_webdav_import_song(remote_path: str = Form(...)):
         "song_id": song_id,
         "remote_path": remote_path,
     }
-
 
 @router.post("/webdav/upload")
 async def api_webdav_upload(
@@ -1192,7 +1157,6 @@ async def api_webdav_upload(
         logger.exception(f"❌ WebDAV upload error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
 @router.post("/webdav/mkdir")
 async def api_webdav_mkdir(remote_path: str = Form(...)):
     """Create a directory on Nextcloud."""
@@ -1209,7 +1173,6 @@ async def api_webdav_mkdir(remote_path: str = Form(...)):
         )
 
     return {"message": f"Directory created: {remote_path}"}
-
 
 @router.delete("/webdav/delete")
 async def api_webdav_delete(path: str = Query(...)):
@@ -1228,18 +1191,16 @@ async def api_webdav_delete(path: str = Query(...)):
 
     return {"message": f"Deleted: {path}"}
 
-
 # ---------------------------------------------------------------------------
 # Chart Viewer / Editor
 # ---------------------------------------------------------------------------
 
-
 @router.get("/songs/{song_id}/chart")
 async def api_get_song_chart(
     song_id: int,
-    difficulty: Optional[str] = Query(None),
-    start_time: Optional[float] = Query(None),
-    end_time: Optional[float] = Query(None),
+    difficulty: str | None = Query(None),
+    start_time: float | None = Query(None),
+    end_time: float | None = Query(None),
     max_notes: int = Query(5000, ge=1, le=50000),
 ):
     """
@@ -1323,7 +1284,6 @@ async def api_get_song_chart(
         except (FileNotFoundError, OSError):
             pass
 
-
 @router.get("/songs/{song_id}/chart/summary")
 async def api_get_chart_summary(song_id: int):
     """
@@ -1387,13 +1347,12 @@ async def api_get_chart_summary(song_id: int):
         except (FileNotFoundError, OSError):
             pass
 
-
 @router.post("/chart/parse")
 async def api_parse_uploaded_chart(
     file: UploadFile = File(...),
-    difficulty: Optional[str] = Form(None),
-    start_time: Optional[float] = Form(None),
-    end_time: Optional[float] = Form(None),
+    difficulty: str | None = Form(None),
+    start_time: float | None = Form(None),
+    end_time: float | None = Form(None),
     max_notes: int = Form(5000),
 ):
     """
@@ -1445,11 +1404,9 @@ async def api_parse_uploaded_chart(
         except (FileNotFoundError, OSError):
             pass
 
-
 # ---------------------------------------------------------------------------
 # Chart Validation
 # ---------------------------------------------------------------------------
-
 
 @router.post("/validate/{song_id}")
 async def api_validate_song(song_id: int, fix: bool = Query(False)):
@@ -1466,7 +1423,6 @@ async def api_validate_song(song_id: int, fix: bool = Query(False)):
 
     result = await validate_song_on_nextcloud(song_id, fix=fix)
     return result.to_dict()
-
 
 @router.post("/validate/upload")
 async def api_validate_uploaded_chart(
@@ -1515,10 +1471,9 @@ async def api_validate_uploaded_chart(
 
     return response
 
-
 @router.post("/validate/batch")
 async def api_validate_batch(
-    song_ids: Optional[str] = Query(None, description="Comma-separated song IDs"),
+    song_ids: str | None = Query(None, description="Comma-separated song IDs"),
     fix: bool = Query(False),
 ):
     """
@@ -1557,11 +1512,9 @@ async def api_validate_batch(
         },
     )
 
-
 # ---------------------------------------------------------------------------
 # Song Promotion (Generator → Songs)
 # ---------------------------------------------------------------------------
-
 
 @router.post("/songs/{song_id}/promote")
 async def api_promote_song(song_id: int, dry_run: bool = Query(False)):
@@ -1586,11 +1539,9 @@ async def api_promote_song(song_id: int, dry_run: bool = Query(False)):
         raise HTTPException(status_code=500, detail=result["error"])
     return result
 
-
 # ---------------------------------------------------------------------------
 # Song Library Organization
 # ---------------------------------------------------------------------------
-
 
 @router.get("/organize/scan")
 async def api_scan_library_issues():
@@ -1612,7 +1563,6 @@ async def api_scan_library_issues():
         raise HTTPException(status_code=500, detail=result["error"])
     return result
 
-
 @router.post("/organize/song/{song_id}")
 async def api_organize_song(song_id: int, dry_run: bool = Query(False)):
     """
@@ -1631,7 +1581,6 @@ async def api_organize_song(song_id: int, dry_run: bool = Query(False)):
     if "error" in result:
         raise HTTPException(status_code=500, detail=result["error"])
     return result
-
 
 @router.post("/organize/library")
 async def api_organize_library(
@@ -1676,7 +1625,6 @@ async def api_organize_library(
         },
     )
 
-
 @router.get("/duplicates")
 async def api_find_duplicates():
     """
@@ -1698,7 +1646,6 @@ async def api_find_duplicates():
         raise HTTPException(status_code=500, detail=result["error"])
     return result
 
-
 @router.post("/duplicates/clean")
 async def api_clean_duplicates(dry_run: bool = Query(False)):
     """
@@ -1717,7 +1664,6 @@ async def api_clean_duplicates(dry_run: bool = Query(False)):
     if "error" in result:
         raise HTTPException(status_code=500, detail=result["error"])
     return result
-
 
 @router.post("/songs/{song_id}/fetch-art")
 async def api_fetch_album_art(song_id: int):

@@ -21,19 +21,21 @@ All tests are aligned with the actual API of scripts/validate_chart.py:
 - Issue(severity, code, message, line=None)  — fields: .severity, .code, .message, .line
 - ValidationResult(chart_path: str)          — fields: .chart_path, .issues, .fixes_applied, etc.
 - result.add(severity, code, message, line=None)
-- parse_chart_sections(lines: List[str]) -> Dict[str, Tuple[int, int, List[str]]]
-- parse_song_metadata(content_lines: List[str]) -> Dict[str, str]
-- validate_file_basics(chart_path: Path, song_dir: Path, result) -> Optional[List[str]]
-- validate_sections(lines: List[str], result) -> Dict[str, Tuple[...]]
-- validate_song_section(sections, song_dir: Path, result) -> Dict[str, str]
+- parse_chart_sections(lines: list[str]) -> dict[str, tuple[int, int, list[str]]]
+- parse_song_metadata(content_lines: list[str]) -> dict[str, str]
+- validate_file_basics(chart_path: Path, song_dir: Path, result) -> list[str] | None
+- validate_sections(lines: list[str], result) -> dict[str, tuple[...]]
+- validate_song_section(sections, song_dir: Path, result) -> dict[str, str]
 - validate_sync_track(sections, result) -> None
 - validate_note_sections(sections, result) -> None
 - validate_events(sections, result) -> None
 - validate_audio_files(song_dir: Path, metadata: Dict, result) -> None
 - validate_song_ini(song_dir: Path, result) -> None
-- apply_fixes(chart_path, song_dir, lines, sections, metadata, result) -> List[str]
+- apply_fixes(chart_path, song_dir, lines, sections, metadata, result) -> list[str]
 - validate_chart(chart_path: Path, song_dir=None, fix=False, verbose=False) -> ValidationResult
 """
+
+from __future__ import annotations
 
 import json
 import os
@@ -41,7 +43,7 @@ import re
 import sys
 import textwrap
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 
 import pytest
 
@@ -76,12 +78,10 @@ from tests.conftest import (
 # Helpers
 # ---------------------------------------------------------------------------
 
-
 def _write_chart(path: Path, content: str, encoding: str = "utf-8-sig") -> Path:
     """Write chart content to a file and return the path."""
     path.write_text(content, encoding=encoding)
     return path
-
 
 def _write_song_folder(
     folder: Path,
@@ -107,16 +107,13 @@ def _write_song_folder(
 
     return folder
 
-
-def _lines(text: str) -> List[str]:
+def _lines(text: str) -> list[str]:
     """Split text into lines suitable for parse_chart_sections(), stripping any BOM."""
     return text.lstrip("\ufeff").splitlines()
-
 
 # ---------------------------------------------------------------------------
 # Test: Issue and ValidationResult data classes
 # ---------------------------------------------------------------------------
-
 
 class TestIssueClass:
     """Test the Issue data class behavior."""
@@ -170,7 +167,6 @@ class TestIssueClass:
         assert Issue.CRITICAL == "critical"
         assert Issue.WARNING == "warning"
         assert Issue.INFO == "info"
-
 
 class TestValidationResultClass:
     """Test the ValidationResult data class behavior."""
@@ -269,11 +265,9 @@ class TestValidationResultClass:
         result.fixes_applied = ["Added MusicStream"]
         assert len(result.fixes_applied) == 1
 
-
 # ---------------------------------------------------------------------------
 # Test: parse_chart_sections
 # ---------------------------------------------------------------------------
-
 
 class TestParseChartSections:
     """Test the chart section parser."""
@@ -337,11 +331,9 @@ class TestParseChartSections:
             assert start >= 0, f"Section {name} has negative start line"
             assert end >= start, f"Section {name} end {end} < start {start}"
 
-
 # ---------------------------------------------------------------------------
 # Test: parse_song_metadata
 # ---------------------------------------------------------------------------
-
 
 class TestParseSongMetadata:
     """Test parsing of [Song] section metadata."""
@@ -372,11 +364,9 @@ class TestParseSongMetadata:
         assert meta["Resolution"] == "192"
         assert meta["MusicStream"] == "song.ogg"
 
-
 # ---------------------------------------------------------------------------
 # Test: validate_file_basics
 # ---------------------------------------------------------------------------
-
 
 class TestValidateFileBasics:
     """Test basic file-level validation."""
@@ -434,11 +424,9 @@ class TestValidateFileBasics:
         no_bom_issues = [i for i in result.issues if i.code == "ENCODING_NO_BOM"]
         assert len(no_bom_issues) > 0
 
-
 # ---------------------------------------------------------------------------
 # Test: validate_sections
 # ---------------------------------------------------------------------------
-
 
 class TestValidateSections:
     """Test section-level validation."""
@@ -516,11 +504,9 @@ class TestValidateSections:
         assert "[Song]" in result.sections_found
         assert "[SyncTrack]" in result.sections_found
 
-
 # ---------------------------------------------------------------------------
 # Test: validate_song_section
 # ---------------------------------------------------------------------------
-
 
 class TestValidateSongSection:
     """Test [Song] section content validation."""
@@ -608,11 +594,9 @@ class TestValidateSongSection:
         metadata = validate_song_section(sections, folder, result)
         assert metadata == {}
 
-
 # ---------------------------------------------------------------------------
 # Test: validate_sync_track
 # ---------------------------------------------------------------------------
-
 
 class TestValidateSyncTrack:
     """Test [SyncTrack] validation."""
@@ -769,11 +753,9 @@ class TestValidateSyncTrack:
         # (validate_sections handles the missing section error)
         assert not result.has_critical
 
-
 # ---------------------------------------------------------------------------
 # Test: validate_note_sections
 # ---------------------------------------------------------------------------
-
 
 class TestValidateNoteSections:
     """Test note/difficulty section validation."""
@@ -878,11 +860,9 @@ class TestValidateNoteSections:
         stats = [i for i in result.issues if i.code == "SECTION_STATS"]
         assert len(stats) > 0
 
-
 # ---------------------------------------------------------------------------
 # Test: validate_events
 # ---------------------------------------------------------------------------
-
 
 class TestValidateEvents:
     """Test [Events] section validation."""
@@ -910,11 +890,9 @@ class TestValidateEvents:
         stats = [i for i in result.issues if i.code == "EVENT_STATS"]
         assert len(stats) > 0
 
-
 # ---------------------------------------------------------------------------
 # Test: validate_audio_files
 # ---------------------------------------------------------------------------
-
 
 class TestValidateAudioFiles:
     """Test audio file presence and format validation."""
@@ -1001,11 +979,9 @@ class TestValidateAudioFiles:
         no_audio = [i for i in result.issues if i.code == "NO_AUDIO"]
         assert len(no_audio) > 0 or result.has_critical
 
-
 # ---------------------------------------------------------------------------
 # Test: validate_song_ini
 # ---------------------------------------------------------------------------
-
 
 class TestValidateSongIni:
     """Test song.ini validation."""
@@ -1077,11 +1053,9 @@ class TestValidateSongIni:
         diff_issues = [i for i in result.issues if i.code == "INI_NO_DIFF"]
         assert len(diff_issues) > 0 or result.has_warnings
 
-
 # ---------------------------------------------------------------------------
 # Test: validate_chart (full pipeline)
 # ---------------------------------------------------------------------------
-
 
 class TestValidateChartFull:
     """Test the full validate_chart() entry point."""
@@ -1164,11 +1138,9 @@ class TestValidateChartFull:
         result = validate_chart(chart_path)
         assert result.chart_path == str(chart_path)
 
-
 # ---------------------------------------------------------------------------
 # Test: apply_fixes
 # ---------------------------------------------------------------------------
-
 
 class TestApplyFixes:
     """Test the auto-fix functionality."""
@@ -1259,11 +1231,9 @@ class TestApplyFixes:
         raw = chart_path.read_bytes()
         assert raw[:3] == b"\xef\xbb\xbf", "BOM should be added by fix"
 
-
 # ---------------------------------------------------------------------------
 # Test: FLAC-specific validation
 # ---------------------------------------------------------------------------
-
 
 class TestFlacValidation:
     """Test detection of FLAC compatibility issues."""
@@ -1287,11 +1257,9 @@ class TestFlacValidation:
         flac_issues = [i for i in result.issues if "flac" in i.message.lower()]
         assert len(flac_issues) > 0 or result.has_warnings
 
-
 # ---------------------------------------------------------------------------
 # Test: Encoding edge cases
 # ---------------------------------------------------------------------------
-
 
 class TestEncodingValidation:
     """Test encoding-related validation."""
@@ -1342,11 +1310,9 @@ class TestEncodingValidation:
         ]
         assert len(encoding_issues) > 0
 
-
 # ---------------------------------------------------------------------------
 # Test: Unstable BPM chart
 # ---------------------------------------------------------------------------
-
 
 class TestUnstableBpmChart:
     """Test that unstable BPM charts are properly flagged."""
@@ -1383,11 +1349,9 @@ class TestUnstableBpmChart:
         ]
         assert len(jitter_issues) == 0
 
-
 # ---------------------------------------------------------------------------
 # Test: Integration - Complete validation pipeline
 # ---------------------------------------------------------------------------
-
 
 class TestIntegrationPipeline:
     """End-to-end integration tests for the validation pipeline."""

@@ -39,7 +39,7 @@ import tempfile
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import librosa
 import numpy as np
@@ -61,7 +61,7 @@ class Instrument(str, Enum):
 
 
 # Clone Hero chart section names per instrument and difficulty
-INSTRUMENT_SECTION_NAMES: Dict[str, Dict[str, str]] = {
+INSTRUMENT_SECTION_NAMES: dict[str, dict[str, str]] = {
     "guitar": {
         "easy": "EasySingle",
         "medium": "MediumSingle",
@@ -100,14 +100,14 @@ INSTRUMENT_SECTION_NAMES: Dict[str, Dict[str, str]] = {
 # ---------------------------------------------------------------------------
 
 # (low_hz, high_hz) — used for band-pass filtering after HPSS
-FREQ_BANDS: Dict[str, Tuple[float, float]] = {
+FREQ_BANDS: dict[str, tuple[float, float]] = {
     "bass": (30.0, 400.0),
     "guitar": (80.0, 5000.0),
     "vocals": (100.0, 8000.0),
 }
 
 # Drum sub-bands for per-pad onset detection
-DRUM_BANDS: Dict[str, Tuple[float, float]] = {
+DRUM_BANDS: dict[str, tuple[float, float]] = {
     "kick": (30.0, 200.0),
     "snare": (150.0, 5000.0),
     "hihat": (3000.0, 16000.0),
@@ -116,7 +116,7 @@ DRUM_BANDS: Dict[str, Tuple[float, float]] = {
 
 # Map drum sub-bands to Clone Hero drum note lanes
 # .chart drum notes: 0=kick, 1=red(snare), 2=yellow(hihat), 3=blue(tom), 4=green(cymbal/floor tom)
-DRUM_LANE_MAP: Dict[str, int] = {
+DRUM_LANE_MAP: dict[str, int] = {
     "kick": 0,
     "snare": 1,
     "hihat": 2,
@@ -148,34 +148,34 @@ class StemAnalysis:
     """Results from analysing a single instrument stem."""
 
     instrument: str
-    onset_times: List[float] = field(default_factory=list)
-    onset_strengths: List[float] = field(default_factory=list)
+    onset_times: list[float] = field(default_factory=list)
+    onset_strengths: list[float] = field(default_factory=list)
 
     # Pitch information (for melodic instruments: guitar, bass, vocals)
     # Values 0.0–1.0 representing relative pitch height at each onset
-    pitch_contour: List[float] = field(default_factory=list)
+    pitch_contour: list[float] = field(default_factory=list)
 
     # Detected fundamental frequencies at each onset (Hz) via pYIN
     # NaN/0.0 indicates unvoiced/unpitched frames
-    fundamental_freqs: List[float] = field(default_factory=list)
+    fundamental_freqs: list[float] = field(default_factory=list)
 
     # Per-onset flag: True if this onset should be an open note (lane 7)
     # Determined by pitch being in the lowest region of the song's range
-    is_open_note: List[bool] = field(default_factory=list)
+    is_open_note: list[bool] = field(default_factory=list)
 
     # Spectral centroid at each onset (Hz) — secondary pitch indicator
-    spectral_centroids: List[float] = field(default_factory=list)
+    spectral_centroids: list[float] = field(default_factory=list)
 
     # For drums: per-onset lane assignments based on frequency band detection
-    drum_lanes: List[int] = field(default_factory=list)
+    drum_lanes: list[int] = field(default_factory=list)
 
     # Sub-band onset data (drums only): dict of band_name -> (times, strengths)
-    drum_band_onsets: Dict[str, Tuple[List[float], List[float]]] = field(
+    drum_band_onsets: dict[str, tuple[list[float], list[float]]] = field(
         default_factory=dict
     )
 
     # The separated audio signal and sample rate (for optional playback/debug)
-    stem_signal: Optional[np.ndarray] = field(default=None, repr=False)
+    stem_signal: np.ndarray | None = field(default=None, repr=False)
     sample_rate: int = 22050
 
     # Whether beat-aligned supplementation was applied
@@ -186,9 +186,9 @@ class StemAnalysis:
 class SeparationResult:
     """Container for all separated stems from a single audio file."""
 
-    harmonic: Optional[np.ndarray] = field(default=None, repr=False)
-    percussive: Optional[np.ndarray] = field(default=None, repr=False)
-    full_signal: Optional[np.ndarray] = field(default=None, repr=False)
+    harmonic: np.ndarray | None = field(default=None, repr=False)
+    percussive: np.ndarray | None = field(default=None, repr=False)
+    full_signal: np.ndarray | None = field(default=None, repr=False)
     sample_rate: int = 22050
     duration: float = 0.0
 
@@ -200,7 +200,7 @@ class SeparationResult:
 
 def separate_stems(
     file_path: str,
-    sr: Optional[int] = None,
+    sr: int | None = None,
 ) -> SeparationResult:
     """
     Perform Harmonic-Percussive Source Separation on an audio file.
@@ -312,9 +312,9 @@ def bandpass_filter(
 def _compute_rms_at_times(
     y: np.ndarray,
     sr: int,
-    times: List[float],
+    times: list[float],
     window_sec: float = 0.05,
-) -> List[float]:
+) -> list[float]:
     """
     Compute RMS energy of a signal at specific time points.
 
@@ -338,7 +338,7 @@ def _compute_rms_at_times(
         RMS energy values at each time point.
     """
     half_win = int(sr * window_sec / 2)
-    result: List[float] = []
+    result: list[float] = []
 
     for t in times:
         center = int(t * sr)
@@ -355,14 +355,14 @@ def _compute_rms_at_times(
 
 
 def _beat_aligned_supplement(
-    stem_onset_times: List[float],
-    stem_onset_strengths: List[float],
+    stem_onset_times: list[float],
+    stem_onset_strengths: list[float],
     stem_signal: np.ndarray,
     sr: int,
-    beat_times: List[float],
+    beat_times: list[float],
     energy_threshold: float = 0.15,
     merge_window: float = 0.05,
-) -> Tuple[List[float], List[float]]:
+) -> tuple[list[float], list[float]]:
     """
     Supplement stem-detected onsets with the full mix's beat grid.
 
@@ -417,8 +417,8 @@ def _beat_aligned_supplement(
         existing_times.add(round(t, 3))
 
     # Supplement: add beats where the stem has energy but no onset was detected
-    new_times: List[float] = list(stem_onset_times)
-    new_strengths: List[float] = list(stem_onset_strengths)
+    new_times: list[float] = list(stem_onset_times)
+    new_strengths: list[float] = list(stem_onset_strengths)
 
     added = 0
     for bt, energy in zip(beat_times, norm_energies):
@@ -457,7 +457,7 @@ def _beat_aligned_supplement(
 def analyze_guitar_stem(
     separation: SeparationResult,
     sensitivity: float = 0.5,
-    beat_times: Optional[List[float]] = None,
+    beat_times: list[float] | None = None,
 ) -> StemAnalysis:
     """
     Analyse the guitar component from a harmonic stem.
@@ -582,7 +582,7 @@ def analyze_guitar_stem(
 def analyze_bass_stem(
     separation: SeparationResult,
     sensitivity: float = 0.5,
-    beat_times: Optional[List[float]] = None,
+    beat_times: list[float] | None = None,
 ) -> StemAnalysis:
     """
     Analyse the bass guitar component from a harmonic stem.
@@ -702,7 +702,7 @@ def analyze_bass_stem(
 def analyze_drums_stem(
     separation: SeparationResult,
     sensitivity: float = 0.5,
-    beat_times: Optional[List[float]] = None,
+    beat_times: list[float] | None = None,
 ) -> StemAnalysis:
     """
     Analyse the drum component from the percussive stem.
@@ -735,8 +735,8 @@ def analyze_drums_stem(
         return StemAnalysis(instrument="drums", sample_rate=sr)
 
     # Detect onsets in each drum frequency band
-    all_onsets: List[Tuple[float, float, int, str]] = []  # (time, strength, lane, band)
-    band_onset_data: Dict[str, Tuple[List[float], List[float]]] = {}
+    all_onsets: list[tuple[float, float, int, str]] = []  # (time, strength, lane, band)
+    band_onset_data: dict[str, tuple[list[float], list[float]]] = {}
 
     for band_name, (low_hz, high_hz) in DRUM_BANDS.items():
         band_signal = bandpass_filter(percussive, sr, low_hz, high_hz)
@@ -785,9 +785,9 @@ def analyze_drums_stem(
     all_onsets.sort(key=lambda x: x[0])
 
     # Merge simultaneous hits (within ~20ms tolerance)
-    merged_times: List[float] = []
-    merged_strengths: List[float] = []
-    merged_lanes: List[int] = []
+    merged_times: list[float] = []
+    merged_strengths: list[float] = []
+    merged_lanes: list[int] = []
     merge_window = 0.020  # 20ms
 
     i = 0
@@ -860,7 +860,7 @@ def analyze_drums_stem(
 def analyze_vocals_stem(
     separation: SeparationResult,
     sensitivity: float = 0.5,
-    beat_times: Optional[List[float]] = None,
+    beat_times: list[float] | None = None,
 ) -> StemAnalysis:
     """
     Analyse the vocal component from the harmonic stem.
@@ -967,10 +967,10 @@ def analyze_instrument(
     file_path: str,
     instrument: str = "guitar",
     sensitivity: float = 0.5,
-    sr: Optional[int] = None,
-    beat_times: Optional[List[float]] = None,
-    use_demucs: Optional[bool] = None,
-) -> Tuple[StemAnalysis, SeparationResult]:
+    sr: int | None = None,
+    beat_times: list[float] | None = None,
+    use_demucs: bool | None = None,
+) -> tuple[StemAnalysis, SeparationResult]:
     """
     Full pipeline: load audio → separate → analyse the target instrument.
 
@@ -1042,7 +1042,7 @@ def analyze_instrument(
     # especially for distorted guitar, dense metal mixes, and polyphonic
     # instruments.  The isolated stem is then analysed with the same
     # onset/pitch pipeline used for HPSS stems.
-    demucs_stems: Optional[Dict[str, Path]] = None
+    demucs_stems: dict[str, Path] | None = None
     should_try_demucs = (use_demucs is True) or (
         use_demucs is None and demucs_available()
     )
@@ -1111,7 +1111,7 @@ def analyze_instrument(
 
 def _analyze_full_mix(
     file_path: str,
-    sr: Optional[int] = None,
+    sr: int | None = None,
 ) -> StemAnalysis:
     """
     Analyse the full mix without separation (legacy behaviour).
@@ -1173,7 +1173,7 @@ def _analyze_full_mix(
 
 # Semitone → Clone Hero lane mapping table
 # Index = semitones above lowest pitch; value = CH lane number
-SEMITONE_TO_LANE: List[int] = [
+SEMITONE_TO_LANE: list[int] = [
     LANE_OPEN,  # 0 semitones = open string
     LANE_GREEN,  # 1 semitone  = fret 1
     LANE_RED,  # 2 semitones = fret 2
@@ -1237,12 +1237,12 @@ def _semitones_to_lane(semitones: float) -> int:
 def _detect_pitch_pyin(
     y: np.ndarray,
     sr: int,
-    onset_times: List[float],
+    onset_times: list[float],
     low_hz: float,
     high_hz: float,
     open_threshold_semitones: float = 0.8,
     hop_length: int = 512,
-) -> Tuple[List[float], List[bool], List[float]]:
+) -> tuple[list[float], list[bool], list[float]]:
     """
     Detect fundamental frequencies at onset positions using pYIN and map
     each onset to a Clone Hero lane via semitone distance from the lowest
@@ -1304,7 +1304,7 @@ def _detect_pitch_pyin(
     fmax = min(high_hz, sr / 2.0 - 1.0)
 
     try:
-        f0, voiced_flag, voiced_prob = librosa.pyin(
+        f0, _voiced_flag, _voiced_prob = librosa.pyin(
             y,
             fmin=fmin,
             fmax=fmax,
@@ -1322,7 +1322,7 @@ def _detect_pitch_pyin(
         return [0.0] * n, [False] * n, [0.5] * n
 
     # Sample f0 at each onset time
-    onset_f0: List[float] = []
+    onset_f0: list[float] = []
     for t in onset_times:
         frame = int(t * sr / hop_length)
         frame = max(0, min(frame, len(f0) - 1))
@@ -1340,9 +1340,9 @@ def _detect_pitch_pyin(
     total_semitone_range = _hz_to_semitones(highest_pitch, lowest_pitch)
 
     # Classify each onset using semitone distance
-    fund_freqs: List[float] = []
-    is_open: List[bool] = []
-    pitch_contour: List[float] = []
+    fund_freqs: list[float] = []
+    is_open: list[bool] = []
+    pitch_contour: list[float] = []
 
     for freq in onset_f0:
         fund_freqs.append(freq)
@@ -1384,10 +1384,10 @@ def _detect_pitch_pyin(
 
 
 def _semitone_contour_to_lanes(
-    fund_freqs: List[float],
-    is_open_note: List[bool],
+    fund_freqs: list[float],
+    is_open_note: list[bool],
     smoothing: int = 2,
-) -> List[int]:
+) -> list[int]:
     """
     Convert fundamental frequencies to Clone Hero lane assignments
     using semitone-distance mapping.
@@ -1429,7 +1429,7 @@ def _semitone_contour_to_lanes(
     lowest = min(voiced)
 
     # Compute raw semitone distances
-    raw_semitones: List[float] = []
+    raw_semitones: list[float] = []
     for freq in fund_freqs:
         if freq <= 0:
             raw_semitones.append(0.0)  # will be open anyway
@@ -1451,7 +1451,7 @@ def _semitone_contour_to_lanes(
         smoothed = semitones_arr
 
     # Map to lanes
-    result: List[int] = []
+    result: list[int] = []
     for i in range(len(fund_freqs)):
         if is_open_note[i]:
             result.append(LANE_OPEN)
@@ -1472,7 +1472,7 @@ def _compute_spectral_centroids_at_onsets(
     onset_frames: np.ndarray,
     n_fft: int = 2048,
     hop_length: int = 512,
-) -> List[float]:
+) -> list[float]:
     """
     Compute the spectral centroid at each onset frame.
 
@@ -1516,10 +1516,10 @@ def _compute_spectral_centroids_at_onsets(
 
 
 def _centroids_to_pitch_contour(
-    centroids: List[float],
+    centroids: list[float],
     low_hz: float,
     high_hz: float,
-) -> List[float]:
+) -> list[float]:
     """
     Normalise spectral centroids to a 0.0–1.0 pitch contour.
 
@@ -1596,11 +1596,11 @@ def pitch_to_lane(
 
 
 def pitch_contour_to_lanes(
-    pitch_contour: List[float],
+    pitch_contour: list[float],
     max_lane: int = 4,
     smoothing: int = 3,
-    is_open_note: Optional[List[bool]] = None,
-) -> List[int]:
+    is_open_note: list[bool] | None = None,
+) -> list[int]:
     """
     Convert a pitch contour to lane assignments with optional smoothing.
 
@@ -1642,7 +1642,7 @@ def pitch_contour_to_lanes(
         )
         contour = np.convolve(padded, kernel, mode="valid")
 
-    result: List[int] = []
+    result: list[int] = []
     for i, p in enumerate(contour):
         # Check if this onset is an open note
         if is_open_note is not None and i < len(is_open_note) and is_open_note[i]:
@@ -1683,7 +1683,7 @@ def get_section_name(instrument: str, difficulty: str) -> str:
 def get_difficulty_profile_for_instrument(
     instrument: str,
     difficulty: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Return a difficulty profile tuned for a specific instrument.
 
@@ -1760,7 +1760,9 @@ def get_difficulty_profile_for_instrument(
         },
     }
 
-    profile = dict(base_profiles.get(difficulty.lower(), base_profiles["expert"]))
+    profile: dict[str, Any] = dict(
+        base_profiles.get(difficulty.lower(), base_profiles["expert"])
+    )
     profile["section_name"] = section_name
 
     # Instrument-specific overrides
@@ -1821,7 +1823,7 @@ def get_difficulty_profile_for_instrument(
 def demucs_available() -> bool:
     """Check if Demucs is installed and usable."""
     try:
-        import demucs  # noqa: F401
+        import demucs  # noqa: F401  # pyright: ignore[reportMissingImports]
 
         return True
     except ImportError:
@@ -1831,7 +1833,7 @@ def demucs_available() -> bool:
 def separate_with_demucs(
     file_path: str,
     model: str = "htdemucs",
-) -> Optional[Dict[str, Path]]:
+) -> dict[str, Path] | None:
     """
     Separate audio into **all four stems** using Demucs (if installed).
 
@@ -1896,7 +1898,7 @@ def separate_with_demucs(
 
         # Find the output stems
         stem_dir = output_dir / model / Path(file_path).stem
-        stems: Dict[str, Path] = {}
+        stems: dict[str, Path] = {}
         for stem_name in ("vocals", "drums", "bass", "other"):
             stem_file = stem_dir / f"{stem_name}.wav"
             if stem_file.exists():
@@ -1924,7 +1926,7 @@ def separate_with_demucs(
 
 
 # Demucs stem name → our instrument name
-DEMUCS_STEM_MAP: Dict[str, str] = {
+DEMUCS_STEM_MAP: dict[str, str] = {
     "other": "guitar",  # Demucs "other" contains guitar, keys, synths
     "bass": "bass",
     "drums": "drums",
@@ -1932,7 +1934,7 @@ DEMUCS_STEM_MAP: Dict[str, str] = {
 }
 
 # Reverse: our instrument name → which Demucs stem to load
-INSTRUMENT_TO_DEMUCS_STEM: Dict[str, str] = {
+INSTRUMENT_TO_DEMUCS_STEM: dict[str, str] = {
     "guitar": "other",
     "bass": "bass",
     "drums": "drums",
@@ -1942,7 +1944,7 @@ INSTRUMENT_TO_DEMUCS_STEM: Dict[str, str] = {
 
 def _load_demucs_stem_as_separation(
     stem_path: Path,
-    sr: Optional[int] = None,
+    sr: int | None = None,
 ) -> SeparationResult:
     """
     Load a Demucs-separated stem WAV and wrap it in a SeparationResult.

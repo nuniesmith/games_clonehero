@@ -29,7 +29,7 @@ import math
 import random
 from io import BytesIO
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from loguru import logger
 
@@ -59,7 +59,7 @@ MAX_FONT_ARTIST = 28
 # ---------------------------------------------------------------------------
 
 # Genre-to-hue base mapping (hue 0.0–1.0)
-GENRE_HUE_MAP: Dict[str, float] = {
+GENRE_HUE_MAP: dict[str, float] = {
     "rock": 0.02,  # red-orange
     "metal": 0.75,  # deep purple
     "punk": 0.95,  # hot pink / magenta
@@ -89,7 +89,6 @@ GENRE_HUE_MAP: Dict[str, float] = {
     "generated": 0.55,  # blue
 }
 
-
 def _genre_base_hue(genre: str) -> float:
     """Return the base hue (0.0–1.0) for a genre string."""
     genre_lower = (genre or "").lower().strip()
@@ -98,18 +97,15 @@ def _genre_base_hue(genre: str) -> float:
             return hue
     return GENRE_HUE_MAP["default"]
 
-
 def _name_hash(name: str) -> float:
     """Deterministic float 0.0–1.0 from a string (for variation)."""
     digest = hashlib.md5(name.encode("utf-8", errors="replace")).hexdigest()
     return int(digest[:8], 16) / 0xFFFFFFFF
 
-
-def _hsl_to_rgb(h: float, s: float, l: float) -> Tuple[int, int, int]:
+def _hsl_to_rgb(h: float, s: float, l: float) -> tuple[int, int, int]:
     """Convert HSL (all 0.0–1.0) to an (R, G, B) tuple (0–255)."""
     r, g, b = colorsys.hls_to_rgb(h % 1.0, l, s)
     return (int(r * 255), int(g * 255), int(b * 255))
-
 
 def generate_palette(
     tempo: float,
@@ -118,7 +114,7 @@ def generate_palette(
     song_name: str,
     artist: str,
     rng: random.Random,
-) -> Dict[str, Tuple[int, int, int]]:
+) -> dict[str, tuple[int, int, int]]:
     """
     Generate a cohesive colour palette for the album art.
 
@@ -161,17 +157,15 @@ def generate_palette(
         "glow": _hsl_to_rgb(hue, saturation, 0.50),
     }
 
-
 # ---------------------------------------------------------------------------
 # Drawing helpers
 # ---------------------------------------------------------------------------
 
-
 def _draw_gradient(
     draw: "ImageDraw.ImageDraw",
     size: int,
-    top_color: Tuple[int, int, int],
-    bottom_color: Tuple[int, int, int],
+    top_color: tuple[int, int, int],
+    bottom_color: tuple[int, int, int],
 ) -> None:
     """Draw a vertical linear gradient background."""
     for y in range(size):
@@ -181,12 +175,11 @@ def _draw_gradient(
         b = int(top_color[2] + (bottom_color[2] - top_color[2]) * t)
         draw.line([(0, y), (size - 1, y)], fill=(r, g, b))
 
-
 def _draw_radial_glow(
     img: "Image.Image",
-    center: Tuple[int, int],
+    center: tuple[int, int],
     radius: int,
-    color: Tuple[int, int, int],
+    color: tuple[int, int, int],
     intensity: int = 60,
 ) -> None:
     """Draw a soft radial glow at the given centre."""
@@ -211,14 +204,13 @@ def _draw_radial_glow(
 
     img.paste(Image.alpha_composite(img.convert("RGBA"), glow_layer).convert("RGB"))
 
-
 def _draw_geometric_shapes(
     draw: "ImageDraw.ImageDraw",
     img: "Image.Image",
     size: int,
-    palette: Dict[str, Tuple[int, int, int]],
-    onset_strengths: List[float],
-    beat_times: List[float],
+    palette: dict[str, tuple[int, int, int]],
+    onset_strengths: list[float],
+    beat_times: list[float],
     tempo: float,
     rng: random.Random,
 ) -> None:
@@ -319,12 +311,11 @@ def _draw_geometric_shapes(
         composite = Image.alpha_composite(img.convert("RGBA"), overlay)
         img.paste(composite.convert("RGB"))
 
-
 def _draw_waveform_bars(
     draw: "ImageDraw.ImageDraw",
     size: int,
-    palette: Dict[str, Tuple[int, int, int]],
-    onset_strengths: List[float],
+    palette: dict[str, tuple[int, int, int]],
+    onset_strengths: list[float],
     rng: random.Random,
 ) -> None:
     """Draw a stylised frequency-bar visualisation across the middle."""
@@ -377,11 +368,10 @@ def _draw_waveform_bars(
             fill=(r, g, b, 80),
         )
 
-
 def _draw_concentric_rings(
     draw: "ImageDraw.ImageDraw",
     size: int,
-    palette: Dict[str, Tuple[int, int, int]],
+    palette: dict[str, tuple[int, int, int]],
     tempo: float,
     rng: random.Random,
 ) -> None:
@@ -402,11 +392,10 @@ def _draw_concentric_rings(
             width=width,
         )
 
-
 def _draw_grid_dots(
     draw: "ImageDraw.ImageDraw",
     size: int,
-    palette: Dict[str, Tuple[int, int, int]],
+    palette: dict[str, tuple[int, int, int]],
     rng: random.Random,
 ) -> None:
     """Draw a subtle dot grid pattern across the background."""
@@ -424,11 +413,10 @@ def _draw_grid_dots(
                 fill=(color[0], color[1], color[2], alpha),
             )
 
-
 def _draw_diagonal_stripes(
     draw: "ImageDraw.ImageDraw",
     size: int,
-    color: Tuple[int, int, int],
+    color: tuple[int, int, int],
     rng: random.Random,
 ) -> None:
     """Draw subtle diagonal stripes across the image."""
@@ -444,11 +432,9 @@ def _draw_diagonal_stripes(
         y1 = size
         draw.line([(x0, y0), (x1, y1)], fill=fill, width=stripe_width)
 
-
 # ---------------------------------------------------------------------------
 # Text rendering
 # ---------------------------------------------------------------------------
-
 
 def _get_font(size: int) -> "ImageFont.FreeTypeFont | ImageFont.ImageFont":
     """
@@ -497,7 +483,6 @@ def _get_font(size: int) -> "ImageFont.FreeTypeFont | ImageFont.ImageFont":
     except Exception:
         return ImageFont.load_default()
 
-
 def _fit_text_size(
     text: str,
     max_width: int,
@@ -520,14 +505,13 @@ def _fit_text_size(
             return size
     return min_font_size
 
-
 def _draw_text_with_shadow(
     draw: "ImageDraw.ImageDraw",
-    position: Tuple[int, int],
+    position: tuple[int, int],
     text: str,
     font: "ImageFont.FreeTypeFont | ImageFont.ImageFont",
-    fill: Tuple[int, int, int],
-    shadow_color: Tuple[int, int, int] = (0, 0, 0),
+    fill: tuple[int, int, int],
+    shadow_color: tuple[int, int, int] = (0, 0, 0),
     shadow_offset: int = 2,
 ) -> None:
     """Draw text with a drop shadow for readability."""
@@ -549,13 +533,11 @@ def _draw_text_with_shadow(
     # Main text
     draw.text((x, y), text, font=font, fill=fill)
 
-
 def _truncate_text(text: str, max_chars: int = 30) -> str:
     """Truncate text with ellipsis if too long."""
     if len(text) <= max_chars:
         return text
     return text[: max_chars - 1].rstrip() + "…"
-
 
 def _render_title_and_artist(
     img: "Image.Image",
@@ -563,7 +545,7 @@ def _render_title_and_artist(
     size: int,
     title: str,
     artist: str,
-    palette: Dict[str, Tuple[int, int, int]],
+    palette: dict[str, tuple[int, int, int]],
 ) -> None:
     """Render the song title and artist name at the bottom of the image."""
     max_text_width = size - MARGIN * 2
@@ -633,19 +615,17 @@ def _render_title_and_artist(
         fill=palette["text_secondary"],
     )
 
-
 # ---------------------------------------------------------------------------
 # Art style selectors
 # ---------------------------------------------------------------------------
-
 
 def _style_geometric(
     img: "Image.Image",
     draw: "ImageDraw.ImageDraw",
     size: int,
-    palette: Dict[str, Tuple[int, int, int]],
-    onset_strengths: List[float],
-    beat_times: List[float],
+    palette: dict[str, tuple[int, int, int]],
+    onset_strengths: list[float],
+    beat_times: list[float],
     tempo: float,
     rng: random.Random,
 ) -> None:
@@ -658,14 +638,13 @@ def _style_geometric(
         img, (size // 2, size // 3), size // 3, palette["glow"], intensity=40
     )
 
-
 def _style_waveform(
     img: "Image.Image",
     draw: "ImageDraw.ImageDraw",
     size: int,
-    palette: Dict[str, Tuple[int, int, int]],
-    onset_strengths: List[float],
-    beat_times: List[float],
+    palette: dict[str, tuple[int, int, int]],
+    onset_strengths: list[float],
+    beat_times: list[float],
     tempo: float,
     rng: random.Random,
 ) -> None:
@@ -676,14 +655,13 @@ def _style_waveform(
         img, (size // 2, size // 2), size // 4, palette["accent1"], intensity=30
     )
 
-
 def _style_vinyl(
     img: "Image.Image",
     draw: "ImageDraw.ImageDraw",
     size: int,
-    palette: Dict[str, Tuple[int, int, int]],
-    onset_strengths: List[float],
-    beat_times: List[float],
+    palette: dict[str, tuple[int, int, int]],
+    onset_strengths: list[float],
+    beat_times: list[float],
     tempo: float,
     rng: random.Random,
 ) -> None:
@@ -703,14 +681,13 @@ def _style_vinyl(
             fill=(c[0], c[1], c[2], rng.randint(40, 100)),
         )
 
-
 def _style_nebula(
     img: "Image.Image",
     draw: "ImageDraw.ImageDraw",
     size: int,
-    palette: Dict[str, Tuple[int, int, int]],
-    onset_strengths: List[float],
-    beat_times: List[float],
+    palette: dict[str, tuple[int, int, int]],
+    onset_strengths: list[float],
+    beat_times: list[float],
     tempo: float,
     rng: random.Random,
 ) -> None:
@@ -737,14 +714,13 @@ def _style_nebula(
             fill=(brightness, brightness, brightness, rng.randint(100, 220)),
         )
 
-
 def _style_circuit(
     img: "Image.Image",
     draw: "ImageDraw.ImageDraw",
     size: int,
-    palette: Dict[str, Tuple[int, int, int]],
-    onset_strengths: List[float],
-    beat_times: List[float],
+    palette: dict[str, tuple[int, int, int]],
+    onset_strengths: list[float],
+    beat_times: list[float],
     tempo: float,
     rng: random.Random,
 ) -> None:
@@ -799,7 +775,6 @@ def _style_circuit(
     # Waveform overlay
     _draw_waveform_bars(ImageDraw.Draw(img), size, palette, onset_strengths, rng)
 
-
 # Art styles registry
 ART_STYLES = {
     "geometric": _style_geometric,
@@ -810,7 +785,7 @@ ART_STYLES = {
 }
 
 # Genre-to-preferred-style hints
-GENRE_STYLE_HINTS: Dict[str, List[str]] = {
+GENRE_STYLE_HINTS: dict[str, list[str]] = {
     "rock": ["geometric", "vinyl"],
     "metal": ["geometric", "nebula"],
     "punk": ["geometric", "waveform"],
@@ -825,7 +800,6 @@ GENRE_STYLE_HINTS: Dict[str, List[str]] = {
     "default": ["geometric", "waveform", "vinyl", "nebula", "circuit"],
 }
 
-
 def _pick_style(genre: str, rng: random.Random) -> str:
     """Pick an art style based on genre, with some randomness."""
     genre_lower = (genre or "").lower().strip()
@@ -834,11 +808,9 @@ def _pick_style(genre: str, rng: random.Random) -> str:
             return rng.choice(styles)
     return rng.choice(GENRE_STYLE_HINTS["default"])
 
-
 # ---------------------------------------------------------------------------
 # Main API
 # ---------------------------------------------------------------------------
-
 
 def generate_album_art(
     output_path: Path,
@@ -846,11 +818,11 @@ def generate_album_art(
     artist: str,
     tempo: float,
     duration: float,
-    onset_strengths: Optional[List[float]] = None,
-    beat_times: Optional[List[float]] = None,
+    onset_strengths: list[float] | None = None,
+    beat_times: list[float] | None = None,
     genre: str = "Generated",
     energy: float = 0.5,
-    seed: Optional[int] = None,
+    seed: int | None = None,
     size: int = ART_SIZE,
 ) -> bool:
     """
@@ -955,19 +927,18 @@ def generate_album_art(
         logger.error("❌ Failed to generate album art: {}", e)
         return False
 
-
 def generate_album_art_bytes(
     song_name: str,
     artist: str,
     tempo: float,
     duration: float,
-    onset_strengths: Optional[List[float]] = None,
-    beat_times: Optional[List[float]] = None,
+    onset_strengths: list[float] | None = None,
+    beat_times: list[float] | None = None,
     genre: str = "Generated",
     energy: float = 0.5,
-    seed: Optional[int] = None,
+    seed: int | None = None,
     size: int = ART_SIZE,
-) -> Optional[bytes]:
+) -> bytes | None:
     """
     Generate album art and return it as PNG bytes (for API responses).
 
@@ -1009,7 +980,6 @@ def generate_album_art_bytes(
     except Exception as e:
         logger.error("❌ Failed to generate album art bytes: {}", e)
         return None
-
 
 def is_available() -> bool:
     """Check whether album art generation is available (Pillow installed)."""

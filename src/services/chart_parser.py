@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 from loguru import logger
 
@@ -33,7 +33,7 @@ from loguru import logger
 DEFAULT_RESOLUTION = 192  # ticks per quarter note
 
 # Canonical section names that correspond to guitar difficulties
-DIFFICULTY_SECTION_MAP: Dict[str, str] = {
+DIFFICULTY_SECTION_MAP: dict[str, str] = {
     "ExpertSingle": "expert",
     "HardSingle": "hard",
     "MediumSingle": "medium",
@@ -41,12 +41,12 @@ DIFFICULTY_SECTION_MAP: Dict[str, str] = {
 }
 
 # Reverse map: difficulty label → chart section name
-DIFFICULTY_TO_SECTION: Dict[str, str] = {
+DIFFICULTY_TO_SECTION: dict[str, str] = {
     v: k for k, v in DIFFICULTY_SECTION_MAP.items()
 }
 
 # Lane names for display
-LANE_NAMES: Dict[int, str] = {
+LANE_NAMES: dict[int, str] = {
     0: "Green",
     1: "Red",
     2: "Yellow",
@@ -84,19 +84,21 @@ class TempoMap:
     chart's milli-BPM value divided by 1000).
     """
 
+    resolution: int
+
     def __init__(
-        self, markers: List[Tuple[int, float]], resolution: int = DEFAULT_RESOLUTION
+        self, markers: list[tuple[int, float]], resolution: int = DEFAULT_RESOLUTION
     ):
         self.resolution = resolution
         # Sort by tick ascending; ensure at least one marker at tick 0
         if not markers:
             markers = [(0, 120.0)]
-        self.markers: List[Tuple[int, float]] = sorted(markers, key=lambda m: m[0])
+        self.markers: list[tuple[int, float]] = sorted(markers, key=lambda m: m[0])
         if self.markers[0][0] != 0:
             self.markers.insert(0, (0, 120.0))
 
         # Pre-compute cumulative time at each marker for fast lookup
-        self._times: List[float] = [0.0]
+        self._times: list[float] = [0.0]
         for i in range(1, len(self.markers)):
             prev_tick, prev_bpm = self.markers[i - 1]
             curr_tick, _ = self.markers[i]
@@ -173,9 +175,9 @@ class TempoMap:
 # ---------------------------------------------------------------------------
 
 
-def _parse_song_section(lines: List[str]) -> Dict[str, Any]:
+def _parse_song_section(lines: list[str]) -> dict[str, Any]:
     """Parse the [Song] section into a metadata dict."""
-    meta: Dict[str, Any] = {}
+    meta: dict[str, Any] = {}
     for line in lines:
         m = _RE_KV_QUOTED.match(line)
         if m:
@@ -196,7 +198,7 @@ def _parse_song_section(lines: List[str]) -> Dict[str, Any]:
     return meta
 
 
-def _parse_sync_track(lines: List[str]) -> Dict[str, Any]:
+def _parse_sync_track(lines: list[str]) -> dict[str, Any]:
     """
     Parse the [SyncTrack] section.
 
@@ -204,8 +206,8 @@ def _parse_sync_track(lines: List[str]) -> Dict[str, Any]:
         tempo_markers : list of {tick, bpm, milli_bpm}
         time_signatures : list of {tick, numerator, denominator_power}
     """
-    tempo_markers: List[Dict[str, Any]] = []
-    time_signatures: List[Dict[str, Any]] = []
+    tempo_markers: list[dict[str, Any]] = []
+    time_signatures: list[dict[str, Any]] = []
 
     for line in lines:
         m = _RE_EVENT.match(line)
@@ -253,7 +255,7 @@ def _parse_sync_track(lines: List[str]) -> Dict[str, Any]:
     }
 
 
-def _parse_events_section(lines: List[str]) -> List[Dict[str, Any]]:
+def _parse_events_section(lines: list[str]) -> list[dict[str, Any]]:
     """
     Parse the [Events] section.
 
@@ -267,7 +269,7 @@ def _parse_events_section(lines: List[str]) -> List[Dict[str, Any]]:
         lyric        — individual lyric word
         other        — anything else
     """
-    events: List[Dict[str, Any]] = []
+    events: list[dict[str, Any]] = []
 
     for line in lines:
         m = _RE_EVENT.match(line)
@@ -325,7 +327,7 @@ def _parse_events_section(lines: List[str]) -> List[Dict[str, Any]]:
     return events
 
 
-def _parse_note_section(lines: List[str]) -> Dict[str, Any]:
+def _parse_note_section(lines: list[str]) -> dict[str, Any]:
     """
     Parse a note section (e.g. [ExpertSingle]).
 
@@ -338,7 +340,7 @@ def _parse_note_section(lines: List[str]) -> Dict[str, Any]:
         {tick, lane, duration, is_hopo, is_tap, time_s (filled later)}
     """
     # First pass: collect raw events grouped by tick
-    tick_events: Dict[int, List[Tuple[str, int, int]]] = {}
+    tick_events: dict[int, list[tuple[str, int, int]]] = {}
 
     for line in lines:
         m = _RE_EVENT.match(line)
@@ -361,8 +363,8 @@ def _parse_note_section(lines: List[str]) -> Dict[str, Any]:
                     pass
 
     # Second pass: assemble notes and star power
-    notes: List[Dict[str, Any]] = []
-    star_power: List[Dict[str, Any]] = []
+    notes: list[dict[str, Any]] = []
+    star_power: list[dict[str, Any]] = []
     total_events = 0
 
     for tick in sorted(tick_events.keys()):
@@ -372,8 +374,8 @@ def _parse_note_section(lines: List[str]) -> Dict[str, Any]:
         # Check for modifier flags at this tick
         has_hopo = False
         has_tap = False
-        note_events: List[Tuple[int, int]] = []
-        sp_events: List[Tuple[int, int]] = []
+        note_events: list[tuple[int, int]] = []
+        sp_events: list[tuple[int, int]] = []
 
         for evt_type, code, duration in events:
             if evt_type == "N":
@@ -421,16 +423,16 @@ def _parse_note_section(lines: List[str]) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _split_sections(text: str) -> Dict[str, List[str]]:
+def _split_sections(text: str) -> dict[str, list[str]]:
     """
     Split a chart file's text into named sections.
 
     Returns a dict mapping section name to the list of lines inside
     the braces (excluding the ``{`` and ``}`` delimiters).
     """
-    sections: Dict[str, List[str]] = {}
-    current_section: Optional[str] = None
-    current_lines: List[str] = []
+    sections: dict[str, list[str]] = {}
+    current_section: str | None = None
+    current_lines: list[str] = []
     inside = False
 
     for raw_line in text.splitlines():
@@ -469,7 +471,7 @@ def _split_sections(text: str) -> Dict[str, List[str]]:
     return sections
 
 
-def parse_chart_file(path: Union[str, Path]) -> Dict[str, Any]:
+def parse_chart_file(path: str | Path) -> dict[str, Any]:
     """
     Parse a Clone Hero ``.chart`` file into a structured dict.
 
@@ -540,7 +542,7 @@ def parse_chart_file(path: Union[str, Path]) -> Dict[str, Any]:
     has_lyrics = any(e["type"] in ("lyric", "phrase_start") for e in events)
 
     # ── Difficulty sections ──
-    difficulties: Dict[str, Any] = {}
+    difficulties: dict[str, Any] = {}
     max_tick = 0
 
     for section_name, diff_label in DIFFICULTY_SECTION_MAP.items():
@@ -603,7 +605,7 @@ def parse_chart_file(path: Union[str, Path]) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def chart_to_json(parsed: Dict[str, Any]) -> Dict[str, Any]:
+def chart_to_json(parsed: dict[str, Any]) -> dict[str, Any]:
     """
     Convert the output of :func:`parse_chart_file` into a fully
     JSON-serialisable dict.
@@ -614,7 +616,7 @@ def chart_to_json(parsed: Dict[str, Any]) -> Dict[str, Any]:
     result = dict(parsed)
 
     # Replace TempoMap with serialisable representation
-    tm: Optional[TempoMap] = result.pop("tempo_map", None)
+    tm: TempoMap | None = result.pop("tempo_map", None)
     if tm is not None:
         result["tempo_map"] = {
             "resolution": tm.resolution,
@@ -627,12 +629,12 @@ def chart_to_json(parsed: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def chart_to_viewer_json(
-    parsed: Dict[str, Any],
-    difficulty: Optional[str] = None,
-    start_time: Optional[float] = None,
-    end_time: Optional[float] = None,
+    parsed: dict[str, Any],
+    difficulty: str | None = None,
+    start_time: float | None = None,
+    end_time: float | None = None,
     max_notes: int = 5000,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Produce a compact JSON payload optimised for the chart viewer/editor.
 
@@ -682,7 +684,7 @@ def chart_to_viewer_json(
     t_end = end_time if end_time is not None else duration if duration > 0 else 999999.0
 
     # Filter events to time range
-    filtered_events = [e for e in events if t_start <= e.get("time_s", 0) <= t_end]
+    _filtered_events = [e for e in events if t_start <= e.get("time_s", 0) <= t_end]
 
     # Sections (always include all for the section list)
     sections = [e for e in events if e["type"] == "section"]
@@ -693,8 +695,8 @@ def chart_to_viewer_json(
 
     # Notes for selected difficulty
     diff_data = None
-    filtered_notes: List[Dict[str, Any]] = []
-    star_power: List[Dict[str, Any]] = []
+    filtered_notes: list[dict[str, Any]] = []
+    star_power: list[dict[str, Any]] = []
     note_count = 0
 
     if selected_diff and selected_diff in difficulties:
@@ -771,7 +773,7 @@ def chart_to_viewer_json(
 
 
 def add_note(
-    parsed: Dict[str, Any],
+    parsed: dict[str, Any],
     difficulty: str,
     tick: int,
     lane: int,
@@ -791,7 +793,7 @@ def add_note(
     if tick < 0:
         return False
 
-    tm: Optional[TempoMap] = parsed.get("tempo_map")
+    tm: TempoMap | None = parsed.get("tempo_map")
     time_s = tm.tick_to_time(tick) if tm else 0.0
 
     note = {
@@ -814,7 +816,7 @@ def add_note(
 
 
 def remove_note(
-    parsed: Dict[str, Any],
+    parsed: dict[str, Any],
     difficulty: str,
     tick: int,
     lane: int,
@@ -839,7 +841,7 @@ def remove_note(
 
 
 def move_note(
-    parsed: Dict[str, Any],
+    parsed: dict[str, Any],
     difficulty: str,
     old_tick: int,
     old_lane: int,
@@ -855,7 +857,7 @@ def move_note(
         return False
 
     notes = parsed["difficulties"][difficulty]["notes"]
-    tm: Optional[TempoMap] = parsed.get("tempo_map")
+    tm: TempoMap | None = parsed.get("tempo_map")
 
     for note in notes:
         if note["tick"] == old_tick and note["lane"] == old_lane:
@@ -875,7 +877,7 @@ def move_note(
 # ---------------------------------------------------------------------------
 
 
-def write_chart_file(parsed: Dict[str, Any], output_path: Union[str, Path]) -> bool:
+def write_chart_file(parsed: dict[str, Any], output_path: str | Path) -> bool:
     """
     Write a parsed chart structure back to a ``.chart`` file.
 
@@ -895,12 +897,12 @@ def write_chart_file(parsed: Dict[str, Any], output_path: Union[str, Path]) -> b
         True on success, False on failure.
     """
     try:
-        lines: List[str] = []
+        lines: list[str] = []
         song = parsed.get("song", {})
         sync = parsed.get("sync_track", {})
         events = parsed.get("events", [])
         difficulties = parsed.get("difficulties", {})
-        resolution = parsed.get("resolution", DEFAULT_RESOLUTION)
+        _resolution = parsed.get("resolution", DEFAULT_RESOLUTION)
 
         # ── [Song] ──
         lines.append("[Song]")
@@ -922,7 +924,7 @@ def write_chart_file(parsed: Dict[str, Any], output_path: Union[str, Path]) -> b
             "MediaType",
             "MusicStream",
         ]
-        written_keys: set = set()  # type: ignore[type-arg]
+        written_keys: set[str] = set()
         for key in field_order:
             if key in song:
                 val = song[key]
@@ -949,7 +951,7 @@ def write_chart_file(parsed: Dict[str, Any], output_path: Union[str, Path]) -> b
         tempo_list = sync.get("tempo_markers", [])
 
         # Build a combined event list sorted by tick
-        sync_events: List[Tuple[int, str]] = []
+        sync_events: list[tuple[int, str]] = []
         for ts in ts_list:
             tick = ts["tick"]
             num = ts["numerator"]
@@ -1005,7 +1007,7 @@ def write_chart_file(parsed: Dict[str, Any], output_path: Union[str, Path]) -> b
             lines.append("{")
 
             # Collect all events for this section grouped by tick
-            tick_lines: Dict[int, List[str]] = {}
+            tick_lines: dict[int, list[str]] = {}
 
             for note in diff.get("notes", []):
                 tick = note["tick"]
@@ -1060,7 +1062,7 @@ def write_chart_file(parsed: Dict[str, Any], output_path: Union[str, Path]) -> b
 # ---------------------------------------------------------------------------
 
 
-def get_chart_summary(parsed: Dict[str, Any]) -> Dict[str, Any]:
+def get_chart_summary(parsed: dict[str, Any]) -> dict[str, Any]:
     """
     Return a lightweight summary of a parsed chart (no note data).
 
@@ -1102,7 +1104,7 @@ def get_chart_summary(parsed: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def parse_chart_from_string(text: str) -> Dict[str, Any]:
+def parse_chart_from_string(text: str) -> dict[str, Any]:
     """
     Parse chart data from a string (rather than a file).
 
@@ -1136,7 +1138,7 @@ def parse_chart_from_string(text: str) -> Dict[str, Any]:
 
     has_lyrics = any(e["type"] in ("lyric", "phrase_start") for e in events)
 
-    difficulties: Dict[str, Any] = {}
+    difficulties: dict[str, Any] = {}
     max_tick = 0
 
     for section_name, diff_label in DIFFICULTY_SECTION_MAP.items():

@@ -10,8 +10,9 @@ Songs are stored on Nextcloud via WebDAV.  The local SQLite database is
 a metadata cache that is refreshed by the library sync process.
 """
 
+from __future__ import annotations
+
 import json
-from typing import Optional
 
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import HTMLResponse
@@ -43,7 +44,6 @@ router = APIRouter(tags=["Pages"])
 # Number of songs per page in listings
 PAGE_SIZE = 20
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -57,7 +57,6 @@ def _parse_metadata(raw) -> dict:
         except (json.JSONDecodeError, TypeError):
             return {}
     return {}
-
 
 def _paginate(page: int, total: int, page_size: int = PAGE_SIZE) -> dict:
     """Build a pagination context dict."""
@@ -75,7 +74,6 @@ def _paginate(page: int, total: int, page_size: int = PAGE_SIZE) -> dict:
         "previous_page": page - 1 if page > 1 else None,
         "next_page": page + 1 if page < total_pages else None,
     }
-
 
 # ---------------------------------------------------------------------------
 # Home
@@ -104,17 +102,16 @@ async def home(request: Request):
     }
     return request.app.state.templates.TemplateResponse("home.html", context)
 
-
 # ---------------------------------------------------------------------------
 # Songs Browser / Database Explorer
 # ---------------------------------------------------------------------------
 @router.get("/songs", response_class=HTMLResponse)
 async def songs_page(
     request: Request,
-    search: Optional[str] = Query(None),
+    search: str | None = Query(None),
     page: int = Query(1, ge=1),
-    view: Optional[str] = Query(None),
-    tag: Optional[str] = Query(None),
+    view: str | None = Query(None),
+    tag: str | None = Query(None),
 ):
     """Browse and search songs stored in the local metadata cache."""
     search_query = search.strip() if search else None
@@ -220,7 +217,6 @@ async def songs_page(
     }
     return request.app.state.templates.TemplateResponse("songs.html", context)
 
-
 # ---------------------------------------------------------------------------
 # Song Editor
 # ---------------------------------------------------------------------------
@@ -260,7 +256,6 @@ async def song_editor(request: Request, song_id: int):
     }
     return request.app.state.templates.TemplateResponse("editor.html", context)
 
-
 # ---------------------------------------------------------------------------
 # Upload
 # ---------------------------------------------------------------------------
@@ -276,7 +271,6 @@ async def upload_page(request: Request):
     }
     return request.app.state.templates.TemplateResponse("upload.html", context)
 
-
 # ---------------------------------------------------------------------------
 # Song Generator
 # ---------------------------------------------------------------------------
@@ -291,15 +285,14 @@ async def generator_page(request: Request):
     }
     return request.app.state.templates.TemplateResponse("generator.html", context)
 
-
 # ---------------------------------------------------------------------------
 # Chart Viewer / Editor
 # ---------------------------------------------------------------------------
 @router.get("/chart-viewer", response_class=HTMLResponse)
 async def chart_viewer_page(
     request: Request,
-    song_id: Optional[int] = Query(None),
-    difficulty: Optional[str] = Query(None),
+    song_id: int | None = Query(None),
+    difficulty: str | None = Query(None),
 ):
     """
     Interactive chart viewer / editor.
@@ -324,7 +317,6 @@ async def chart_viewer_page(
         "initial_difficulty": difficulty or "expert",
     }
     return request.app.state.templates.TemplateResponse("chart_viewer.html", context)
-
 
 # ---------------------------------------------------------------------------
 # Chart Validation
@@ -353,7 +345,6 @@ async def validation_page(request: Request):
     }
     return request.app.state.templates.TemplateResponse("validation.html", context)
 
-
 # ---------------------------------------------------------------------------
 # Library Organizer
 # ---------------------------------------------------------------------------
@@ -370,7 +361,6 @@ async def organize_page(request: Request):
         "nextcloud_songs_path": NEXTCLOUD_SONGS_PATH,
     }
     return request.app.state.templates.TemplateResponse("organize.html", context)
-
 
 # ---------------------------------------------------------------------------
 # Nextcloud WebDAV Browser

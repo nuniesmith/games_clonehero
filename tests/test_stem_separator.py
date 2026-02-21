@@ -14,6 +14,8 @@ Tests cover:
     - Demucs availability check
 """
 
+from __future__ import annotations
+
 import math
 from unittest.mock import patch
 
@@ -51,14 +53,12 @@ from src.services.stem_separator import (
 SAMPLE_RATE = 22050
 DURATION = 5.0  # seconds
 
-
 @pytest.fixture
 def sine_signal():
     """Generate a simple 440 Hz sine wave (guitar A4)."""
     t = np.linspace(0, DURATION, int(SAMPLE_RATE * DURATION), endpoint=False)
     signal = 0.5 * np.sin(2 * np.pi * 440 * t).astype(np.float32)
     return signal
-
 
 @pytest.fixture
 def multi_tone_signal():
@@ -78,7 +78,6 @@ def multi_tone_signal():
     signal = (bass + guitar + hihat + clicks).astype(np.float32)
     return signal
 
-
 @pytest.fixture
 def separation_result(multi_tone_signal):
     """Create a SeparationResult from the multi-tone signal using real HPSS."""
@@ -93,7 +92,6 @@ def separation_result(multi_tone_signal):
         duration=DURATION,
     )
 
-
 @pytest.fixture
 def mock_audio_file(tmp_path, multi_tone_signal):
     """Write a multi-tone signal to a WAV file for integration tests."""
@@ -103,11 +101,9 @@ def mock_audio_file(tmp_path, multi_tone_signal):
     sf.write(str(wav_path), multi_tone_signal, SAMPLE_RATE)
     return str(wav_path)
 
-
 # ---------------------------------------------------------------------------
 # Instrument enum
 # ---------------------------------------------------------------------------
-
 
 class TestInstrumentEnum:
     def test_values(self):
@@ -125,11 +121,9 @@ class TestInstrumentEnum:
         members = {m.value for m in Instrument}
         assert members == {"guitar", "bass", "drums", "vocals", "full_mix"}
 
-
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-
 
 class TestConstants:
     def test_freq_bands_have_expected_instruments(self):
@@ -180,11 +174,9 @@ class TestConstants:
         for diff, name in INSTRUMENT_SECTION_NAMES["bass"].items():
             assert "DoubleBass" in name
 
-
 # ---------------------------------------------------------------------------
 # Band-pass filter
 # ---------------------------------------------------------------------------
-
 
 class TestBandpassFilter:
     def test_output_same_length(self, sine_signal):
@@ -229,11 +221,9 @@ class TestBandpassFilter:
         filtered_rms = np.sqrt(np.mean(filtered**2))
         assert filtered_rms > original_rms * 0.9
 
-
 # ---------------------------------------------------------------------------
 # Spectral centroid computation
 # ---------------------------------------------------------------------------
-
 
 class TestSpectralCentroids:
     def test_empty_onset_frames(self, sine_signal):
@@ -270,11 +260,9 @@ class TestSpectralCentroids:
         result = _compute_spectral_centroids_at_onsets(sine_signal, SAMPLE_RATE, frames)
         assert len(result) == 2
 
-
 # ---------------------------------------------------------------------------
 # Pitch contour normalisation
 # ---------------------------------------------------------------------------
-
 
 class TestPitchContour:
     def test_empty_centroids(self):
@@ -311,11 +299,9 @@ class TestPitchContour:
         for i in range(1, len(result)):
             assert result[i] >= result[i - 1]
 
-
 # ---------------------------------------------------------------------------
 # Pitch-to-lane mapping
 # ---------------------------------------------------------------------------
-
 
 class TestPitchToLane:
     def test_zero_pitch_is_lane_zero(self):
@@ -337,7 +323,6 @@ class TestPitchToLane:
     def test_max_lane_two(self):
         assert pitch_to_lane(1.0, max_lane=2) == 2
         assert pitch_to_lane(0.0, max_lane=2) == 0
-
 
 class TestPitchContourToLanes:
     def test_empty_contour(self):
@@ -381,11 +366,9 @@ class TestPitchContourToLanes:
         for i in range(1, len(result)):
             assert result[i] >= result[i - 1]
 
-
 # ---------------------------------------------------------------------------
 # Section name helpers
 # ---------------------------------------------------------------------------
-
 
 class TestGetSectionName:
     def test_guitar_expert(self):
@@ -411,11 +394,9 @@ class TestGetSectionName:
         result = get_section_name("kazoo", "expert")
         assert result == "ExpertSingle"
 
-
 # ---------------------------------------------------------------------------
 # Difficulty profile per instrument
 # ---------------------------------------------------------------------------
-
 
 class TestDifficultyProfile:
     def test_guitar_has_required_keys(self):
@@ -480,11 +461,9 @@ class TestDifficultyProfile:
         assert "section_name" in profile
         assert profile["max_lane"] > 0
 
-
 # ---------------------------------------------------------------------------
 # StemAnalysis dataclass
 # ---------------------------------------------------------------------------
-
 
 class TestStemAnalysis:
     def test_default_values(self):
@@ -512,11 +491,9 @@ class TestStemAnalysis:
         assert len(sa.drum_lanes) == 3
         assert sa.sample_rate == 44100
 
-
 # ---------------------------------------------------------------------------
 # SeparationResult dataclass
 # ---------------------------------------------------------------------------
-
 
 class TestSeparationResult:
     def test_default_values(self):
@@ -537,11 +514,9 @@ class TestSeparationResult:
         assert sr.sample_rate == 44100
         assert sr.duration == 5.0
 
-
 # ---------------------------------------------------------------------------
 # Stem separation (HPSS)
 # ---------------------------------------------------------------------------
-
 
 class TestSeparateStems:
     @pytest.fixture(autouse=True)
@@ -560,8 +535,14 @@ class TestSeparateStems:
 
     def test_output_same_length_as_input(self, mock_audio_file):
         result = separate_stems(mock_audio_file)
-        assert len(result.harmonic) == len(result.full_signal)
-        assert len(result.percussive) == len(result.full_signal)
+        harmonic = result.harmonic
+        percussive = result.percussive
+        full_signal = result.full_signal
+        assert harmonic is not None
+        assert percussive is not None
+        assert full_signal is not None
+        assert len(harmonic) == len(full_signal)
+        assert len(percussive) == len(full_signal)
 
     def test_duration_positive(self, mock_audio_file):
         result = separate_stems(mock_audio_file)
@@ -571,11 +552,9 @@ class TestSeparateStems:
         result = separate_stems(mock_audio_file)
         assert result.sample_rate > 0
 
-
 # ---------------------------------------------------------------------------
 # Guitar stem analysis
 # ---------------------------------------------------------------------------
-
 
 class TestAnalyzeGuitarStem:
     def test_returns_stem_analysis(self, separation_result):
@@ -625,11 +604,9 @@ class TestAnalyzeGuitarStem:
         # Higher sensitivity should produce more or equal onsets
         assert len(high_sens.onset_times) >= len(low_sens.onset_times)
 
-
 # ---------------------------------------------------------------------------
 # Bass stem analysis
 # ---------------------------------------------------------------------------
-
 
 class TestAnalyzeBassStem:
     def test_returns_stem_analysis(self, separation_result):
@@ -651,11 +628,9 @@ class TestAnalyzeBassStem:
         result = analyze_bass_stem(empty_sep)
         assert result.onset_times == []
 
-
 # ---------------------------------------------------------------------------
 # Drums stem analysis
 # ---------------------------------------------------------------------------
-
 
 class TestAnalyzeDrumsStem:
     def test_returns_stem_analysis(self, separation_result):
@@ -698,11 +673,9 @@ class TestAnalyzeDrumsStem:
         for strength in result.onset_strengths:
             assert 0.0 <= strength <= 1.0
 
-
 # ---------------------------------------------------------------------------
 # Vocals stem analysis
 # ---------------------------------------------------------------------------
-
 
 class TestAnalyzeVocalsStem:
     def test_returns_stem_analysis(self, separation_result):
@@ -719,11 +692,9 @@ class TestAnalyzeVocalsStem:
         result = analyze_vocals_stem(empty_sep)
         assert result.onset_times == []
 
-
 # ---------------------------------------------------------------------------
 # High-level analyze_instrument dispatcher
 # ---------------------------------------------------------------------------
-
 
 class TestAnalyzeInstrument:
     @pytest.fixture(autouse=True)
@@ -769,11 +740,9 @@ class TestAnalyzeInstrument:
         )
         assert isinstance(stem, StemAnalysis)
 
-
 # ---------------------------------------------------------------------------
 # Proportional index mapping helpers (used in song_generator)
 # ---------------------------------------------------------------------------
-
 
 class TestProportionalMapping:
     """Test the _map_pitch_to_selected and _map_drum_lanes_to_selected helpers."""
@@ -807,7 +776,7 @@ class TestProportionalMapping:
         profile = {"max_lane": 4}
 
         result = _map_drum_lanes_to_selected(
-            drum_lanes, all_onsets, note_events, profile
+            drum_lanes, [float(x) for x in all_onsets], note_events, profile
         )
         assert len(result) == 4
         for lane in result:
@@ -835,11 +804,9 @@ class TestProportionalMapping:
         for lane in result:
             assert lane <= 2
 
-
 # ---------------------------------------------------------------------------
 # Demucs availability
 # ---------------------------------------------------------------------------
-
 
 class TestDemucsAvailable:
     def test_returns_bool(self):
@@ -851,11 +818,9 @@ class TestDemucsAvailable:
             # Force an ImportError
             assert demucs_available() is False
 
-
 # ---------------------------------------------------------------------------
 # Integration: instrument-aware chart generation
 # ---------------------------------------------------------------------------
-
 
 class TestInstrumentAwareChartGeneration:
     """Integration tests verifying that generate_notes_chart produces valid

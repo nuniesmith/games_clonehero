@@ -108,8 +108,23 @@ endblock %} {% block content %}
         {% if songs %} {% for song in songs %}
         <div class="song-card" id="song-{{ song.id }}">
             <div class="song-header">
-                <h3>🎵 {{ song.title }}</h3>
+                <h3>
+                    🎵 {{ song.title }}{% if song.remote_path and
+                    song.remote_path.startswith(generator_path) %}
+                    <span class="badge badge-staged">📋 Staged</span>{% endif %}
+                </h3>
                 <div class="song-actions">
+                    {% if song.remote_path and
+                    song.remote_path.startswith(generator_path) %}
+                    <button
+                        class="btn btn-promote btn-sm promote-song"
+                        data-song-id="{{ song.id }}"
+                        title="Move from Generator to Songs library"
+                        onclick="promoteSong({{ song.id }}, this)"
+                    >
+                        🚀 Promote
+                    </button>
+                    {% endif %}
                     <a
                         href="/songs/{{ song.id }}/edit"
                         class="btn btn-primary btn-sm"
@@ -197,6 +212,37 @@ endblock %} {% block content %}
 </div>
 {% endblock %} {% block extra_css %}
 <style>
+    .badge-staged {
+        display: inline-block;
+        font-size: 0.65em;
+        font-weight: 600;
+        padding: 2px 8px;
+        border-radius: 6px;
+        background: rgba(250, 204, 21, 0.15);
+        color: #ca8a04;
+        border: 1px solid rgba(250, 204, 21, 0.4);
+        vertical-align: middle;
+        margin-left: 8px;
+    }
+
+    .btn-promote {
+        background: linear-gradient(135deg, #8b5cf6, #6d28d9);
+        color: #fff;
+        border: 1px solid #7c3aed;
+    }
+    .btn-promote:hover:not(:disabled) {
+        background: linear-gradient(135deg, #7c3aed, #5b21b6);
+        border-color: #6d28d9;
+    }
+    .btn-promote:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+    }
+    .btn-promote.promoted {
+        background: #22c55e;
+        border-color: #22c55e;
+    }
+
     .library-toolbar {
         display: flex;
         gap: 12px;
@@ -811,6 +857,47 @@ endblock %} {% block content %}
                 }
             }
         };
+    }
+
+    async function promoteSong(songId, btn) {
+        const origText = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = "⏳ Moving…";
+        try {
+            const response = await fetch("/api/songs/" + songId + "/promote", {
+                method: "POST",
+            });
+            const result = await response.json();
+            if (!response.ok) {
+                const errMsg =
+                    result.detail || result.error || "Promote failed";
+                alert("❌ " + errMsg);
+                btn.disabled = false;
+                btn.textContent = origText;
+                return;
+            }
+            btn.textContent = "✅ Promoted!";
+            btn.className = "btn btn-sm btn-promote promoted";
+            // Update the badge
+            const card = btn.closest(".song-card");
+            if (card) {
+                const badge = card.querySelector(".badge-staged");
+                if (badge) {
+                    badge.textContent = "✅ In Library";
+                    badge.style.background = "rgba(74, 222, 128, 0.15)";
+                    badge.style.color = "#16a34a";
+                    badge.style.borderColor = "rgba(74, 222, 128, 0.4)";
+                }
+                const pathCode = card.querySelector(".remote-path");
+                if (pathCode && result.new_path) {
+                    pathCode.textContent = result.new_path;
+                }
+            }
+        } catch (err) {
+            alert("❌ Network error: " + err.message);
+            btn.disabled = false;
+            btn.textContent = origText;
+        }
     }
 
     function closeSyncPanel() {

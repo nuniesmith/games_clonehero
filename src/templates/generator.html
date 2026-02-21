@@ -879,6 +879,33 @@ endblock %} {% block content %}
         flex-wrap: wrap;
     }
 
+    .staging-notice {
+        margin-top: 14px;
+        padding: 12px 16px;
+        border: 1px solid #facc15;
+        border-radius: 8px;
+        background: rgba(250, 204, 21, 0.08);
+        font-size: 0.92em;
+        line-height: 1.5;
+    }
+    .staging-notice p {
+        margin: 0;
+    }
+
+    .btn-success {
+        background: #22c55e;
+        color: #fff;
+        border-color: #22c55e;
+    }
+    .btn-success:hover:not(:disabled) {
+        background: #16a34a;
+        border-color: #16a34a;
+    }
+    .btn-success:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+    }
+
     /* ── Responsive ── */
     @media (max-width: 768px) {
         .gen-card {
@@ -1506,7 +1533,19 @@ endblock %} {% block content %}
         if (result.id) {
             html += `<p><strong>🆔</strong> Song #${result.id} — <a href="/songs/${result.id}/edit" class="btn btn-primary btn-sm">✏️ Edit</a></p>`;
         }
+        if (result.remote_path) {
+            html += `<p><strong>📂</strong> <code>${result.remote_path}</code></p>`;
+        }
         html += "</div>";
+
+        if (result.status === "generated") {
+            html += '<div class="staging-notice">';
+            html +=
+                "<p>📋 This song is in the <strong>Generator</strong> staging folder. ";
+            html +=
+                "Review the chart, then promote it to your Songs library when ready.</p>";
+            html += "</div>";
+        }
 
         resultContent.innerHTML = html;
 
@@ -1518,9 +1557,54 @@ endblock %} {% block content %}
             actionsHtml.push(
                 `<a href="/chart-viewer?song_id=${result.id}" class="btn btn-secondary btn-sm">📊 View Chart</a>`,
             );
+            if (result.status === "generated") {
+                actionsHtml.push(
+                    `<button class="btn btn-success btn-sm" onclick="promoteSong(${result.id}, this)">🚀 Promote to Songs</button>`,
+                );
+            }
         }
         document.getElementById("resultActions").innerHTML =
-            actionsHtml.join("");
+            actionsHtml.join(" ");
+    }
+
+    async function promoteSong(songId, btn) {
+        const origText = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = "⏳ Moving…";
+        try {
+            const resp = await fetch(`/api/songs/${songId}/promote`, {
+                method: "POST",
+            });
+            const data = await resp.json();
+            if (!resp.ok) {
+                const errMsg = data.detail || data.error || "Promote failed";
+                alert("❌ " + errMsg);
+                btn.disabled = false;
+                btn.textContent = origText;
+                return;
+            }
+            btn.textContent = "✅ Promoted!";
+            btn.className = "btn btn-sm btn-outline";
+            // Update the staging notice
+            const notice = document.querySelector(".staging-notice");
+            if (notice) {
+                notice.innerHTML =
+                    "<p>✅ Song promoted to <strong>Songs</strong> library: <code>" +
+                    (data.new_path || "") +
+                    "</code></p>";
+                notice.style.borderColor = "#4ade80";
+                notice.style.background = "rgba(74, 222, 128, 0.08)";
+            }
+            // Update the path display
+            const pathCode = resultContent.querySelector("code");
+            if (pathCode && data.new_path) {
+                pathCode.textContent = data.new_path;
+            }
+        } catch (err) {
+            alert("❌ Network error: " + err.message);
+            btn.disabled = false;
+            btn.textContent = origText;
+        }
     }
 
     function showError(message) {

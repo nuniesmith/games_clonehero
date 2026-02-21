@@ -1252,6 +1252,35 @@ async def api_validate_batch(
 
 
 # ---------------------------------------------------------------------------
+# Song Promotion (Generator → Songs)
+# ---------------------------------------------------------------------------
+
+
+@router.post("/songs/{song_id}/promote")
+async def api_promote_song(song_id: int, dry_run: bool = Query(False)):
+    """
+    Promote a generated song from the Generator staging folder to the Songs library.
+
+    Generated songs land in ``/Generator`` for review.  Once you're happy
+    with the chart, call this endpoint to move it into the canonical
+    ``/Songs/Artist/Title`` structure.
+
+    Set ``dry_run=true`` to preview the move without changing anything.
+    """
+    from src.services.song_organizer import promote_song
+
+    if not is_configured():
+        raise HTTPException(
+            status_code=503, detail="Nextcloud WebDAV is not configured"
+        )
+
+    result = await promote_song(song_id, dry_run=dry_run)
+    if "error" in result:
+        raise HTTPException(status_code=500, detail=result["error"])
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Song Library Organization
 # ---------------------------------------------------------------------------
 

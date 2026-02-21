@@ -1754,6 +1754,10 @@ async def process_and_upload_song(
     """
     High-level async pipeline: generate chart -> upload to Nextcloud -> register in DB.
 
+    Generated songs are uploaded to the **Generator** staging folder on
+    Nextcloud (``NEXTCLOUD_GENERATOR_PATH``) so they can be reviewed
+    before being promoted to the main Songs library.
+
     Wraps :func:`process_song_file` (sync, CPU-bound) and then handles the
     async Nextcloud upload and database registration.
 
@@ -1786,6 +1790,7 @@ async def process_and_upload_song(
     """
     import asyncio
 
+    from src.config import NEXTCLOUD_GENERATOR_PATH
     from src.database import upsert_song
     from src.webdav import is_configured, upload_song_folder
 
@@ -1822,9 +1827,10 @@ async def process_and_upload_song(
         return {"error": "No staging directory produced"}
 
     try:
-        # Upload to Nextcloud
+        # Upload to Nextcloud Generator staging folder
         remote_path = await upload_song_folder(
             local_dir=staging_dir,
+            remote_base=NEXTCLOUD_GENERATOR_PATH,
             artist=result.get("artist", "Unknown Artist"),
             title=result.get("song_name", "Unknown"),
             suffix=result.get("unique_id", uuid.uuid4().hex[:8]),
@@ -1839,6 +1845,7 @@ async def process_and_upload_song(
             "song_length": str(int(result.get("duration", 0) * 1000)),
             "genre": genre,
             "diff_guitar": "3",
+            "status": "generated",
         }
         if year:
             metadata["year"] = year
@@ -1853,7 +1860,11 @@ async def process_and_upload_song(
 
         result["id"] = song_id
         result["remote_path"] = remote_path
-        result["message"] = "Song generated and uploaded to Nextcloud"
+        result["status"] = "generated"
+        result["message"] = (
+            "Song generated and uploaded to Generator staging folder. "
+            "Use Promote to move it to the Songs library once reviewed."
+        )
 
         return result
 

@@ -15,9 +15,22 @@
         <h1></h1>✏️ Edit Song</h1>
         <div class="editor-actions-top">
             <a href="/songs" class="btn btn-secondary">← Back to Library</a>
+            {% if is_staged %}
+            <button type="button" class="btn btn-promote" id="promoteBtn" onclick="promoteSong()">🚀 Promote to Songs</button>
+            {% endif %}
             <button type="button" class="btn btn-success" id="saveBtn" onclick="saveSong()">💾 Save Changes</button>
         </div>
     </div>
+
+    {% if is_staged %}
+    <div class="staging-banner">
+        <span class="staging-icon">📋</span>
+        <div class="staging-text">
+            <strong>Staging — Generator Folder</strong>
+            <p>This song is in the <code>{{ generator_path }}</code> staging folder. Review the chart and metadata, then click <strong>🚀 Promote to Songs</strong> to move it to your main library.</p>
+        </div>
+    </div>
+    {% endif %}
 
     <div id="saveStatus" class="status-message" style="display:none;"></div>
 
@@ -213,6 +226,9 @@
     <div class="editor-actions-bottom">
         <a href="/songs" class="btn btn-secondary">← Cancel</a>
         <div class="editor-actions-right">
+            {% if is_staged %}
+            <button type="button" class="btn btn-promote" onclick="promoteSong()">🚀 Promote to Songs</button>
+            {% endif %}
             <button type="button" class="btn btn-primary" onclick="saveSong()">💾 Save Changes</button>
         </div>
     </div>
@@ -386,6 +402,58 @@
         gap: 10px;
     }
 
+    .staging-banner {
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+        padding: 14px 18px;
+        margin-bottom: 20px;
+        border: 1px solid #facc15;
+        border-radius: 10px;
+        background: rgba(250, 204, 21, 0.08);
+    }
+    .staging-icon {
+        font-size: 1.6em;
+        line-height: 1;
+        flex-shrink: 0;
+    }
+    .staging-text strong {
+        display: block;
+        margin-bottom: 4px;
+        font-size: 1.02em;
+        color: #ca8a04;
+    }
+    .staging-text p {
+        margin: 0;
+        font-size: 0.92em;
+        color: #6b7280;
+        line-height: 1.5;
+    }
+    .staging-text code {
+        background: rgba(0,0,0,0.06);
+        padding: 1px 5px;
+        border-radius: 4px;
+        font-size: 0.92em;
+    }
+
+    .btn-promote {
+        background: linear-gradient(135deg, #8b5cf6, #6d28d9);
+        color: #fff;
+        border: 1px solid #7c3aed;
+    }
+    .btn-promote:hover:not(:disabled) {
+        background: linear-gradient(135deg, #7c3aed, #5b21b6);
+        border-color: #6d28d9;
+    }
+    .btn-promote:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+    }
+    .btn-promote.promoted {
+        background: #22c55e;
+        border-color: #22c55e;
+    }
+
     .status-message {
         margin-bottom: 20px;
     }
@@ -477,7 +545,56 @@ function collectMetadata() {
     return metadata;
 }
 
-async function saveSong() {
+    async function promoteSong() {
+        const promoteBtn = document.getElementById("promoteBtn");
+        if (!promoteBtn) return;
+        const origText = promoteBtn.textContent;
+        promoteBtn.disabled = true;
+        promoteBtn.textContent = "⏳ Moving…";
+        try {
+            const response = await fetch(`/api/songs/${songId}/promote`, {
+                method: "POST",
+            });
+            const result = await response.json();
+            if (!response.ok) {
+                const errMsg = result.detail || result.error || "Promote failed";
+                alert("❌ " + errMsg);
+                promoteBtn.disabled = false;
+                promoteBtn.textContent = origText;
+                return;
+            }
+            promoteBtn.textContent = "✅ Promoted!";
+            promoteBtn.className = "btn btn-promote promoted";
+            // Update staging banner
+            const banner = document.querySelector(".staging-banner");
+            if (banner) {
+                banner.querySelector(".staging-text").innerHTML =
+                    "<strong>✅ Promoted to Songs Library</strong>" +
+                    "<p>Moved to <code>" + (result.new_path || "") + "</code></p>";
+                banner.style.borderColor = "#4ade80";
+                banner.style.background = "rgba(74, 222, 128, 0.08)";
+            }
+            // Update path display in file info section
+            const pathItems = document.querySelectorAll(".file-info-value code");
+            pathItems.forEach(function(el) {
+                if (result.new_path) el.textContent = result.new_path;
+            });
+            // Hide other promote buttons
+            document.querySelectorAll(".btn-promote").forEach(function(btn) {
+                if (btn !== promoteBtn) {
+                    btn.textContent = "✅ Promoted!";
+                    btn.className = "btn btn-promote promoted";
+                    btn.disabled = true;
+                }
+            });
+        } catch (err) {
+            alert("❌ Network error: " + err.message);
+            promoteBtn.disabled = false;
+            promoteBtn.textContent = origText;
+        }
+    }
+
+    async function saveSong() {
     if (!songId) return;
 
     const titleEl = document.getElementById('title');

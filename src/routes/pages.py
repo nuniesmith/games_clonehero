@@ -18,7 +18,12 @@ from fastapi.responses import HTMLResponse
 from loguru import logger
 
 from src.auth import get_current_user
-from src.config import APP_VERSION, CONTENT_FOLDERS, NEXTCLOUD_SONGS_PATH
+from src.config import (
+    APP_VERSION,
+    CONTENT_FOLDERS,
+    NEXTCLOUD_GENERATOR_PATH,
+    NEXTCLOUD_SONGS_PATH,
+)
 from src.database import count_songs, get_song_by_id, get_songs
 from src.webdav import check_connection, is_configured, list_directory
 
@@ -123,6 +128,7 @@ async def songs_page(
         "pagination": pag,
         "webdav_configured": is_configured(),
         "nextcloud_songs_path": NEXTCLOUD_SONGS_PATH,
+        "generator_path": NEXTCLOUD_GENERATOR_PATH,
     }
     return request.app.state.templates.TemplateResponse("songs.html", context)
 
@@ -146,12 +152,18 @@ async def song_editor(request: Request, song_id: int):
 
     song["metadata"] = _parse_metadata(song.get("metadata"))
 
+    # Detect if the song is in the Generator staging folder
+    remote_path = song.get("remote_path", "")
+    is_staged = remote_path.startswith(NEXTCLOUD_GENERATOR_PATH.rstrip("/"))
+
     context = {
         "request": request,
         "page_title": f"Edit: {song.get('title', 'Song')}",
         "current_user": get_current_user(request),
         "song": song,
         "webdav_configured": is_configured(),
+        "is_staged": is_staged,
+        "generator_path": NEXTCLOUD_GENERATOR_PATH,
     }
     return request.app.state.templates.TemplateResponse("editor.html", context)
 

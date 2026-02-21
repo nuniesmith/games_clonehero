@@ -507,6 +507,142 @@ def fetch_album_art_bytes(artist: str, song: str, album: str = "") -> Optional[b
 # ---------------------------------------------------------------------------
 
 
+async def promote_song(
+    song_id: int,
+    dry_run: bool = False,
+) -> Dict[str, Any]:
+    """
+    Move a generated song from the Generator staging folder to the Songs library.
+
+    Songs land in ``NEXTCLOUD_GENERATOR_PATH`` after generation so they can
+    be reviewed.  This function moves them into the canonical
+    ``NEXTCLOUD_SONGS_PATH/Artist/Title`` structure once approved.
+
+    Parameters
+    ----------
+    song_id : int
+        Database ID of the song to promote.
+    dry_run : bool
+        If True, report what would change without modifying anything.
+
+    Returns
+    -------
+    dict
+        Result with keys: promoted (bool), old_path, new_path, message.
+    """
+    import json as _json
+
+    from src.config import NEXTCLOUD_GENERATOR_PATH, NEXTCLOUD_SONGS_PATH
+    from src.database import get_song_by_id, update_song
+    from src.webdav import is_configured, mkdir, move_remote
+
+    if not is_configured():
+        return {"error": "Nextcloud WebDAV is not configured"}
+
+    song = await get_song_by_id(song_id)
+    if not song:
+        return {"error": f"Song {song_id} not found"}
+
+    artist = song.get("artist", "").strip()
+    title = song.get("title", "").strip()
+    current_path = song.get("remote_path", "").rstrip("/")
+
+    if not current_path:
+        return {"error": "Song has no remote path"}
+
+    # Check that the song is actually in the Generator folder
+    gen_prefix = NEXTCLOUD_GENERATOR_PATH.rstrip("/")
+    songs_prefix = NEXTCLOUD_SONGS_PATH.rstrip("/")
+
+    if not current_path.startswith(gen_prefix):
+        # Already in Songs (or somewhere else) — not a staging song
+        if current_path.startswith(songs_prefix):
+            return {
+                "promoted": False,
+                "old_path": current_path,
+                "new_path": current_path,
+                "message": "Song is already in the Songs library",
+            }
+        return {
+            "promoted": False,
+            "old_path": current_path,
+            "message": (
+                f"Song is not in the Generator folder ({gen_prefix}). "
+                "Use Organize instead."
+            ),
+        }
+
+    # Compute target path in Songs
+    target_path = get_organized_path(artist, title, NEXTCLOUD_SONGS_PATH)
+
+    if dry_run:
+        return {
+            "promoted": False,
+            "dry_run": True,
+            "old_path": current_path,
+            "new_path": target_path,
+            "message": f"Would promote: {current_path} → {target_path}",
+        }
+
+    # Create the artist directory under Songs
+    safe_artist = sanitize_filename(artist) if artist else UNKNOWN_ARTIST
+    artist_dir = f"{songs_prefix}/{safe_artist}"
+    try:
+        await mkdir(artist_dir)
+    except Exception as e:
+        logger.warning("Could not create artist dir {}: {}", artist_dir, e)
+
+    # Move the folder from Generator to Songs
+    try:
+        ok = await move_remote(current_path, target_path)
+        if not ok:
+            return {
+                "error": f"Failed to move {current_path} → {target_path}",
+                "old_path": current_path,
+                "new_path": target_path,
+            }
+    except Exception as e:
+        return {
+            "error": f"Move failed: {e}",
+            "old_path": current_path,
+            "new_path": target_path,
+        }
+
+    # Update the database — new path + clear "generated" status
+    try:
+        # Read existing metadata so we can update the status field
+        raw_meta = song.get("metadata")
+        meta_dict: Dict[str, Any] = {}
+        if isinstance(raw_meta, dict):
+            meta_dict = dict(raw_meta)
+        elif isinstance(raw_meta, str):
+            try:
+                meta_dict = _json.loads(raw_meta)
+            except (ValueError, TypeError):
+                pass
+
+        meta_dict["status"] = "promoted"
+        await update_song(
+            song_id, remote_path=target_path, metadata=_json.dumps(meta_dict)
+        )
+    except Exception as e:
+        logger.error("Failed to update DB after promote: {}", e)
+
+    logger.info(
+        "🚀 Promoted song {}: {} → {}",
+        song_id,
+        current_path,
+        target_path,
+    )
+
+    return {
+        "promoted": True,
+        "old_path": current_path,
+        "new_path": target_path,
+        "message": f"Promoted to Songs library: {target_path}",
+    }
+
+
 async def organize_song_folder(
     song_id: int,
     dry_run: bool = False,

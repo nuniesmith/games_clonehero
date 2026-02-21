@@ -71,6 +71,9 @@ NEXTCLOUD_REMOTE_PATH = os.getenv(
 # Root folder on Nextcloud where songs are stored (relative to WEBDAV_BASE_URL)
 NEXTCLOUD_SONGS_PATH = os.getenv("NEXTCLOUD_SONGS_PATH", "/Songs")
 
+# Staging folder for generated songs — reviewed here before promoting to Songs
+NEXTCLOUD_GENERATOR_PATH = os.getenv("NEXTCLOUD_GENERATOR_PATH", "/Generator")
+
 # Path on Nextcloud where the SQLite database is persisted
 NEXTCLOUD_DB_PATH = os.getenv("NEXTCLOUD_DB_PATH", "/Database/clonehero.db")
 
@@ -103,7 +106,7 @@ NEXTCLOUD_FOLDERS = {
     "backgrounds": os.getenv("NEXTCLOUD_BACKGROUNDS_PATH", "/Backgrounds"),
     "colors": os.getenv("NEXTCLOUD_COLORS_PATH", "/Colors"),
     "highways": os.getenv("NEXTCLOUD_HIGHWAYS_PATH", "/Highways"),
-    "generator": os.getenv("NEXTCLOUD_GENERATOR_PATH", "/Generator"),
+    "generator": NEXTCLOUD_GENERATOR_PATH,
     "temp": os.getenv("NEXTCLOUD_TEMP_PATH", "/Temp"),
     "database": os.getenv("NEXTCLOUD_DATABASE_PATH", "/Database"),
 }

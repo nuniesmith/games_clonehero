@@ -235,8 +235,8 @@ def filename_test_cases() -> List[Dict[str, str]]:
         },
         {
             "filename": "artist_-_song_title.ogg",
-            "expected_song": "Artist Song Title",
-            "expected_artist": "",
+            "expected_song": "Song Title",
+            "expected_artist": "Artist",
         },
         {
             "filename": "Led Zeppelin – Stairway to Heaven.flac",

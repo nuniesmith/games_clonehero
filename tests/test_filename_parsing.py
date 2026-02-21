@@ -40,15 +40,12 @@ class TestParseFilenameArtistTitle:
         assert result["song_name"] == "Comfortably Numb"
 
     def test_underscore_separator(self):
-        """Underscored filenames like 'artist_-_song_title' get underscores
-        replaced with spaces before separator detection, so the ' - ' separator
-        should match after cleaning."""
+        """Underscored filenames like 'artist_-_song_title' are split on the
+        bare dash because both sides contain underscores (multi-word indicator).
+        clean_name() then converts underscores to spaces and title-cases."""
         result = parse_filename("artist_-_song_title.ogg")
-        # The parser replaces underscores with spaces in clean_name() but
-        # separator detection runs on the raw stem, so _-_ isn't recognized
-        # as a separator.  The whole thing becomes one title.
-        assert result["song_name"] == "Artist Song Title"
-        assert result["artist"] == ""
+        assert result["song_name"] == "Song Title"
+        assert result["artist"] == "Artist"
 
     def test_underscored_names(self):
         result = parse_filename("some_artist _ some_song.mp3")

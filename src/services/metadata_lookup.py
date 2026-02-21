@@ -209,7 +209,11 @@ def parse_filename(filename: str) -> Dict[str, str]:
         if len(parts) == 2:
             left = parts[0].strip()
             right = parts[1].strip()
-            if left and right and (" " in left or " " in right):
+            if (
+                left
+                and right
+                and (any(c in left for c in " _") or any(c in right for c in " _"))
+            ):
                 if not re.match(r"^\d{1,3}$", left):
                     artist = left
                     title = right

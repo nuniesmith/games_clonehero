@@ -29,6 +29,12 @@ from src.services.album_art_generator import generate_album_art
 from src.services.album_art_generator import is_available as album_art_available
 from src.services.content_manager import write_song_ini
 from src.services.lyrics_generator import generate_lyrics_for_chart
+from src.services.stem_separator import (
+    StemAnalysis,
+    analyze_instrument,
+    get_difficulty_profile_for_instrument,
+    pitch_contour_to_lanes,
+)
 
 # ---------------------------------------------------------------------------
 # Audio format helpers
@@ -383,10 +389,22 @@ def analyze_audio_detailed(file_path: str) -> Dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Chart generation — constants and helpers
 # ---------------------------------------------------------------------------
-NOTE_LANES = 5  # Green(0), Red(1), Yellow(2), Blue(3), Orange(4)
+# Clone Hero lane constants
+# Standard fretted notes: Green=0, Red=1, Yellow=2, Blue=3, Orange=4
+# Open note (purple bar): 7  — used heavily in metal (palm mutes, chugs)
+LANE_GREEN = 0
+LANE_RED = 1
+LANE_YELLOW = 2
+LANE_BLUE = 3
+LANE_ORANGE = 4
+LANE_OPEN = 7  # Purple bar — open string
+
+NOTE_LANES = 6  # Green(0), Red(1), Yellow(2), Blue(3), Orange(4), Open(7)
 RESOLUTION = 192  # Standard ticks per quarter note
 
 # Difficulty settings: controls note density, max lane, chord probability, etc.
+# allow_open: whether open notes (lane 7 / purple bar) are enabled for this
+#             difficulty.  Open notes are essential for metal charting.
 DIFFICULTY_PROFILES = {
     "easy": {
         "section_name": "EasySingle",
@@ -396,6 +414,7 @@ DIFFICULTY_PROFILES = {
         "hopo_chance": 0.0,  # no HOPOs
         "sustain_chance": 0.05,
         "min_note_gap_ticks": 192,  # at least 1 beat apart
+        "allow_open": False,  # no open notes on easy
     },
     "medium": {
         "section_name": "MediumSingle",
@@ -405,32 +424,140 @@ DIFFICULTY_PROFILES = {
         "hopo_chance": 0.05,
         "sustain_chance": 0.10,
         "min_note_gap_ticks": 96,  # half beat
+        "allow_open": False,  # no open notes on medium
     },
     "hard": {
         "section_name": "HardSingle",
         "note_skip": 2,
-        "max_lane": 4,  # all 5 lanes
+        "max_lane": 4,  # all 5 fretted lanes
         "chord_chance": 0.10,
         "hopo_chance": 0.15,
         "sustain_chance": 0.15,
         "min_note_gap_ticks": 48,  # quarter beat
+        "allow_open": True,  # open notes on hard+
     },
     "expert": {
         "section_name": "ExpertSingle",
         "note_skip": 1,  # use every onset
-        "max_lane": 4,  # all 5 lanes
+        "max_lane": 4,  # all 5 fretted lanes
         "chord_chance": 0.15,
         "hopo_chance": 0.25,
         "sustain_chance": 0.20,
         "min_note_gap_ticks": 24,  # eighth beat
+        "allow_open": True,  # open notes on hard+
     },
 }
 
 
-def _seconds_to_ticks(time_s: float, tempo: float, resolution: int = RESOLUTION) -> int:
-    """Convert a time in seconds to chart ticks based on tempo and resolution."""
-    beats = time_s * (tempo / 60.0)
-    return int(round(beats * resolution))
+def _seconds_to_ticks(
+    time_s: float,
+    tempo: float,
+    resolution: int = RESOLUTION,
+    tempo_map: Optional[List[Tuple[int, int]]] = None,
+) -> int:
+    """Convert a time in seconds to chart ticks.
+
+    When *tempo_map* is ``None`` (or has a single entry) this uses the
+    simple constant-tempo formula.
+
+    When a multi-entry tempo map is supplied the conversion walks the
+    piecewise-constant tempo segments so that ticks stay aligned with
+    what Clone Hero actually does at playback time.
+
+    Parameters
+    ----------
+    time_s : float
+        Wall-clock time in seconds.
+    tempo : float
+        Initial (or only) BPM – used as the base for the constant-tempo
+        path and as the reference BPM that was used to *build* the
+        tempo map tick positions.
+    resolution : int
+        Ticks per quarter note (default 192).
+    tempo_map : list of (tick, milli_bpm), optional
+        The sync-track tempo map produced by
+        ``_compute_stable_tempo_map``.  Each entry is
+        ``(tick_position, bpm * 1000)``.
+    """
+    if time_s <= 0:
+        return 0
+
+    # --- fast path: constant tempo (most common) ---
+    if not tempo_map or len(tempo_map) <= 1:
+        beats = time_s * (tempo / 60.0)
+        return int(round(beats * resolution))
+
+    # --- piecewise conversion ---
+    # Walk through tempo segments, accumulating elapsed seconds until we
+    # reach *time_s*, then return the corresponding tick.
+    remaining = time_s
+    prev_tick = 0
+    prev_bpm = tempo_map[0][1] / 1000.0  # milli-BPM → BPM
+
+    for idx in range(1, len(tempo_map)):
+        seg_tick, seg_milli_bpm = tempo_map[idx]
+        seg_bpm = seg_milli_bpm / 1000.0
+
+        # How many seconds does the segment [prev_tick .. seg_tick) span
+        # at prev_bpm?
+        seg_ticks = seg_tick - prev_tick
+        if prev_bpm > 0:
+            seg_seconds = seg_ticks / (prev_bpm / 60.0 * resolution)
+        else:
+            seg_seconds = 0.0
+
+        if remaining <= seg_seconds:
+            # Target time falls inside this segment
+            extra_ticks = remaining * (prev_bpm / 60.0) * resolution
+            return int(round(prev_tick + extra_ticks))
+
+        remaining -= seg_seconds
+        prev_tick = seg_tick
+        prev_bpm = seg_bpm
+
+    # Past the last tempo marker – continue at the final BPM
+    extra_ticks = remaining * (prev_bpm / 60.0) * resolution
+    return int(round(prev_tick + extra_ticks))
+
+
+def _snap_to_nearest_beat(
+    time_s: float,
+    beat_times: List[float],
+    max_snap_window: float = 0.15,
+) -> float:
+    """Snap a timestamp to the nearest detected beat if close enough.
+
+    Parameters
+    ----------
+    time_s : float
+        The raw timestamp to snap (seconds).
+    beat_times : list of float
+        Sorted beat positions in seconds.
+    max_snap_window : float
+        Maximum distance (seconds) to snap.  If no beat is within this
+        window the original time is returned unchanged.
+
+    Returns
+    -------
+    float
+        The snapped timestamp.
+    """
+    if not beat_times:
+        return time_s
+
+    # Binary-search-like scan for nearest beat
+    best = time_s
+    best_dist = max_snap_window + 1.0
+    for bt in beat_times:
+        d = abs(bt - time_s)
+        if d < best_dist:
+            best_dist = d
+            best = bt
+        # Once beats are past our window we can stop
+        if bt > time_s + max_snap_window:
+            break
+
+    return best if best_dist <= max_snap_window else time_s
 
 
 def _bpm_to_chart_value(bpm: float) -> int:
@@ -504,6 +631,9 @@ def _compute_stable_tempo_map(
                     spread = max(upcoming_bpms) - min(upcoming_bpms)
                     if spread / avg_upcoming < change_threshold:
                         # Genuine tempo change
+                        # NOTE: this intentionally uses the initial tempo for
+                        # tick placement because the tempo map itself is being
+                        # *built* here — there is no existing map to reference.
                         tick = _seconds_to_ticks(beat_times[i + 1], tempo, resolution)
                         new_bpm = round(avg_upcoming, 3)
                         markers.append((tick, _bpm_to_chart_value(new_bpm)))
@@ -518,43 +648,51 @@ def _compute_stable_tempo_map(
 # ---------------------------------------------------------------------------
 
 # Pre-defined note patterns that feel natural to play.
-# Each pattern is a list of lane indices (0-4).
+# Each pattern is a list of lane indices (0-4, 7=open).
+#
+# Metal-aware patterns derived from real tab analysis
+# (e.g. Paleface Swiss "Please End Me"):
+#   0M-0M-0M       → Open-Open-Open (chugs)
+#   1M-0M-0M       → Green-Open-Open (gallop)
+#   3M-2M-3M-4M    → Yellow-Red-Yellow-Blue (chromatic run)
+#   4---3---0M-0M   → Blue-Yellow-Open-Open (riff into chug)
+
 PATTERNS_EASY = [
-    [0, 0, 1, 1],
-    [0, 1, 0, 1],
-    [1, 1, 0, 0],
-    [0, 1, 2, 1],
-    [2, 1, 0, 1],
-    [0, 0, 0, 1],
+    [7, 7, 0, 0],  # open chugs → green
+    [0, 0, 7, 7],  # green → open chugs
+    [7, 7, 7, 0],  # mostly open
+    [0, 1, 0, 7],  # green-red-green-open
+    [7, 0, 7, 0],  # alternating open-green
+    [7, 7, 7, 7],  # straight open chugs
 ]
 
 PATTERNS_MEDIUM = [
-    [0, 1, 2, 1, 0],
-    [0, 2, 1, 3, 1],
-    [1, 0, 2, 0, 1],
-    [3, 2, 1, 0, 1],
-    [0, 1, 2, 3, 2],
-    [2, 2, 1, 0, 0],
+    [7, 7, 0, 7, 7],  # open-open-green-open-open
+    [0, 7, 7, 1, 7],  # green-open-open-red-open
+    [7, 0, 1, 0, 7],  # open-green-red-green-open
+    [2, 1, 7, 7, 0],  # yellow-red-open-open-green
+    [7, 7, 7, 0, 1],  # chugs into movement
+    [0, 7, 7, 2, 1],  # gallop pattern
 ]
 
 PATTERNS_HARD = [
-    [0, 1, 2, 3, 2, 1],
-    [0, 2, 4, 2, 0, 1],
-    [1, 3, 2, 4, 3, 1],
-    [4, 3, 2, 1, 0, 1],
-    [0, 1, 3, 2, 4, 3],
-    [2, 0, 3, 1, 4, 2],
+    [0, 7, 7, 1, 2, 1],  # green-open-open-red-yellow-red (gallop + riff)
+    [7, 7, 0, 2, 4, 2],  # open chugs → chromatic
+    [2, 1, 2, 3, 7, 7],  # chromatic run → chugs
+    [3, 2, 0, 7, 7, 0],  # descending → open
+    [7, 0, 1, 2, 3, 7],  # open → ascending → open
+    [4, 3, 2, 1, 0, 7],  # full descend to open
 ]
 
 PATTERNS_EXPERT = [
-    [0, 1, 2, 3, 4, 3, 2, 1],
-    [0, 2, 4, 3, 1, 0, 2, 4],
-    [4, 3, 2, 1, 0, 1, 2, 3],
-    [0, 1, 3, 4, 2, 0, 3, 1],
-    [1, 3, 0, 4, 2, 1, 3, 0],
-    [2, 4, 1, 3, 0, 2, 4, 1],
-    [0, 0, 2, 2, 4, 4, 3, 1],
-    [3, 1, 4, 2, 0, 3, 1, 4],
+    [0, 7, 7, 0, 7, 7, 0, 7],  # gallop: green-open-open repeating (1M-0M-0M)
+    [7, 7, 7, 7, 0, 1, 2, 3],  # open chugs → chromatic ascent
+    [2, 1, 2, 3, 7, 7, 7, 7],  # chromatic run → open chugs (3M-2M-3M-4M → 0M)
+    [7, 0, 7, 0, 2, 1, 2, 3],  # alternating open-green → chromatic
+    [3, 2, 1, 0, 7, 7, 7, 7],  # descending frets → open chugs
+    [0, 7, 7, 3, 2, 3, 4, 7],  # riff pattern (fret-open-open-riff)
+    [7, 7, 0, 7, 7, 0, 7, 0],  # breakdown pattern
+    [1, 7, 7, 4, 7, 7, 1, 7],  # power chord jumps with open between
 ]
 
 DIFFICULTY_PATTERNS = {
@@ -564,15 +702,17 @@ DIFFICULTY_PATTERNS = {
     "expert": PATTERNS_EXPERT,
 }
 
-# Chord shapes (pairs of simultaneous notes) — for hard/expert
+# Chord shapes (pairs/triples of simultaneous notes) — for hard/expert
+# Open note (7) CANNOT be combined with fretted notes in standard Clone Hero
 CHORD_SHAPES = [
-    (0, 1),  # GR
+    (0, 1),  # GR — power chord
     (1, 2),  # RY
     (2, 3),  # YB
     (3, 4),  # BO
-    (0, 2),  # GY
+    (0, 2),  # GY — wide interval
     (1, 3),  # RB
     (0, 1, 2),  # GRY (triple for expert)
+    (2, 3, 4),  # YBO (triple for expert)
 ]
 
 
@@ -583,6 +723,7 @@ def _select_note(
     section_index: int,
     rng: random.Random,
     profile: Dict[str, Any],
+    pitch_lane: Optional[int] = None,
 ) -> List[int]:
     """
     Select which lane(s) a note should be on.
@@ -592,21 +733,57 @@ def _select_note(
 
     Uses the onset strength, position in the song, and difficulty profile
     to decide note placement.
+
+    Supports all 6 Clone Hero lanes:
+        Green(0), Red(1), Yellow(2), Blue(3), Orange(4), Open(7)
+
+    Parameters
+    ----------
+    pitch_lane : int, optional
+        If provided (from instrument-specific pitch analysis), use this as
+        the base lane instead of the pattern-based selection.  This makes
+        notes follow the actual melodic contour of the isolated instrument.
+        Can be 7 for open notes.
     """
     max_lane = profile["max_lane"]
     chord_chance = profile["chord_chance"]
+    allow_open = profile.get("allow_open", True)
 
-    # Pick pattern based on section to create variation
-    patterns = DIFFICULTY_PATTERNS.get(difficulty, PATTERNS_EXPERT)
-    pattern = patterns[(section_index + index // 16) % len(patterns)]
-    base_lane = pattern[index % len(pattern)]
+    if pitch_lane is not None:
+        if pitch_lane == 7:
+            # Open note from pitch detection — always allow on hard/expert,
+            # map to Green on easy/medium if open notes aren't enabled
+            if allow_open:
+                base_lane = 7
+            else:
+                base_lane = 0  # downgrade open to Green on easy difficulties
+        else:
+            # Fretted note — clamp to difficulty's max lane
+            base_lane = min(pitch_lane, max_lane)
+    else:
+        # Pattern-based selection (includes open notes in patterns)
+        patterns = DIFFICULTY_PATTERNS.get(difficulty, PATTERNS_EXPERT)
+        pattern = patterns[(section_index + index // 16) % len(patterns)]
+        base_lane = pattern[index % len(pattern)]
 
-    # Clamp to max lane for this difficulty
-    base_lane = min(base_lane, max_lane)
+        # Handle open notes from patterns
+        if base_lane == 7:
+            if not allow_open:
+                base_lane = 0  # downgrade to Green
+        else:
+            # Clamp fretted notes to max lane for this difficulty
+            base_lane = min(base_lane, max_lane)
+
+    # Open notes cannot be combined with fretted notes in standard CH
+    if base_lane == 7:
+        return [7]
 
     # Possibly make a chord on strong onsets (hard/expert only)
     if chord_chance > 0 and onset_strength > 0.7 and rng.random() < chord_chance:
-        shapes = [s for s in CHORD_SHAPES if all(l <= max_lane for l in s)]
+        # Only use fretted chord shapes (no open note in chords)
+        shapes = [
+            s for s in CHORD_SHAPES if all(ln <= max_lane for ln in s) and 7 not in s
+        ]
         if shapes:
             chord = list(rng.choice(shapes))
             # Bias toward shapes that include our base_lane
@@ -631,6 +808,9 @@ def _should_hopo(
 
     HOPOs fire when the note is close to the previous one and on a different
     lane. In .chart format this is indicated by ``N 5 0`` alongside the note.
+
+    Open notes (lane 7) can be HOPOs — this mirrors real guitar hammer-ons
+    from open string (e.g. 0h-1h-0 patterns in metal tabs).
     """
     if profile["hopo_chance"] <= 0:
         return False
@@ -638,6 +818,7 @@ def _should_hopo(
         return False  # no HOPO on chords
     if lanes == prev_lanes:
         return False  # same lane, no HOPO
+    # Open notes CAN be HOPOs (open→fretted or fretted→open)
     gap = tick - prev_tick
     if gap > RESOLUTION // 2:
         return False  # too far apart
@@ -729,6 +910,8 @@ def generate_notes_chart(
     seed: Optional[int] = None,
     enable_lyrics: bool = True,
     charter: str = "nuniesmith",
+    instrument: str = "guitar",
+    stem_analysis: Optional[StemAnalysis] = None,
 ) -> bool:
     """
     Generate a Clone Hero compatible notes.chart file.
@@ -739,6 +922,16 @@ def generate_notes_chart(
         - [Events] with section markers and optional lyrics
         - Note sections for each requested difficulty
         - HOPO markers, chords, sustains, and star power
+
+    Parameters
+    ----------
+    instrument : str
+        Target instrument: ``guitar``, ``bass``, ``drums``, ``vocals``,
+        or ``full_mix``.  Determines chart section names and note mapping.
+    stem_analysis : StemAnalysis, optional
+        Pre-computed instrument-specific analysis from the stem separator.
+        When provided, onset data and pitch contour come from the isolated
+        stem rather than the full mix.
 
     Returns True on success, False on failure.
     """
@@ -788,6 +981,9 @@ def generate_notes_chart(
         lines.append("")
 
         # --- [Events] section ---
+        # Collect ALL event lines first, then sort by tick to ensure
+        # ascending order.  Clone Hero rejects charts with out-of-order
+        # events as "corrupt".
         lines.append("[Events]")
         lines.append("{")
 
@@ -796,10 +992,13 @@ def generate_notes_chart(
             if segments and len(segments) >= 2
             else _fallback_segments(duration)
         )
+
+        # Gather section markers as (tick, line) tuples
+        event_entries: List[Tuple[int, str]] = []
         for seg in used_segments:
-            tick = _seconds_to_ticks(seg["time"], tempo)
+            tick = _seconds_to_ticks(seg["time"], tempo, tempo_map=tempo_map)
             label = seg["label"]
-            lines.append(f'  {tick} = E "section {label}"')
+            event_entries.append((tick, f'  {tick} = E "section {label}"'))
 
         # --- Lyric events (optional) ---
         if enable_lyrics:
@@ -812,42 +1011,94 @@ def generate_notes_chart(
                     duration=duration,
                     segments=used_segments,
                     song_name=song_name,
+                    artist=artist,
                     genre=genre,
                     seed=seed or hash(song_name + artist),
+                    tempo_map=tempo_map,
                 )
                 if lyric_lines:
-                    lines.extend(lyric_lines)
+                    # Parse the tick from each lyric line for sorting
+                    for ll in lyric_lines:
+                        stripped = ll.strip()
+                        try:
+                            tick_str = stripped.split("=")[0].strip()
+                            tick_val = int(tick_str)
+                        except (ValueError, IndexError):
+                            tick_val = 0
+                        event_entries.append((tick_val, ll))
                     logger.info("🎤 Added {} lyric events to chart", len(lyric_lines))
             except Exception as e:
                 logger.warning("⚠️ Lyrics generation failed (continuing without): {}", e)
 
+        # Sort all events by tick (stable sort keeps relative order for same tick)
+        event_entries.sort(key=lambda e: e[0])
+        for _, event_line in event_entries:
+            lines.append(event_line)
+
         lines.append("}")
         lines.append("")
+
+        # --- Determine effective onset data ---
+        # If we have instrument-specific stem analysis, prefer its onset data
+        # over the full-mix onset data passed in as arguments.
+        effective_onsets = onset_times
+        effective_strengths = onset_strengths
+        effective_pitch_contour: Optional[List[float]] = None
+        effective_drum_lanes: Optional[List[int]] = None
+
+        if stem_analysis is not None and stem_analysis.onset_times:
+            effective_onsets = stem_analysis.onset_times
+            effective_strengths = stem_analysis.onset_strengths
+            if stem_analysis.pitch_contour:
+                effective_pitch_contour = stem_analysis.pitch_contour
+            if stem_analysis.drum_lanes:
+                effective_drum_lanes = stem_analysis.drum_lanes
+            logger.info(
+                "🎛️ Using {} stem data: {} onsets (full-mix had {})",
+                instrument,
+                len(effective_onsets),
+                len(onset_times),
+            )
 
         # --- Note sections for each difficulty ---
         for diff in difficulties:
             diff_lower = diff.lower()
-            if diff_lower not in DIFFICULTY_PROFILES:
+
+            # Use instrument-aware profile if we have stem data,
+            # otherwise fall back to the legacy guitar profiles
+            if instrument != "full_mix":
+                profile = get_difficulty_profile_for_instrument(instrument, diff_lower)
+            elif diff_lower in DIFFICULTY_PROFILES:
+                profile = DIFFICULTY_PROFILES[diff_lower]
+            else:
                 logger.warning("⚠️ Unknown difficulty '{}', skipping", diff)
                 continue
-            profile = DIFFICULTY_PROFILES[diff_lower]
+
             _generate_difficulty_section(
                 lines=lines,
                 profile=profile,
                 difficulty=diff_lower,
                 tempo=tempo,
-                onset_times=onset_times,
-                onset_strengths=onset_strengths,
+                onset_times=effective_onsets,
+                onset_strengths=effective_strengths,
                 beat_times=beat_times,
                 duration=duration,
                 segments=used_segments,
                 rng=rng,
+                instrument=instrument,
+                pitch_contour=effective_pitch_contour,
+                drum_lanes=effective_drum_lanes,
+                tempo_map=tempo_map,
+                stem_analysis=stem_analysis,
             )
 
         # Write the file
         output_path.parent.mkdir(parents=True, exist_ok=True)
         with output_path.open("w", encoding="utf-8-sig") as f:
-            f.write("\n".join(lines))
+            content = "\n".join(lines)
+            if not content.endswith("\n"):
+                content += "\n"
+            f.write(content)
 
         total_notes = len(onset_times)
         logger.info(
@@ -875,8 +1126,29 @@ def _generate_difficulty_section(
     duration: float,
     segments: List[Dict[str, Any]],
     rng: random.Random,
+    instrument: str = "guitar",
+    pitch_contour: Optional[List[float]] = None,
+    drum_lanes: Optional[List[int]] = None,
+    tempo_map: Optional[List[Tuple[int, int]]] = None,
+    stem_analysis: Optional["StemAnalysis"] = None,
 ) -> None:
-    """Generate a single difficulty section and append it to *lines*."""
+    """Generate a single difficulty section and append it to *lines*.
+
+    Parameters
+    ----------
+    instrument : str
+        Target instrument (affects note selection logic).
+    pitch_contour : list of float, optional
+        Per-onset normalised pitch values (0.0–1.0) from stem analysis.
+        Used for pitch-to-lane mapping on melodic instruments.
+    drum_lanes : list of int, optional
+        Per-onset drum lane assignments from drum stem analysis.
+    tempo_map : list of (tick, milli_bpm), optional
+        Piecewise tempo map for accurate seconds-to-ticks conversion.
+    stem_analysis : StemAnalysis, optional
+        Full stem analysis data including fundamental_freqs and
+        is_open_note for semitone-based lane mapping.
+    """
     section_name = profile["section_name"]
     note_skip = profile["note_skip"]
     min_gap = profile["min_note_gap_ticks"]
@@ -901,7 +1173,7 @@ def _generate_difficulty_section(
     for idx in selected_indices:
         t = onset_times[idx]
         strength = onset_strengths[idx] if idx < len(onset_strengths) else 0.5
-        tick = _seconds_to_ticks(t, tempo)
+        tick = _seconds_to_ticks(t, tempo, tempo_map=tempo_map)
         if tick - prev_tick >= min_gap:
             note_events.append((tick, strength))
             prev_tick = tick
@@ -935,18 +1207,103 @@ def _generate_difficulty_section(
     prev_tick = -999
     prev_lanes: List[int] = []
 
+    # Pre-compute pitch-derived lane assignments if available
+    pitch_lanes: Optional[List[int]] = None
+    if instrument == "drums" and drum_lanes is not None:
+        # For drums, map the pre-analysed drum lane assignments to our
+        # selected subset of onsets
+        pitch_lanes = _map_drum_lanes_to_selected(
+            drum_lanes, onset_times, note_events, profile
+        )
+    elif instrument in ("guitar", "bass", "vocals"):
+        # For melodic instruments, use semitone-based lane mapping
+        # when pYIN data is available (fund_freqs + is_open_note).
+        # This gives musically correct fret→lane mapping including
+        # open notes (lane 7) for metal charting.
+        if (
+            hasattr(stem_analysis, "fundamental_freqs")
+            and stem_analysis is not None
+            and stem_analysis.fundamental_freqs
+        ):
+            from src.services.stem_separator import _semitone_contour_to_lanes
+
+            # Map the full onset fund_freqs to our selected note subset
+            all_freqs = stem_analysis.fundamental_freqs
+            all_open = stem_analysis.is_open_note
+            n_orig = len(all_freqs)
+            n_sel = len(note_events)
+            sel_freqs: List[float] = []
+            sel_open: List[bool] = []
+            for si in range(n_sel):
+                src_idx = int(si * n_orig / n_sel) if n_sel > 0 else 0
+                src_idx = min(src_idx, n_orig - 1)
+                sel_freqs.append(all_freqs[src_idx])
+                sel_open.append(all_open[src_idx] if src_idx < len(all_open) else False)
+            pitch_lanes = _semitone_contour_to_lanes(sel_freqs, sel_open, smoothing=2)
+        elif pitch_contour is not None:
+            # Legacy fallback: use normalised pitch contour
+            selected_pitches = _map_pitch_to_selected(
+                pitch_contour, onset_times, note_events
+            )
+            if selected_pitches:
+                is_open = None
+                if hasattr(stem_analysis, "is_open_note") and stem_analysis is not None:
+                    # Map open note flags to selected subset
+                    all_open = stem_analysis.is_open_note
+                    n_orig = len(all_open)
+                    n_sel = len(note_events)
+                    is_open = []
+                    if n_orig > 0:
+                        for si in range(n_sel):
+                            src_idx = int(si * n_orig / n_sel) if n_sel > 0 else 0
+                            src_idx = min(src_idx, n_orig - 1)
+                            is_open.append(
+                                all_open[src_idx] if src_idx < len(all_open) else False
+                            )
+                    else:
+                        # No open-note data available — default all to non-open
+                        is_open = [False] * n_sel
+                pitch_lanes = pitch_contour_to_lanes(
+                    selected_pitches,
+                    max_lane=profile["max_lane"],
+                    smoothing=3,
+                    is_open_note=is_open,
+                )
+
     for i, (tick, strength) in enumerate(note_events):
         t_seconds = tick / (RESOLUTION * tempo / 60.0) if tempo > 0 else 0
         section_idx = _section_for_time(t_seconds)
 
-        lanes = _select_note(i, strength, difficulty, section_idx, rng, profile)
+        # Determine the pitch-derived lane for this note (if available)
+        p_lane: Optional[int] = None
+        if pitch_lanes is not None and i < len(pitch_lanes):
+            p_lane = pitch_lanes[i]
 
-        # HOPO marker
-        is_hopo = _should_hopo(tick, prev_tick, prev_lanes, lanes, profile, rng)
+        if instrument == "drums" and p_lane is not None:
+            # Drums: use the detected drum lane directly
+            lanes = [p_lane]
+        else:
+            lanes = _select_note(
+                i,
+                strength,
+                difficulty,
+                section_idx,
+                rng,
+                profile,
+                pitch_lane=p_lane,
+            )
 
-        # Sustain
-        next_tick = note_events[i + 1][0] if i + 1 < len(note_events) else None
-        sustain = _compute_sustain(tick, next_tick, strength, profile, rng)
+        # HOPO marker (not used for drums)
+        is_hopo = False
+        if instrument != "drums":
+            is_hopo = _should_hopo(tick, prev_tick, prev_lanes, lanes, profile, rng)
+
+        # Sustain (drums never sustain)
+        if instrument == "drums":
+            sustain = 0
+        else:
+            next_tick = note_events[i + 1][0] if i + 1 < len(note_events) else None
+            sustain = _compute_sustain(tick, next_tick, strength, profile, rng)
 
         # Write note(s)
         for lane in lanes:
@@ -974,6 +1331,64 @@ def _generate_difficulty_section(
 # ---------------------------------------------------------------------------
 # Song file processing pipeline
 # ---------------------------------------------------------------------------
+def _map_pitch_to_selected(
+    pitch_contour: List[float],
+    all_onset_times: List[float],
+    note_events: List[Tuple[int, float]],
+) -> List[float]:
+    """Map full pitch contour to the subset of onsets used in note_events.
+
+    The pitch_contour has one value per onset in the stem analysis, but
+    note_events may be a sparse subset (due to note_skip / min_gap
+    filtering).  We use proportional index mapping: the i-th selected
+    note maps to the proportionally corresponding position in the
+    original pitch contour.
+    """
+    if not pitch_contour or not note_events:
+        return []
+
+    n_original = len(pitch_contour)
+    n_selected = len(note_events)
+    result: List[float] = []
+
+    for i in range(n_selected):
+        # Proportional index into the original contour
+        src_idx = int(i * n_original / n_selected) if n_selected > 0 else 0
+        src_idx = min(src_idx, n_original - 1)
+        result.append(pitch_contour[src_idx])
+
+    return result
+
+
+def _map_drum_lanes_to_selected(
+    drum_lanes: List[int],
+    all_onset_times: List[float],
+    note_events: List[Tuple[int, float]],
+    profile: Dict[str, Any],
+) -> List[int]:
+    """Map drum lane assignments to the subset of onsets in note_events.
+
+    Uses proportional index mapping since note_events is a sparse subset
+    of the original drum onsets.
+    """
+    if not drum_lanes:
+        return [1] * len(note_events)  # default to snare
+
+    max_lane = profile.get("max_lane", 4)
+    result = []
+    n_original = len(drum_lanes)
+    n_selected = len(note_events)
+
+    for i in range(n_selected):
+        # Proportional mapping
+        src_idx = int(i * n_original / n_selected) if n_selected > 0 else 0
+        src_idx = min(src_idx, n_original - 1)
+        lane = min(drum_lanes[src_idx], max_lane)
+        result.append(lane)
+
+    return result
+
+
 def process_song_file(
     file_path: str,
     song_name: Optional[str] = None,
@@ -986,17 +1401,19 @@ def process_song_file(
     year: str = "",
     genre: str = "Generated",
     cover_art_path: Optional[str] = None,
+    instrument: str = "guitar",
 ) -> Dict[str, Any]:
     """
     Full pipeline: analyse audio -> generate chart -> stage locally.
 
     1. Analyses the audio file for tempo, beats, and onsets
-    2. Generates a notes.chart file in a temp staging directory
+    2. Optionally separates stems for instrument-specific charting
+    3. Generates a notes.chart file in a temp staging directory
        (all four difficulty levels are always generated)
-    3. Creates a song.ini file
-    4. Copies the source audio into the staging folder
-    5. Optionally generates procedural lyrics (timed to beats)
-    6. Optionally generates procedural album art (album.png)
+    4. Creates a song.ini file
+    5. Copies the source audio into the staging folder
+    6. Optionally generates procedural lyrics (timed to beats)
+    7. Optionally generates procedural album art (album.png)
        If ``cover_art_path`` is provided, that image is used instead
        of generating one procedurally.
 
@@ -1029,6 +1446,9 @@ def process_song_file(
     cover_art_path : str, optional
         Path to an existing cover art image.  If provided and valid,
         this image is copied as album.png instead of generating one.
+    instrument : str
+        Target instrument for note charting: ``guitar``, ``bass``,
+        ``drums``, ``vocals``, or ``full_mix`` (default ``guitar``).
 
     Returns a result dict with staging paths and metadata,
     or an error dict on failure.
@@ -1044,8 +1464,10 @@ def process_song_file(
         artist = "Unknown Artist"
 
     try:
-        # Step 1: Analyse audio
-        logger.info("🎵 Processing song file: {}", file_path)
+        # Step 1: Analyse audio (full mix for tempo/beats/segments)
+        logger.info(
+            "🎵 Processing song file: {} (instrument={})", file_path, instrument
+        )
         analysis = analyze_audio(file_path)
 
         tempo = analysis["tempo"]
@@ -1054,6 +1476,30 @@ def process_song_file(
         onset_strengths = analysis.get("onset_strengths", [])
         duration = analysis["duration"]
         segments = analysis.get("segments", [])
+
+        # Step 1b: Instrument-specific stem analysis
+        stem_analysis: Optional[StemAnalysis] = None
+        if instrument and instrument != "full_mix":
+            try:
+                logger.info("🎛️ Separating {} stem...", instrument)
+                stem_analysis, _ = analyze_instrument(
+                    file_path,
+                    instrument=instrument,
+                    sensitivity=0.5,
+                    beat_times=beat_times,
+                )
+                logger.info(
+                    "✅ {} stem analysis: {} onsets (full-mix had {})",
+                    instrument,
+                    len(stem_analysis.onset_times),
+                    len(onset_times),
+                )
+            except Exception as e:
+                logger.warning(
+                    "⚠️ Stem separation failed for '{}' (falling back to full mix): {}",
+                    instrument,
+                    e,
+                )
 
         # Step 2: Create a temporary staging directory
         unique_id = uuid.uuid4().hex[:8]
@@ -1117,6 +1563,8 @@ def process_song_file(
             segments=segments,
             difficulties=all_difficulties,
             enable_lyrics=enable_lyrics,
+            instrument=instrument,
+            stem_analysis=stem_analysis,
         )
 
         if not chart_ok:
@@ -1211,6 +1659,9 @@ def process_song_file(
         ini_path = staging_dir / "song.ini"
         write_song_ini(ini_path, song_data)
 
+        stem_note_count = (
+            len(stem_analysis.onset_times) if stem_analysis else len(onset_times)
+        )
         return {
             "message": "Song generated successfully",
             "song_name": song_name,
@@ -1218,13 +1669,14 @@ def process_song_file(
             "tempo": tempo,
             "duration": duration,
             "total_beats": len(beat_times),
-            "total_notes": len(onset_times),
+            "total_notes": stem_note_count,
             "difficulty": difficulty,
             "difficulties_generated": all_difficulties,
             "has_lyrics": enable_lyrics,
             "has_album_art": has_album_art,
             "staging_dir": str(staging_dir),
             "unique_id": unique_id,
+            "instrument": instrument,
         }
 
     except Exception as e:
@@ -1254,6 +1706,7 @@ async def process_and_upload_song(
     year: str = "",
     genre: str = "Generated",
     cover_art_path: Optional[str] = None,
+    instrument: str = "guitar",
 ) -> Dict[str, Any]:
     """
     High-level async pipeline: generate chart -> upload to Nextcloud -> register in DB.
@@ -1285,6 +1738,8 @@ async def process_and_upload_song(
         Genre string for chart metadata.
     cover_art_path : str, optional
         Path to an existing cover art image to use instead of generating one.
+    instrument : str
+        Target instrument for charting (default ``guitar``).
     """
     import asyncio
 
@@ -1311,6 +1766,7 @@ async def process_and_upload_song(
         year=year,
         genre=genre,
         cover_art_path=cover_art_path,
+        instrument=instrument,
     )
 
     if "error" in result:

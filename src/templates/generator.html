@@ -187,6 +187,16 @@ endblock %} {% block content %}
                         <span class="toggle-label">🎨 Album Art</span>
                     </label>
                     <div class="option-select">
+                        <label for="instrument">Instrument</label>
+                        <select id="instrument" name="instrument">
+                            <option value="guitar" selected>🎸 Guitar</option>
+                            <option value="bass">🎸 Bass</option>
+                            <option value="drums">🥁 Drums</option>
+                            <option value="vocals">🎤 Vocals</option>
+                            <option value="full_mix">🎵 Full Mix</option>
+                        </select>
+                    </div>
+                    <div class="option-select">
                         <label for="difficulty">Difficulty</label>
                         <select id="difficulty" name="difficulty">
                             <option value="easy">🟢 Easy</option>
@@ -200,8 +210,10 @@ endblock %} {% block content %}
                 <!-- Generate Button -->
                 <div class="gen-actions">
                     <button type="submit" class="btn-generate" id="generateBtn">
-                        <span class="btn-icon">🎸</span>
-                        <span class="btn-text">Generate Chart</span>
+                        <span class="btn-icon" id="generateBtnIcon">🎸</span>
+                        <span class="btn-text" id="generateBtnText"
+                            >Generate Guitar Chart</span
+                        >
                     </button>
                 </div>
             </div>
@@ -1295,6 +1307,31 @@ endblock %} {% block content %}
         .getElementById("artistName")
         .addEventListener("input", triggerMetadataLookup);
 
+    // Update Generate button text/icon when instrument changes
+    document
+        .getElementById("instrument")
+        .addEventListener("change", function () {
+            const iconMap = {
+                guitar: "🎸",
+                bass: "🎸",
+                drums: "🥁",
+                vocals: "🎤",
+                full_mix: "🎵",
+            };
+            const nameMap = {
+                guitar: "Guitar",
+                bass: "Bass",
+                drums: "Drums",
+                vocals: "Vocals",
+                full_mix: "Full Mix",
+            };
+            const val = this.value;
+            document.getElementById("generateBtnIcon").textContent =
+                iconMap[val] || "🎸";
+            document.getElementById("generateBtnText").textContent =
+                `Generate ${nameMap[val] || "Guitar"} Chart`;
+        });
+
     // ── Form Submission ──
     generatorForm.addEventListener("submit", async function (e) {
         e.preventDefault();
@@ -1307,6 +1344,7 @@ endblock %} {% block content %}
         const file = fileInput.files[0];
         const songName = document.getElementById("songName").value.trim();
         const artist = document.getElementById("artistName").value.trim();
+        const instrument = document.getElementById("instrument").value;
         const difficulty = document.getElementById("difficulty").value;
         const enableLyrics = document.getElementById("enableLyrics").checked;
         const enableAlbumArt =
@@ -1326,10 +1364,27 @@ endblock %} {% block content %}
         resultSection.style.display = "none";
 
         // Build form data
+        const instrumentIcons = {
+            guitar: "🎸",
+            bass: "🎸",
+            drums: "🥁",
+            vocals: "🎤",
+            full_mix: "🎵",
+        };
+        const instrumentNames = {
+            guitar: "Guitar",
+            bass: "Bass",
+            drums: "Drums",
+            vocals: "Vocals",
+            full_mix: "Full Mix",
+        };
+        progressTitle.textContent = `Separating ${instrumentNames[instrument] || "Guitar"} stem & generating chart...`;
+
         const formData = new FormData();
         formData.append("file", file);
         if (songName) formData.append("song_name", songName);
         if (artist) formData.append("artist", artist);
+        formData.append("instrument", instrument);
         formData.append("difficulty", difficulty);
         formData.append("enable_lyrics", enableLyrics ? "true" : "false");
         formData.append("enable_album_art", enableAlbumArt ? "true" : "false");
@@ -1337,12 +1392,19 @@ endblock %} {% block content %}
 
         try {
             // Update progress
+            const instIcon = instrumentIcons[instrument] || "🎸";
+            const instName = instrumentNames[instrument] || "Guitar";
+
             setTimeout(() => {
                 if (generateBtn.disabled) {
-                    progressTitle.textContent = "Generating chart…";
+                    progressTitle.textContent = `Generating ${instName} chart…`;
                     progressDetail.textContent =
-                        "Building note patterns, HOPO markers, and star power sections";
-                    ringIcon.textContent = "🎸";
+                        instrument === "drums"
+                            ? "Detecting kick, snare, hi-hat & tom patterns"
+                            : instrument === "bass"
+                              ? "Isolating bass frequencies and building note patterns"
+                              : "Building note patterns, HOPO markers, and star power sections";
+                    ringIcon.textContent = instIcon;
                 }
             }, 5000);
 
@@ -1366,7 +1428,7 @@ endblock %} {% block content %}
             progressSection.style.display = "none";
 
             if (response.ok && !result.error) {
-                showSuccess(result, songName, artist, difficulty);
+                showSuccess(result, songName, artist, difficulty, instrument);
             } else {
                 showError(
                     result.detail || result.error || "Chart generation failed",
@@ -1377,18 +1439,44 @@ endblock %} {% block content %}
             showError("Network error: " + error.message);
         } finally {
             generateBtn.disabled = false;
+            const curInst = document.getElementById("instrument").value;
+            const resetNameMap = {
+                guitar: "Guitar",
+                bass: "Bass",
+                drums: "Drums",
+                vocals: "Vocals",
+                full_mix: "Full Mix",
+            };
             generateBtn.querySelector(".btn-text").textContent =
-                "Generate Chart";
+                `Generate ${resetNameMap[curInst] || "Guitar"} Chart`;
         }
 
         resultSection.scrollIntoView({ behavior: "smooth", block: "nearest" });
     });
 
-    function showSuccess(result, songName, artist, difficulty) {
+    function showSuccess(result, songName, artist, difficulty, instrument) {
         resultSection.className = "result-card";
         resultSection.style.display = "block";
         resultIcon.textContent = "✅";
-        resultTitle.textContent = "Chart Generated!";
+
+        const instDisplayIcons = {
+            guitar: "🎸",
+            bass: "🎸",
+            drums: "🥁",
+            vocals: "🎤",
+            full_mix: "🎵",
+        };
+        const instDisplayNames = {
+            guitar: "Guitar",
+            bass: "Bass",
+            drums: "Drums",
+            vocals: "Vocals",
+            full_mix: "Full Mix",
+        };
+        const chartedInst = result.instrument || instrument || "guitar";
+        const instIcon = instDisplayIcons[chartedInst] || "🎸";
+        const instLabel = instDisplayNames[chartedInst] || "Guitar";
+        resultTitle.textContent = `${instIcon} ${instLabel} Chart Generated!`;
 
         const features = [];
         if (result.has_lyrics) features.push("🎤 Lyrics");
@@ -1396,6 +1484,7 @@ endblock %} {% block content %}
         if (result.lookup_source) features.push("🔍 Metadata");
 
         let html = '<div class="result-stats">';
+        html += `<div class="stat-box"><span class="stat-val">${instIcon}</span><span class="stat-lbl">${instLabel}</span></div>`;
         html += `<div class="stat-box"><span class="stat-val">${result.tempo ? Math.round(result.tempo) : "?"}</span><span class="stat-lbl">BPM</span></div>`;
         html += `<div class="stat-box"><span class="stat-val">${result.duration ? formatDuration(result.duration) : "?"}</span><span class="stat-lbl">Duration</span></div>`;
         html += `<div class="stat-box"><span class="stat-val">${result.total_notes || "?"}</span><span class="stat-lbl">Notes</span></div>`;

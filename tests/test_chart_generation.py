@@ -859,7 +859,9 @@ class TestHelperFunctions:
             lanes = _select_note(i, onset_strength, "expert", 0, rng, profile)
             assert isinstance(lanes, list)
             for lane in lanes:
-                assert 0 <= lane <= 4, f"Lane {lane} out of range for expert"
+                assert (0 <= lane <= 4) or lane == 7, (
+                    f"Lane {lane} out of range for expert (valid: 0-4, 7)"
+                )
 
     def test_select_note_easy_fewer_frets(self):
         """Easy difficulty should tend to use fewer fret numbers (0-2)."""

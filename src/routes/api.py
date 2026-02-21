@@ -437,6 +437,7 @@ async def api_generate_song(
     song_name: Optional[str] = Form(None),
     artist: Optional[str] = Form(None),
     difficulty: str = Form("expert"),
+    instrument: str = Form("guitar"),
     enable_lyrics: bool = Form(True),
     enable_album_art: bool = Form(True),
     auto_lookup: bool = Form(True),
@@ -480,7 +481,19 @@ async def api_generate_song(
             while chunk := await file.read(65536):
                 await f.write(chunk)
 
-        logger.info(f"🎵 Generate request: {filename} (difficulty={difficulty})")
+        # Validate instrument parameter
+        valid_instruments = {"guitar", "bass", "drums", "vocals", "full_mix"}
+        if instrument not in valid_instruments:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid instrument '{instrument}'. "
+                f"Must be one of: {', '.join(sorted(valid_instruments))}",
+            )
+
+        logger.info(
+            f"🎵 Generate request: {filename} "
+            f"(instrument={instrument}, difficulty={difficulty})"
+        )
 
         # --- Parse filename for artist/title when not provided ---
         parsed = parse_filename(filename)
@@ -540,6 +553,7 @@ async def api_generate_song(
             year=year,
             genre=genre,
             cover_art_path=cover_art_path,
+            instrument=instrument,
         )
 
         if "error" in result:

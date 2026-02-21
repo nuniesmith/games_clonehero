@@ -672,13 +672,17 @@ def validate_events(
     if "[Events]" not in sections:
         return
 
-    _, _, content = sections["[Events]"]
+    start_line, _, content = sections["[Events]"]
     section_count = 0
     lyric_count = 0
     phrase_start_count = 0
     phrase_end_count = 0
+    prev_tick = -1
+    out_of_order_count = 0
 
-    for line in content:
+    for i, line in enumerate(content):
+        line_num = start_line + i + 2  # +2 for section header and opening brace
+
         if '"section ' in line:
             section_count += 1
         elif '"lyric ' in line:
@@ -687,6 +691,35 @@ def validate_events(
             phrase_start_count += 1
         elif '"phrase_end"' in line:
             phrase_end_count += 1
+
+        # Check tick ordering — Clone Hero rejects charts with out-of-order
+        # events as "corrupt (or broken)".
+        parts = line.split()
+        if len(parts) >= 3:
+            try:
+                tick = int(parts[0])
+                if tick < prev_tick:
+                    out_of_order_count += 1
+                    if out_of_order_count <= 3:
+                        result.add(
+                            Issue.CRITICAL,
+                            "EVENT_OUT_OF_ORDER",
+                            f"Event tick {tick} is before previous tick {prev_tick} "
+                            f"— Clone Hero will reject the chart as corrupt",
+                            line_num,
+                        )
+                prev_tick = tick
+            except ValueError:
+                pass
+
+    if out_of_order_count > 3:
+        result.add(
+            Issue.CRITICAL,
+            "EVENT_OUT_OF_ORDER_MANY",
+            f"{out_of_order_count} total out-of-order events in [Events] "
+            f"(only first 3 shown). Section markers and lyric events must be "
+            f"merged and sorted by tick.",
+        )
 
     if section_count == 0:
         result.add(
@@ -861,7 +894,58 @@ def apply_fixes(
                 changes.append('Added Album = "Generated"')
                 break
 
-    # Fix 6: Add missing Genre
+    # Fix 6: Sort out-of-order events in [Events] section
+    # Clone Hero rejects charts with out-of-order events as "corrupt".
+    if "[Events]" in sections:
+        ev_start, ev_end, ev_content = sections["[Events]"]
+        # Check if any events are out of order
+        ev_ticks = []
+        needs_sort = False
+        prev_ev_tick = -1
+        for ev_line in ev_content:
+            ev_parts = ev_line.split()
+            if len(ev_parts) >= 3:
+                try:
+                    t = int(ev_parts[0])
+                    if t < prev_ev_tick:
+                        needs_sort = True
+                    prev_ev_tick = t
+                    ev_ticks.append(t)
+                except ValueError:
+                    pass
+
+        if needs_sort:
+            # Find the [Events] block boundaries in fixed_lines
+            ev_block_start = None
+            ev_block_end = None
+            for i in range(len(fixed_lines)):
+                if fixed_lines[i].strip() == "[Events]":
+                    ev_block_start = i + 2  # skip "[Events]" and "{"
+                elif ev_block_start is not None and fixed_lines[i].strip() == "}":
+                    ev_block_end = i
+                    break
+
+            if ev_block_start is not None and ev_block_end is not None:
+                # Extract event lines, sort by tick, replace
+                event_block = fixed_lines[ev_block_start:ev_block_end]
+                sorted_events = []
+                for el in event_block:
+                    el_parts = el.strip().split()
+                    try:
+                        sort_tick = int(el_parts[0]) if len(el_parts) >= 3 else 0
+                    except ValueError:
+                        sort_tick = 0
+                    sorted_events.append((sort_tick, el))
+                sorted_events.sort(key=lambda x: x[0])
+                fixed_lines[ev_block_start:ev_block_end] = [
+                    se[1] for se in sorted_events
+                ]
+                changes.append(
+                    f"Sorted {len(sorted_events)} events in [Events] by tick "
+                    f"(was out-of-order — Clone Hero would reject as corrupt)"
+                )
+
+    # Fix 7: Add missing Genre
     if "Genre" not in metadata and "[Song]" in sections:
         start, _, _ = sections["[Song]"]
         for i in range(start, min(start + 30, len(fixed_lines))):

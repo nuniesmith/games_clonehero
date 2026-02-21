@@ -1,8 +1,9 @@
 """
 Clone Hero Content Manager - Lyrics Generator Service
 
-Generates procedural lyrics timed to beats and inserts them into the
-[Events] section of a Clone Hero notes.chart file.
+Fetches real song lyrics from free APIs (lrclib.net, lyrics.ovh) and
+generates timed lyric events for Clone Hero charts.  Falls back to
+procedural (word-bank) lyrics when the real lyrics cannot be found.
 
 Clone Hero lyrics format (inside [Events]):
     {tick} = E "phrase_start"
@@ -18,15 +19,19 @@ line of text that scrolls across the screen.  phrase_start / phrase_end
 delimit the boundaries of each displayed line.
 
 This module provides:
-    - Themed word banks for procedural lyric generation
+    - Real lyrics fetching from lrclib.net (time-synced) and lyrics.ovh
+    - Time-synced LRC parsing for accurate lyric placement
+    - Fallback procedural lyrics from themed word banks
     - Syllable-aware word selection for natural rhythm
     - Phrase construction timed to musical sections and beats
     - Integration with the chart generation pipeline
 """
 
 import random
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
+import httpx
 from loguru import logger
 
 # ---------------------------------------------------------------------------
@@ -608,6 +613,472 @@ OUTRO_LABELS = {"outro"}
 INSTRUMENTAL_LABELS = {"solo", "guitar solo", "instrumental"}
 
 
+# ---------------------------------------------------------------------------
+# Real lyrics fetching from public APIs
+# ---------------------------------------------------------------------------
+
+
+def _clean_for_api(text: str) -> str:
+    """Clean a song name or artist for use in API queries."""
+    # Remove parenthetical info like (Official Video), (feat. X), etc.
+    text = re.sub(r"\s*\([^)]*\)", "", text)
+    text = re.sub(r"\s*\[[^\]]*\]", "", text)
+    # Remove leading track numbers like "05-" or "05 "
+    text = re.sub(r"^\d{1,3}[\s._-]+", "", text)
+    return text.strip()
+
+
+def _parse_lrc_line(line: str) -> Optional[Tuple[float, str]]:
+    """
+    Parse a single LRC-format line into (time_seconds, text).
+
+    LRC format: [mm:ss.xx] lyrics text here
+    Returns None if the line can't be parsed or has no text.
+    """
+    match = re.match(r"\[(\d+):(\d+(?:\.\d+)?)\]\s*(.*)", line.strip())
+    if not match:
+        return None
+    minutes = int(match.group(1))
+    seconds = float(match.group(2))
+    text = match.group(3).strip()
+    if not text:
+        return None
+    time_s = minutes * 60.0 + seconds
+    return (time_s, text)
+
+
+def _parse_lrc_lyrics(lrc_text: str) -> List[Tuple[float, str]]:
+    """
+    Parse full LRC-format lyrics into a list of (time_seconds, line_text).
+
+    Filters out metadata tags like [ar:Artist], [ti:Title], etc.
+    Returns lines sorted by time.
+    """
+    results: List[Tuple[float, str]] = []
+    for line in lrc_text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        # Skip metadata tags like [ar:...], [ti:...], [al:...], [by:...]
+        if re.match(r"\[(ar|ti|al|by|offset|re|ve|length):", line, re.IGNORECASE):
+            continue
+        parsed = _parse_lrc_line(line)
+        if parsed:
+            results.append(parsed)
+    results.sort(key=lambda x: x[0])
+    return results
+
+
+def fetch_lyrics_lrclib(
+    artist: str,
+    title: str,
+    duration: Optional[float] = None,
+) -> Optional[Tuple[str, Optional[str]]]:
+    """
+    Fetch lyrics from lrclib.net API (free, no key required).
+
+    Returns (plain_lyrics, synced_lrc_lyrics) or None on failure.
+    The synced lyrics are in LRC format with timestamps if available.
+
+    Parameters
+    ----------
+    artist : str
+        Artist name.
+    title : str
+        Song title.
+    duration : float, optional
+        Song duration in seconds (helps lrclib find the right match).
+
+    Returns
+    -------
+    tuple of (str, str or None) or None
+        (plain_lyrics, synced_lyrics_lrc) — synced_lyrics may be None
+        if only plain lyrics are available.
+    """
+    artist = _clean_for_api(artist)
+    title = _clean_for_api(title)
+
+    if not artist or not title:
+        return None
+
+    try:
+        params = {
+            "artist_name": artist,
+            "track_name": title,
+        }
+        if duration and duration > 0:
+            params["duration"] = str(int(duration))
+
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.get(
+                "https://lrclib.net/api/get",
+                params=params,
+                headers={"User-Agent": "CloneHeroContentManager/1.0"},
+            )
+
+        if resp.status_code == 200:
+            data = resp.json()
+            plain = data.get("plainLyrics") or ""
+            synced = data.get("syncedLyrics") or None
+            if plain or synced:
+                logger.info(
+                    "🎤 Found lyrics on lrclib.net for '{}' by '{}' (synced={})",
+                    title,
+                    artist,
+                    synced is not None,
+                )
+                return (plain, synced)
+
+        # Try search endpoint as fallback
+        resp2 = httpx.get(
+            "https://lrclib.net/api/search",
+            params={"q": f"{artist} {title}"},
+            headers={"User-Agent": "CloneHeroContentManager/1.0"},
+            timeout=10.0,
+        )
+        if resp2.status_code == 200:
+            results = resp2.json()
+            if results and isinstance(results, list) and len(results) > 0:
+                best = results[0]
+                plain = best.get("plainLyrics") or ""
+                synced = best.get("syncedLyrics") or None
+                if plain or synced:
+                    logger.info(
+                        "🎤 Found lyrics on lrclib.net (search) for '{}' by '{}'",
+                        title,
+                        artist,
+                    )
+                    return (plain, synced)
+
+    except Exception as e:
+        logger.debug("⚠️ lrclib.net lookup failed: {}", e)
+
+    return None
+
+
+def fetch_lyrics_ovh(artist: str, title: str) -> Optional[str]:
+    """
+    Fetch plain lyrics from lyrics.ovh API (free, no key required).
+
+    Returns plain lyrics text or None on failure.
+
+    Parameters
+    ----------
+    artist : str
+        Artist name.
+    title : str
+        Song title.
+
+    Returns
+    -------
+    str or None
+        Plain lyrics text, or None if not found.
+    """
+    artist = _clean_for_api(artist)
+    title = _clean_for_api(title)
+
+    if not artist or not title:
+        return None
+
+    try:
+        # URL-encode the artist and title
+        url = f"https://api.lyrics.ovh/v1/{artist}/{title}"
+
+        with httpx.Client(timeout=10.0, follow_redirects=True) as client:
+            resp = client.get(
+                url,
+                headers={"User-Agent": "CloneHeroContentManager/1.0"},
+            )
+
+        if resp.status_code == 200:
+            data = resp.json()
+            lyrics = data.get("lyrics", "").strip()
+            if lyrics:
+                logger.info(
+                    "🎤 Found lyrics on lyrics.ovh for '{}' by '{}'",
+                    title,
+                    artist,
+                )
+                return lyrics
+
+    except Exception as e:
+        logger.debug("⚠️ lyrics.ovh lookup failed: {}", e)
+
+    return None
+
+
+def fetch_real_lyrics(
+    artist: str,
+    title: str,
+    duration: Optional[float] = None,
+) -> Tuple[Optional[str], Optional[List[Tuple[float, str]]]]:
+    """
+    Try to fetch real lyrics from multiple free APIs.
+
+    Attempts lrclib.net first (supports time-synced lyrics), then falls
+    back to lyrics.ovh (plain text only).
+
+    Parameters
+    ----------
+    artist : str
+        Artist name.
+    title : str
+        Song title.
+    duration : float, optional
+        Song duration in seconds.
+
+    Returns
+    -------
+    tuple of (plain_lyrics, synced_lines)
+        plain_lyrics : str or None
+            The full plain-text lyrics.
+        synced_lines : list of (float, str) or None
+            Time-synced lyric lines as (time_seconds, line_text).
+            Only available from lrclib.net.
+    """
+    # Try lrclib.net first (best: provides synced lyrics)
+    lrclib_result = fetch_lyrics_lrclib(artist, title, duration)
+    if lrclib_result:
+        plain, synced_lrc = lrclib_result
+        synced_lines = None
+        if synced_lrc:
+            synced_lines = _parse_lrc_lyrics(synced_lrc)
+            if synced_lines:
+                logger.info(
+                    "🎤 Parsed {} time-synced lyric lines from lrclib.net",
+                    len(synced_lines),
+                )
+        return (plain or None, synced_lines)
+
+    # Fallback to lyrics.ovh (plain text only)
+    ovh_lyrics = fetch_lyrics_ovh(artist, title)
+    if ovh_lyrics:
+        return (ovh_lyrics, None)
+
+    logger.info(
+        "ℹ️ No real lyrics found for '{}' by '{}' — will use procedural lyrics",
+        title,
+        artist,
+    )
+    return (None, None)
+
+
+def _synced_lyrics_to_chart_events(
+    synced_lines: List[Tuple[float, str]],
+    tempo: float,
+    duration: float,
+    beat_times: List[float],
+    tempo_map: Optional[List[Tuple[float, float]]] = None,
+) -> List[str]:
+    """
+    Convert time-synced lyric lines into Clone Hero chart event lines.
+
+    Each synced line becomes a phrase with individual words timed to
+    beats within that phrase's time window.  Lyric timestamps are
+    snapped to the nearest detected beat for tight sync with the
+    note track, and tick positions are computed using the full
+    piecewise tempo map so they stay correct across tempo changes.
+
+    Parameters
+    ----------
+    synced_lines : list of (float, str)
+        Time-synced lyric lines (time_seconds, line_text).
+    tempo : float
+        Song tempo in BPM.
+    duration : float
+        Song duration in seconds.
+    beat_times : list of float
+        Detected beat times.
+    tempo_map : list of (tick, milli_bpm), optional
+        Piecewise tempo map for accurate tick conversion.
+
+    Returns
+    -------
+    list of str
+        Chart event lines for the [Events] section.
+    """
+    if not synced_lines:
+        return []
+
+    events: List[str] = []
+
+    for i, (line_time, line_text) in enumerate(synced_lines):
+        # Skip lines that are before the song starts or after it ends
+        if line_time < 0 or line_time > duration:
+            continue
+
+        # Snap lyric timestamp to the nearest beat so it feels in sync
+        # with the note track rather than relying on raw API timestamps
+        snapped_time = _snap_to_nearest_beat(
+            line_time, beat_times, max_snap_window=0.20
+        )
+
+        # Determine the end time of this phrase (start of next line or +3s)
+        if i + 1 < len(synced_lines):
+            next_raw = synced_lines[i + 1][0]
+            next_time = _snap_to_nearest_beat(
+                next_raw, beat_times, max_snap_window=0.20
+            )
+            phrase_duration = min(next_time - snapped_time, 8.0)
+        else:
+            phrase_duration = min(3.0, duration - snapped_time)
+
+        if phrase_duration <= 0.1:
+            continue
+
+        # Split line into words
+        words = line_text.split()
+        if not words:
+            continue
+
+        start_tick = _seconds_to_ticks(snapped_time, tempo, tempo_map=tempo_map)
+        events.append(f'  {start_tick} = E "phrase_start"')
+
+        # Spread words evenly across the phrase duration
+        if len(words) == 1:
+            events.append(f'  {start_tick} = E "lyric {words[0]}"')
+        else:
+            word_interval = phrase_duration / len(words)
+            for wi, word in enumerate(words):
+                word_time = snapped_time + wi * word_interval
+                word_tick = _seconds_to_ticks(word_time, tempo, tempo_map=tempo_map)
+                events.append(f'  {word_tick} = E "lyric {word}"')
+
+        # Phrase end just before the next phrase starts
+        end_time = snapped_time + phrase_duration * 0.95
+        end_tick = _seconds_to_ticks(end_time, tempo, tempo_map=tempo_map)
+        events.append(f'  {end_tick} = E "phrase_end"')
+
+    logger.info(
+        "🎤 Generated {} chart events from {} synced lyric lines",
+        len(events),
+        len(synced_lines),
+    )
+    return events
+
+
+def _plain_lyrics_to_chart_events(
+    plain_lyrics: str,
+    tempo: float,
+    duration: float,
+    beat_times: List[float],
+    segments: List[Dict[str, Any]],
+    tempo_map: Optional[List[Tuple[float, float]]] = None,
+) -> List[str]:
+    """
+    Convert plain (un-synced) lyrics into timed Clone Hero chart events.
+
+    Distributes lyric lines across the song's detected segments and beats.
+    Skips intro/outro/instrumental segments.  All timestamps are snapped
+    to the beat grid and converted to ticks using the piecewise tempo map.
+
+    Parameters
+    ----------
+    plain_lyrics : str
+        Full plain-text lyrics.
+    tempo : float
+        Song tempo in BPM.
+    duration : float
+        Song duration in seconds.
+    beat_times : list of float
+        Detected beat times.
+    segments : list of dict
+        Detected song segments.
+    tempo_map : list of (tick, milli_bpm), optional
+        Piecewise tempo map for accurate tick conversion.
+
+    Returns
+    -------
+    list of str
+        Chart event lines for the [Events] section.
+    """
+    # Split lyrics into non-empty lines
+    lines = [ln.strip() for ln in plain_lyrics.splitlines() if ln.strip()]
+    if not lines or len(beat_times) < 4:
+        return []
+
+    events: List[str] = []
+
+    # Build singable time ranges from segments (skip intro/outro/instrumental)
+    singable_ranges: List[Tuple[float, float]] = []
+    for i, seg in enumerate(segments):
+        seg_type = _classify_section(seg.get("label", "verse"))
+        if seg_type in ("intro", "outro", "instrumental"):
+            continue
+        start = seg["time"]
+        end = segments[i + 1]["time"] if i + 1 < len(segments) else duration
+        if end - start >= 3.0:
+            singable_ranges.append((start, end))
+
+    if not singable_ranges:
+        # Fallback: use the middle 80% of the song
+        singable_ranges = [(duration * 0.1, duration * 0.9)]
+
+    # Compute total singable time
+    total_singable = sum(end - start for start, end in singable_ranges)
+    if total_singable <= 0:
+        return []
+
+    # Distribute lines across singable ranges proportionally
+    line_idx = 0
+    for range_start, range_end in singable_ranges:
+        range_duration = range_end - range_start
+
+        # How many lines fit in this range (roughly 1 line per 4 beats / ~2-3 seconds)
+        lines_for_range = max(1, int(range_duration / 3.0))
+        lines_for_range = min(lines_for_range, len(lines) - line_idx)
+
+        if lines_for_range <= 0 or line_idx >= len(lines):
+            break
+
+        line_interval = range_duration / lines_for_range
+
+        for j in range(lines_for_range):
+            if line_idx >= len(lines):
+                break
+
+            line_text = lines[line_idx]
+            line_idx += 1
+
+            line_time = range_start + j * line_interval
+
+            # Snap to the nearest beat for tight sync
+            line_time = _snap_to_nearest_beat(
+                line_time, beat_times, max_snap_window=1.0
+            )
+
+            words = line_text.split()
+            if not words:
+                continue
+
+            start_tick = _seconds_to_ticks(line_time, tempo, tempo_map=tempo_map)
+            events.append(f'  {start_tick} = E "phrase_start"')
+
+            # Time words to beats within the line's window
+            phrase_duration = min(line_interval * 0.9, 6.0)
+            if len(words) == 1:
+                events.append(f'  {start_tick} = E "lyric {words[0]}"')
+            else:
+                word_interval = phrase_duration / len(words)
+                for wi, word in enumerate(words):
+                    word_time = line_time + wi * word_interval
+                    word_tick = _seconds_to_ticks(word_time, tempo, tempo_map=tempo_map)
+                    events.append(f'  {word_tick} = E "lyric {word}"')
+
+            end_time = line_time + phrase_duration
+            end_tick = _seconds_to_ticks(end_time, tempo, tempo_map=tempo_map)
+            events.append(f'  {end_tick} = E "phrase_end"')
+
+    logger.info(
+        "🎤 Generated {} chart events from {} plain lyric lines (used {}/{})",
+        len(events),
+        len(lines),
+        line_idx,
+        len(lines),
+    )
+    return events
+
+
 def _classify_section(label: str) -> str:
     """Classify a section label into a broad category."""
     lower = label.lower().strip()
@@ -793,10 +1264,92 @@ def _generate_chorus_phrase(
 # ---------------------------------------------------------------------------
 # Tick conversion (mirrors song_generator.py)
 # ---------------------------------------------------------------------------
-def _seconds_to_ticks(time_s: float, tempo: float, resolution: int = RESOLUTION) -> int:
-    """Convert a time in seconds to chart ticks."""
-    beats = time_s * (tempo / 60.0)
-    return int(round(beats * resolution))
+def _seconds_to_ticks(
+    time_s: float,
+    tempo: float,
+    resolution: int = RESOLUTION,
+    tempo_map: Optional[List[Tuple[float, float]]] = None,
+) -> int:
+    """Convert a time in seconds to chart ticks.
+
+    When *tempo_map* is provided (list of ``(tick, milli_bpm)`` tuples from
+    the sync track), the conversion walks the piecewise-constant tempo
+    segments so ticks stay aligned with what Clone Hero does at playback.
+
+    Without a tempo map the simple constant-tempo formula is used.
+    """
+    if time_s <= 0:
+        return 0
+
+    # Fast path: constant tempo
+    if not tempo_map or len(tempo_map) <= 1:
+        beats = time_s * (tempo / 60.0)
+        return int(round(beats * resolution))
+
+    # Piecewise conversion – walk through tempo segments
+    remaining = time_s
+    prev_tick = 0
+    prev_bpm = tempo_map[0][1] / 1000.0  # milli-BPM → BPM
+
+    for idx in range(1, len(tempo_map)):
+        seg_tick = int(tempo_map[idx][0])
+        seg_bpm = tempo_map[idx][1] / 1000.0
+
+        seg_ticks = seg_tick - prev_tick
+        if prev_bpm > 0:
+            seg_seconds = seg_ticks / (prev_bpm / 60.0 * resolution)
+        else:
+            seg_seconds = 0.0
+
+        if remaining <= seg_seconds:
+            extra_ticks = remaining * (prev_bpm / 60.0) * resolution
+            return int(round(prev_tick + extra_ticks))
+
+        remaining -= seg_seconds
+        prev_tick = seg_tick
+        prev_bpm = seg_bpm
+
+    # Past the last marker – continue at final BPM
+    extra_ticks = remaining * (prev_bpm / 60.0) * resolution
+    return int(round(prev_tick + extra_ticks))
+
+
+def _snap_to_nearest_beat(
+    time_s: float,
+    beat_times: List[float],
+    max_snap_window: float = 0.15,
+) -> float:
+    """Snap a timestamp to the nearest detected beat if close enough.
+
+    Parameters
+    ----------
+    time_s : float
+        The raw timestamp to snap (seconds).
+    beat_times : list of float
+        Sorted beat positions in seconds.
+    max_snap_window : float
+        Maximum distance (seconds) to snap.  If no beat is within this
+        window the original time is returned unchanged.
+
+    Returns
+    -------
+    float
+        The snapped timestamp.
+    """
+    if not beat_times:
+        return time_s
+
+    best = time_s
+    best_dist = max_snap_window + 1.0
+    for bt in beat_times:
+        d = abs(bt - time_s)
+        if d < best_dist:
+            best_dist = d
+            best = bt
+        if bt > time_s + max_snap_window:
+            break
+
+    return best if best_dist <= max_snap_window else time_s
 
 
 # ---------------------------------------------------------------------------
@@ -812,6 +1365,7 @@ def generate_lyrics(
     song_name: str = "",
     genre: str = "",
     seed: Optional[int] = None,
+    tempo_map: Optional[List[Tuple[float, float]]] = None,
 ) -> List[str]:
     """
     Generate lyric events for a Clone Hero chart.
@@ -898,11 +1452,11 @@ def generate_lyrics(
             # Maybe just one exclamation line in the intro
             if seg_duration > 6.0 and rng.random() < 0.6:
                 mid_time = seg_start + seg_duration * 0.5
-                tick = _seconds_to_ticks(mid_time, tempo)
+                tick = _seconds_to_ticks(mid_time, tempo, tempo_map=tempo_map)
                 excl = rng.choice(theme_words["exclamations"])
                 events.append(f'{tick} = E "phrase_start"')
                 events.append(f'{tick} = E "lyric {excl}"')
-                end_tick = _seconds_to_ticks(mid_time + 2.0, tempo)
+                end_tick = _seconds_to_ticks(mid_time + 2.0, tempo, tempo_map=tempo_map)
                 events.append(f'{end_tick} = E "phrase_end"')
             continue
 
@@ -910,7 +1464,7 @@ def generate_lyrics(
             # Possibly repeat last chorus line or a short phrase
             if seg_duration > 6.0 and rng.random() < 0.5:
                 mid_time = seg_start + seg_duration * 0.3
-                tick = _seconds_to_ticks(mid_time, tempo)
+                tick = _seconds_to_ticks(mid_time, tempo, tempo_map=tempo_map)
                 if chorus_cache:
                     phrase = chorus_cache[0]
                 else:
@@ -922,8 +1476,8 @@ def generate_lyrics(
                     )
                 events.append(f'{tick} = E "phrase_start"')
                 for wi, word in enumerate(phrase):
-                    word_tick = tick + wi * (RESOLUTION // 2)
-                    events.append(f'{word_tick} = E "lyric {word}"')
+                    word_tick_val = tick + wi * (RESOLUTION // 2)
+                    events.append(f'{word_tick_val} = E "lyric {word}"')
                 end_tick = tick + len(phrase) * (RESOLUTION // 2) + RESOLUTION
                 events.append(f'{end_tick} = E "phrase_end"')
             continue
@@ -974,7 +1528,11 @@ def generate_lyrics(
                 continue
 
             # Time each word to subsequent beats
-            start_tick = _seconds_to_ticks(phrase_start_time, tempo)
+            start_tick = _seconds_to_ticks(
+                phrase_start_time,
+                tempo,
+                tempo_map=tempo_map,
+            )
 
             events.append(f'{start_tick} = E "phrase_start"')
 
@@ -1026,15 +1584,109 @@ def generate_lyrics_for_chart(
     duration: float,
     segments: List[Dict[str, Any]],
     song_name: str = "",
+    artist: str = "",
     genre: str = "",
     seed: Optional[int] = None,
+    tempo_map: Optional[List[Tuple[float, float]]] = None,
 ) -> List[str]:
     """
-    Convenience wrapper: generates lyric events formatted as chart lines.
+    Generate lyric events for a Clone Hero chart.
+
+    First attempts to fetch real lyrics for the song from free APIs
+    (lrclib.net with time-sync support, lyrics.ovh as fallback).
+    If real lyrics are found, they are timed to the music — synced
+    lyrics are beat-snapped and converted using the piecewise tempo
+    map for tight sync with the note track.
+    If not, falls back to procedural (word-bank) generation.
 
     Returns lines ready to be appended inside the [Events] { ... } block,
     each prefixed with two spaces for consistent chart formatting.
+
+    Parameters
+    ----------
+    tempo : float
+        Song tempo in BPM.
+    beat_times : list of float
+        Detected beat times in seconds.
+    onset_times : list of float
+        Detected onset times in seconds.
+    onset_strengths : list of float
+        Strength of each onset.
+    duration : float
+        Song duration in seconds.
+    segments : list of dict
+        Detected song segments.
+    song_name : str
+        Song title (used for lyrics lookup and procedural fallback).
+    artist : str
+        Artist name (used for lyrics lookup).
+    genre : str
+        Genre hint (used for procedural fallback theme).
+    seed : int, optional
+        Random seed for procedural generation.
+    tempo_map : list of (tick, milli_bpm), optional
+        Piecewise tempo map from the sync track.  Used for accurate
+        seconds-to-ticks conversion that stays aligned with Clone
+        Hero's playback engine across tempo changes.
     """
+    # --- Step 1: Try to fetch real lyrics ---
+    if artist and song_name:
+        try:
+            plain_lyrics, synced_lines = fetch_real_lyrics(
+                artist=artist,
+                title=song_name,
+                duration=duration,
+            )
+
+            # Prefer time-synced lyrics (most accurate)
+            if synced_lines:
+                events = _synced_lyrics_to_chart_events(
+                    synced_lines=synced_lines,
+                    tempo=tempo,
+                    duration=duration,
+                    beat_times=beat_times,
+                    tempo_map=tempo_map,
+                )
+                if events:
+                    logger.info(
+                        "🎤 Using time-synced real lyrics for '{}' by '{}'",
+                        song_name,
+                        artist,
+                    )
+                    return events
+
+            # Fall back to plain lyrics (distributed across segments)
+            if plain_lyrics:
+                events = _plain_lyrics_to_chart_events(
+                    plain_lyrics=plain_lyrics,
+                    tempo=tempo,
+                    duration=duration,
+                    beat_times=beat_times,
+                    segments=segments,
+                    tempo_map=tempo_map,
+                )
+                if events:
+                    logger.info(
+                        "🎤 Using plain real lyrics for '{}' by '{}'",
+                        song_name,
+                        artist,
+                    )
+                    return events
+
+        except Exception as e:
+            logger.warning(
+                "⚠️ Real lyrics fetch failed for '{}' by '{}': {} "
+                "(falling back to procedural)",
+                song_name,
+                artist,
+                e,
+            )
+
+    # --- Step 2: Fall back to procedural lyrics ---
+    logger.info(
+        "🎤 Using procedural lyrics for '{}' (no real lyrics found)",
+        song_name,
+    )
     raw_events = generate_lyrics(
         tempo=tempo,
         beat_times=beat_times,
@@ -1045,6 +1697,7 @@ def generate_lyrics_for_chart(
         song_name=song_name,
         genre=genre,
         seed=seed,
+        tempo_map=tempo_map,
     )
 
     return [f"  {line}" for line in raw_events]

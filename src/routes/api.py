@@ -45,8 +45,10 @@ from src.config import (
 from src.database import (
     count_songs,
     delete_song,
+    get_artists,
     get_song_by_id,
     get_songs,
+    get_songs_by_artist,
     update_song,
 )
 from src.services.chart_parser import (
@@ -229,6 +231,39 @@ async def api_list_songs(
         "offset": offset,
         "songs": songs,
     }
+
+
+# ---------------------------------------------------------------------------
+# Artists (grouped view)
+# ---------------------------------------------------------------------------
+@router.get("/artists")
+async def api_list_artists(
+    search: Optional[str] = Query(None),
+):
+    """List all artists with song counts, optionally filtered by search."""
+    artists = await get_artists(search=search.strip() if search else None)
+    return {"total": len(artists), "artists": artists}
+
+
+@router.get("/artists/{artist_name}/songs")
+async def api_artist_songs(
+    artist_name: str,
+    search: Optional[str] = Query(None),
+):
+    """Get all songs for a specific artist."""
+    search_query = search.strip() if search else None
+    songs = await get_songs_by_artist(artist=artist_name, search=search_query)
+
+    # Parse metadata JSON strings into dicts
+    for song in songs:
+        meta = song.get("metadata")
+        if isinstance(meta, str):
+            try:
+                song["metadata"] = json.loads(meta)
+            except (json.JSONDecodeError, TypeError):
+                song["metadata"] = {}
+
+    return {"artist": artist_name, "total": len(songs), "songs": songs}
 
 
 @router.get("/songs/{song_id}")

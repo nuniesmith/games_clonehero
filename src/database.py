@@ -332,6 +332,64 @@ async def delete_song_by_remote_path(remote_path: str) -> bool:
         return deleted
 
 
+async def get_artists(search: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Return distinct artists with song counts, optionally filtered by search."""
+    async with get_async_connection() as db:
+        if search and search.strip():
+            pattern = f"%{search.strip()}%"
+            cursor = await db.execute(
+                """
+                SELECT artist, COUNT(*) as song_count
+                FROM songs
+                WHERE title LIKE ? OR artist LIKE ? OR album LIKE ?
+                GROUP BY artist
+                ORDER BY artist COLLATE NOCASE ASC
+                """,
+                (pattern, pattern, pattern),
+            )
+        else:
+            cursor = await db.execute(
+                """
+                SELECT artist, COUNT(*) as song_count
+                FROM songs
+                GROUP BY artist
+                ORDER BY artist COLLATE NOCASE ASC
+                """
+            )
+        rows = await cursor.fetchall()
+        return [row_to_dict(r) for r in rows]
+
+
+async def get_songs_by_artist(
+    artist: str,
+    search: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Fetch all songs for a specific artist, optionally filtered by search."""
+    async with get_async_connection() as db:
+        if search and search.strip():
+            pattern = f"%{search.strip()}%"
+            cursor = await db.execute(
+                """
+                SELECT * FROM songs
+                WHERE artist = ?
+                  AND (title LIKE ? OR artist LIKE ? OR album LIKE ?)
+                ORDER BY album COLLATE NOCASE ASC, title COLLATE NOCASE ASC
+                """,
+                (artist, pattern, pattern, pattern),
+            )
+        else:
+            cursor = await db.execute(
+                """
+                SELECT * FROM songs
+                WHERE artist = ?
+                ORDER BY album COLLATE NOCASE ASC, title COLLATE NOCASE ASC
+                """,
+                (artist,),
+            )
+        rows = await cursor.fetchall()
+        return [row_to_dict(r) for r in rows]
+
+
 async def count_songs(search: Optional[str] = None) -> int:
     """Return total number of songs, optionally filtered by search."""
     async with get_async_connection() as db:

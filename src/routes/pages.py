@@ -24,7 +24,13 @@ from src.config import (
     NEXTCLOUD_GENERATOR_PATH,
     NEXTCLOUD_SONGS_PATH,
 )
-from src.database import count_songs, get_song_by_id, get_songs
+from src.database import (
+    count_songs,
+    get_artists,
+    get_song_by_id,
+    get_songs,
+    get_songs_by_artist,
+)
 from src.webdav import check_connection, is_configured, list_directory
 
 router = APIRouter(tags=["Pages"])
@@ -102,10 +108,51 @@ async def songs_page(
     request: Request,
     search: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
+    view: Optional[str] = Query(None),
 ):
     """Browse and search songs stored in the local metadata cache."""
     search_query = search.strip() if search else None
+    view_mode = view if view in ("artists", "list") else "list"
 
+    # --- Artist-grouped view ---
+    if view_mode == "artists":
+        artists = await get_artists(search=search_query)
+        artists_with_songs = []
+        total_songs = 0
+        for artist_row in artists:
+            artist_name = artist_row["artist"]
+            artist_songs = await get_songs_by_artist(
+                artist=artist_name, search=search_query
+            )
+            for song in artist_songs:
+                song["metadata"] = _parse_metadata(song.get("metadata"))
+            total_songs += len(artist_songs)
+            artists_with_songs.append(
+                {
+                    "name": artist_name,
+                    "song_count": artist_row["song_count"],
+                    "songs": artist_songs,
+                }
+            )
+
+        context = {
+            "request": request,
+            "page_title": "Songs",
+            "current_user": get_current_user(request),
+            "view_mode": view_mode,
+            "artists": artists_with_songs,
+            "total_artists": len(artists_with_songs),
+            "total_songs": total_songs,
+            "songs": [],
+            "search_query": search_query or "",
+            "pagination": _paginate(1, 0),
+            "webdav_configured": is_configured(),
+            "nextcloud_songs_path": NEXTCLOUD_SONGS_PATH,
+            "generator_path": NEXTCLOUD_GENERATOR_PATH,
+        }
+        return request.app.state.templates.TemplateResponse("songs.html", context)
+
+    # --- Flat list view (default) ---
     total = await count_songs(search=search_query)
     pag = _paginate(page, total)
 
@@ -123,6 +170,10 @@ async def songs_page(
         "request": request,
         "page_title": "Songs",
         "current_user": get_current_user(request),
+        "view_mode": view_mode,
+        "artists": [],
+        "total_artists": 0,
+        "total_songs": total,
         "songs": songs,
         "search_query": search_query or "",
         "pagination": pag,

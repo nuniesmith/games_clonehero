@@ -18,7 +18,7 @@ import io
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
-from typing import Any, Dict, List, Optional
+from typing import Any
 from urllib.parse import quote, unquote, urlparse
 
 import httpx
@@ -59,13 +59,13 @@ class WebDAVItem:
     content_type: str = ""
     last_modified: str = ""
     etag: str = ""
-    extra: Dict[str, Any] = field(default_factory=dict)
+    extra: dict[str, Any] = field(default_factory=dict)
 
     @property
     def extension(self) -> str:
         return PurePosixPath(self.name).suffix.lower()
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
             "path": self.path,
@@ -100,9 +100,9 @@ def _auth() -> httpx.BasicAuth:
     return httpx.BasicAuth(NEXTCLOUD_USERNAME, NEXTCLOUD_PASSWORD)
 
 
-def _parse_propfind_response(xml_text: str, base_path: str = "/") -> List[WebDAVItem]:
+def _parse_propfind_response(xml_text: str, _base_path: str = "/") -> list[WebDAVItem]:
     """Parse the XML response from a PROPFIND request into WebDAVItem list."""
-    items: List[WebDAVItem] = []
+    items: list[WebDAVItem] = []
 
     try:
         root = ET.fromstring(xml_text)
@@ -189,7 +189,7 @@ def _parse_propfind_response(xml_text: str, base_path: str = "/") -> List[WebDAV
 # ---------------------------------------------------------------------------
 # Public API (async)
 # ---------------------------------------------------------------------------
-async def check_connection() -> Dict[str, Any]:
+async def check_connection() -> dict[str, Any]:
     """
     Test the WebDAV connection to Nextcloud.
     Returns a status dict with 'connected' bool and optional error info.
@@ -222,7 +222,7 @@ async def check_connection() -> Dict[str, Any]:
         return {"connected": False, "error": str(e)}
 
 
-async def list_directory(remote_path: str = "/") -> List[WebDAVItem]:
+async def list_directory(remote_path: str = "/") -> list[WebDAVItem]:
     """
     List files and directories at the given remote path.
     Returns a list of WebDAVItem objects (excluding the directory itself).
@@ -282,7 +282,7 @@ async def list_directory(remote_path: str = "/") -> List[WebDAVItem]:
         return []
 
 
-async def download_file(remote_path: str) -> Optional[bytes]:
+async def download_file(remote_path: str) -> bytes | None:
     """
     Download a file from Nextcloud and return its content as bytes.
     Returns None on failure.
@@ -333,7 +333,7 @@ async def download_file_stream(remote_path: str, local_path: str) -> bool:
 
                 with open(local_path, "wb") as f:
                     async for chunk in response.aiter_bytes(chunk_size=65536):
-                        f.write(chunk)
+                        _ = f.write(chunk)
 
         logger.info(f"⬇️ Streamed {remote_path} -> {local_path}")
         return True
@@ -359,7 +359,7 @@ async def upload_file(
     # Ensure parent directories exist
     parent = str(PurePosixPath(remote_path).parent)
     if parent and parent != "/":
-        await mkdir(parent)
+        _ = await mkdir(parent)
 
     url = _build_url(remote_path)
     try:
@@ -387,7 +387,7 @@ async def upload_file(
 
 async def upload_file_stream(
     remote_path: str,
-    file_obj: io.IOBase,
+    file_obj: io.BufferedIOBase,
     content_type: str = "application/octet-stream",
 ) -> bool:
     """
@@ -399,7 +399,7 @@ async def upload_file_stream(
 
     parent = str(PurePosixPath(remote_path).parent)
     if parent and parent != "/":
-        await mkdir(parent)
+        _ = await mkdir(parent)
 
     url = _build_url(remote_path)
     try:
@@ -520,7 +520,7 @@ async def move_remote(source_path: str, dest_path: str) -> bool:
         return False
 
 
-async def get_file_info(remote_path: str) -> Optional[WebDAVItem]:
+async def get_file_info(remote_path: str) -> WebDAVItem | None:
     """
     Get metadata for a single file or directory on Nextcloud.
     Returns a WebDAVItem or None if not found.
@@ -573,7 +573,7 @@ def is_configured() -> bool:
 # ---------------------------------------------------------------------------
 
 
-async def walk_directory(remote_path: str = "/") -> List[WebDAVItem]:
+async def walk_directory(remote_path: str = "/") -> list[WebDAVItem]:
     """
     Recursively list *all* files and directories under *remote_path*.
 
@@ -585,8 +585,8 @@ async def walk_directory(remote_path: str = "/") -> List[WebDAVItem]:
         logger.warning("⚠️ Nextcloud WebDAV not configured, returning empty walk")
         return []
 
-    all_items: List[WebDAVItem] = []
-    dirs_to_visit: List[str] = [remote_path]
+    all_items: list[WebDAVItem] = []
+    dirs_to_visit: list[str] = [remote_path]
 
     while dirs_to_visit:
         current = dirs_to_visit.pop()
@@ -599,7 +599,7 @@ async def walk_directory(remote_path: str = "/") -> List[WebDAVItem]:
     return all_items
 
 
-async def find_song_folders(root: Optional[str] = None) -> List[str]:
+async def find_song_folders(root: str | None = None) -> list[str]:
     """
     Walk the Nextcloud songs directory and return a list of remote
     directory paths that contain a ``song.ini`` file.
@@ -617,7 +617,7 @@ async def find_song_folders(root: Optional[str] = None) -> List[str]:
     ]
 
     # Return the parent directory of each song.ini
-    folders: List[str] = []
+    folders: list[str] = []
     for item in song_ini_files:
         parent = str(PurePosixPath(item.path).parent)
         if parent not in folders:
@@ -631,7 +631,7 @@ async def find_song_folders(root: Optional[str] = None) -> List[str]:
     return folders
 
 
-async def parse_remote_song_ini(remote_path: str) -> Optional[Dict[str, Any]]:
+async def parse_remote_song_ini(remote_path: str) -> dict[str, Any] | None:
     """
     Download and parse a ``song.ini`` file from Nextcloud.
 
@@ -671,7 +671,7 @@ async def parse_remote_song_ini(remote_path: str) -> Optional[Dict[str, Any]]:
         logger.warning("⚠️ Missing required fields (name/artist) in {}", ini_remote)
         return None
 
-    metadata: Dict[str, Any] = {}
+    metadata: dict[str, Any] = {}
     for field_name in OPTIONAL_SONG_FIELDS:
         if config.has_option("song", field_name):
             value = config.get("song", field_name, fallback=None)
@@ -688,11 +688,11 @@ async def parse_remote_song_ini(remote_path: str) -> Optional[Dict[str, Any]]:
 
 async def upload_song_folder(
     local_dir: str,
-    remote_base: Optional[str] = None,
+    remote_base: str | None = None,
     artist: str = "Unknown",
     title: str = "Unknown",
     suffix: str = "",
-) -> Optional[str]:
+) -> str | None:
     """
     Upload an entire local song folder to Nextcloud.
 
@@ -719,7 +719,7 @@ async def upload_song_folder(
     folder_name = f"{safe_title}_{suffix}" if suffix else safe_title
     remote_dir = f"{base.rstrip('/')}/{safe_artist}/{folder_name}"
 
-    await mkdir(remote_dir)
+    _ = await mkdir(remote_dir)
 
     uploaded = 0
     for local_file in local_path.rglob("*"):
@@ -745,7 +745,9 @@ async def upload_song_folder(
     return remote_dir
 
 
-async def write_remote_song_ini(remote_folder: str, song_data: Dict[str, Any]) -> bool:
+async def write_remote_song_ini(
+    remote_folder: str, song_data: dict[str, str | dict[str, str]]
+) -> bool:
     """
     Write (overwrite) a ``song.ini`` on Nextcloud from *song_data*.
 
@@ -755,22 +757,30 @@ async def write_remote_song_ini(remote_folder: str, song_data: Dict[str, Any]) -
     config = configparser.ConfigParser()
     config.add_section("song")
 
-    config.set("song", "name", song_data.get("title", ""))
-    config.set("song", "artist", song_data.get("artist", ""))
-    config.set("song", "album", song_data.get("album", ""))
+    title: str = str(song_data.get("title", ""))
+    artist: str = str(song_data.get("artist", ""))
+    album: str = str(song_data.get("album", ""))
+    config.set("song", "name", title)
+    config.set("song", "artist", artist)
+    config.set("song", "album", album)
 
-    metadata = song_data.get("metadata", {})
-    if isinstance(metadata, str):
+    raw_metadata = song_data.get("metadata", {})
+    metadata: dict[str, str] = {}
+    if isinstance(raw_metadata, str):
         import json
 
         try:
-            metadata = json.loads(metadata)
+            parsed = json.loads(raw_metadata)
+            if isinstance(parsed, dict):
+                metadata = {str(k): str(v) for k, v in parsed.items()}
         except (json.JSONDecodeError, TypeError):
             metadata = {}
+    elif isinstance(raw_metadata, dict):
+        metadata = {str(k): str(v) for k, v in raw_metadata.items()}
 
     for key, value in metadata.items():
         if value is not None:
-            config.set("song", key, str(value))
+            config.set("song", key, value)
 
     buf = io.StringIO()
     config.write(buf)
@@ -780,7 +790,7 @@ async def write_remote_song_ini(remote_folder: str, song_data: Dict[str, Any]) -
     return await upload_file(remote_ini, ini_bytes, "text/plain; charset=utf-8")
 
 
-async def list_song_folder_files(remote_folder: str) -> List[WebDAVItem]:
+async def list_song_folder_files(remote_folder: str) -> list[WebDAVItem]:
     """
     List the files inside a single song folder on Nextcloud.
 

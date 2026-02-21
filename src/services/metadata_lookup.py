@@ -163,13 +163,20 @@ def parse_filename(filename: str) -> Dict[str, str]:
     - "Song Title.ogg"  (no artist detected)
     - "01 - Song Title.mp3" (track number prefix)
     - "01. Song Title.mp3" (track number prefix)
+    - "05-Artist-Song Title.mp3" (track number with dash)
 
     Returns a dict with 'song_name' and 'artist' keys.
     Both values are cleaned and title-cased.
     """
     stem = Path(filename).stem
 
-    # Try each separator pattern
+    # Step 1: Strip leading track-number prefixes.
+    # Handles "05-...", "05. ...", "05 ...", "5 - ..." etc.
+    track_match = re.match(r"^\d{1,3}\s*[-\.]\s*", stem)
+    if track_match:
+        stem = stem[track_match.end() :]
+
+    # Step 2: Try each separator pattern (highest-confidence first)
     artist = ""
     title = stem
 
@@ -180,7 +187,12 @@ def parse_filename(filename: str) -> Dict[str, str]:
                 candidate_artist = parts[0].strip()
                 candidate_title = parts[1].strip()
 
+                # Skip if either side is empty after stripping
+                if not candidate_artist or not candidate_title:
+                    continue
+
                 # Check if the "artist" part is just a track number
+                # (handles edge case where track number wasn't caught above)
                 if re.match(r"^\d{1,3}$", candidate_artist):
                     # "01 - Song Title" → no artist, just title
                     title = candidate_title
@@ -189,9 +201,24 @@ def parse_filename(filename: str) -> Dict[str, str]:
                     title = candidate_title
                 break
 
-    # If no separator found, check for "01. Title" or "01 Title" patterns
+    # Step 3: If no spaced separator matched, try bare "-" but only when at
+    # least one side contains a space (multi-word) so we don't split
+    # hyphenated single words like "Re-Enter".
+    if not artist and "-" in title:
+        parts = title.split("-", 1)
+        if len(parts) == 2:
+            left = parts[0].strip()
+            right = parts[1].strip()
+            if left and right and (" " in left or " " in right):
+                if not re.match(r"^\d{1,3}$", left):
+                    artist = left
+                    title = right
+                else:
+                    title = right
+
+    # Step 4: If still no artist and no separator worked, check for
+    # remaining "01. Title" or "01 Title" patterns (fallback)
     if not artist:
-        # "01. Song Title" or "01 Song Title"
         match = re.match(r"^\d{1,3}\.?\s+(.+)$", title)
         if match:
             title = match.group(1)

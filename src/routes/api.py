@@ -482,10 +482,18 @@ async def api_generate_song(
 
         logger.info(f"🎵 Generate request: {filename} (difficulty={difficulty})")
 
+        # --- Parse filename for artist/title when not provided ---
+        parsed = parse_filename(filename)
+        logger.info(
+            "📝 Parsed filename: song_name={}, artist={}",
+            parsed.get("song_name", ""),
+            parsed.get("artist", ""),
+        )
+
         # --- Metadata lookup ---
         lookup_data: Dict[str, Any] = {}
-        effective_name = song_name or Path(filename).stem
-        effective_artist = artist or ""
+        effective_name = song_name or parsed.get("song_name") or Path(filename).stem
+        effective_artist = artist or parsed.get("artist", "")
 
         if auto_lookup and (effective_name or effective_artist):
             try:

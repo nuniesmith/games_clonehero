@@ -15,12 +15,7 @@ These tests validate the data pipeline that sits between the generator
 
 import configparser
 import json
-import os
-import textwrap
 from pathlib import Path
-from typing import Any, Dict
-
-import pytest
 
 from src.services.chart_parser import (
     chart_to_viewer_json,
@@ -211,24 +206,28 @@ class TestParseSongIni:
         ini_path = tmp_path / "song.ini"
         ini_path.write_text(SAMPLE_SONG_INI, encoding="utf-8")
         data = parse_song_ini(ini_path)
+        assert data is not None
         assert data.get("title") == "Test Song" or data.get("name") == "Test Song"
 
     def test_parses_artist(self, tmp_path):
         ini_path = tmp_path / "song.ini"
         ini_path.write_text(SAMPLE_SONG_INI, encoding="utf-8")
         data = parse_song_ini(ini_path)
+        assert data is not None
         assert data.get("artist") == "Test Artist"
 
     def test_parses_album(self, tmp_path):
         ini_path = tmp_path / "song.ini"
         ini_path.write_text(SAMPLE_SONG_INI, encoding="utf-8")
         data = parse_song_ini(ini_path)
+        assert data is not None
         assert data.get("album") == "Test Album"
 
     def test_parses_genre(self, tmp_path):
         ini_path = tmp_path / "song.ini"
         ini_path.write_text(SAMPLE_SONG_INI, encoding="utf-8")
         data = parse_song_ini(ini_path)
+        assert data is not None
         # genre may be in metadata sub-dict or top-level depending on impl
         genre = data.get("genre") or (data.get("metadata", {}) or {}).get("genre")
         assert genre is not None
@@ -238,6 +237,7 @@ class TestParseSongIni:
         ini_path = tmp_path / "song.ini"
         ini_path.write_text(SAMPLE_SONG_INI, encoding="utf-8")
         data = parse_song_ini(ini_path)
+        assert data is not None
         charter = data.get("charter") or (data.get("metadata", {}) or {}).get("charter")
         assert charter is not None
         assert "testcharter" in str(charter).lower()
@@ -283,6 +283,7 @@ class TestSongIniRoundTrip:
         ini_path = tmp_path / "song.ini"
         write_song_ini(ini_path, sample_song_data)
         parsed = parse_song_ini(ini_path)
+        assert parsed is not None
         title = parsed.get("title") or parsed.get("name", "")
         assert title == "Test Song"
 
@@ -290,12 +291,14 @@ class TestSongIniRoundTrip:
         ini_path = tmp_path / "song.ini"
         write_song_ini(ini_path, sample_song_data)
         parsed = parse_song_ini(ini_path)
+        assert parsed is not None
         assert parsed.get("artist") == "Test Artist"
 
     def test_album_round_trip(self, tmp_path, sample_song_data):
         ini_path = tmp_path / "song.ini"
         write_song_ini(ini_path, sample_song_data)
         parsed = parse_song_ini(ini_path)
+        assert parsed is not None
         assert parsed.get("album") == "Test Album"
 
     def test_unicode_round_trip(self, tmp_path):
@@ -308,6 +311,7 @@ class TestSongIniRoundTrip:
         ini_path = tmp_path / "song.ini"
         write_song_ini(ini_path, data)
         parsed = parse_song_ini(ini_path)
+        assert parsed is not None
         title = parsed.get("title") or parsed.get("name", "")
         assert "Ágætis" in title or "gætis" in title
         assert parsed.get("artist") == "Sigur Rós" or "Sigur" in str(
@@ -327,6 +331,7 @@ class TestSongIniRoundTrip:
         }
         write_song_ini(ini_path, new_data)
         parsed = parse_song_ini(ini_path)
+        assert parsed is not None
         title = parsed.get("title") or parsed.get("name", "")
         assert "New Song" in title or "new" in title.lower()
         assert "Test Song" not in str(parsed)

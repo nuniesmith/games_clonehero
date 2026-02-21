@@ -219,54 +219,166 @@ def _detect_segments(
     """
     Detect structural segments in the audio (intro, verse, chorus, etc.).
 
-    Falls back to evenly-spaced sections if segmentation fails.
+    Uses a **chroma self-similarity matrix** with a **novelty function**
+    to find segment boundaries, then identifies repeating sections
+    (verse/chorus) by comparing chroma similarity between segments.
+
+    This approach handles metal well because:
+    - Self-similarity captures repeating riffs (verse/chorus reuse)
+    - Novelty peaks at genuine transitions (not just energy changes)
+    - Adaptive segment count (not fixed k=8)
+    - Energy + similarity used for labeling (solo = high energy + unique;
+      chorus = high energy + repeated; verse = moderate + repeated)
+
+    Falls back to agglomerative clustering, then evenly-spaced sections.
     """
     try:
-        # Use spectral features to detect change points
+        # Compute chroma features (CQT-based, robust for distorted audio)
         chroma = librosa.feature.chroma_cqt(y=y, sr=sr)
-        bounds = librosa.segment.agglomerative(chroma, k=8)
-        bound_times = librosa.frames_to_time(bounds, sr=sr).tolist()
-
-        # Label segments based on position and energy
         rms = librosa.feature.rms(y=y)[0]
-        rms_frames = np.array(range(len(rms)))
 
+        # --- Self-similarity novelty function ---
+        # Build a recurrence (self-similarity) matrix and derive a
+        # novelty curve.  Peaks in the novelty curve mark genuine
+        # structural boundaries (verse→chorus, chorus→bridge, etc.)
+        try:
+            # Smooth chroma to reduce noise
+            chroma_smooth = librosa.util.sync(
+                chroma, librosa.beat.beat_track(y=y, sr=sr)[1]
+            )
+            if chroma_smooth.shape[1] < 4:
+                raise ValueError("Too few chroma frames after sync")
+
+            # Self-similarity via cosine distance
+            from numpy.linalg import norm as np_norm
+
+            # Normalise columns
+            norms = np_norm(chroma_smooth, axis=0, keepdims=True)
+            norms[norms == 0] = 1.0
+            chroma_norm = chroma_smooth / norms
+            sim_matrix = chroma_norm.T @ chroma_norm  # cosine similarity
+
+            # Compute novelty as a checkerboard kernel convolution
+            # along the diagonal of the similarity matrix
+            kernel_size = min(16, sim_matrix.shape[0] // 4)
+            if kernel_size < 4:
+                raise ValueError("Song too short for novelty detection")
+
+            novelty = np.zeros(sim_matrix.shape[0])
+            half_k = kernel_size // 2
+            for i in range(half_k, sim_matrix.shape[0] - half_k):
+                # Checkerboard: compare top-left vs bottom-right blocks
+                tl = sim_matrix[i - half_k : i, i - half_k : i]
+                br = sim_matrix[i : i + half_k, i : i + half_k]
+                tr = sim_matrix[i - half_k : i, i : i + half_k]
+                bl = sim_matrix[i : i + half_k, i - half_k : i]
+                # Novelty = (within-block similarity) - (across-block similarity)
+                within = (np.mean(tl) + np.mean(br)) / 2.0
+                across = (np.mean(tr) + np.mean(bl)) / 2.0
+                novelty[i] = max(0.0, within - across)
+
+            # Find peaks in the novelty function
+            # Adaptive threshold: peaks must be above median + 0.5 * std
+            if np.max(novelty) > 0:
+                novelty = novelty / np.max(novelty)
+            threshold = float(np.median(novelty) + 0.5 * np.std(novelty))
+            threshold = max(threshold, 0.1)
+
+            # Simple peak picking with minimum distance
+            beat_frame_times = librosa.frames_to_time(
+                range(sim_matrix.shape[0]),
+                sr=sr,
+                hop_length=int(duration * sr / sim_matrix.shape[0])
+                if sim_matrix.shape[0] > 0
+                else 512,
+            )
+            # Use beat-synced frame times
+            n_beats = len(librosa.beat.beat_track(y=y, sr=sr)[1])
+            if n_beats > 0:
+                beat_frame_times = np.linspace(0, duration, sim_matrix.shape[0])
+
+            min_dist_frames = max(4, sim_matrix.shape[0] // 15)  # ~6-15 segments max
+            peak_indices = []
+            for i in range(1, len(novelty) - 1):
+                if (
+                    novelty[i] > threshold
+                    and novelty[i] >= novelty[i - 1]
+                    and novelty[i] >= novelty[i + 1]
+                ):
+                    # Enforce minimum distance from previous peak
+                    if not peak_indices or (i - peak_indices[-1]) >= min_dist_frames:
+                        peak_indices.append(i)
+
+            # Convert peak indices to times
+            bound_times = [
+                float(beat_frame_times[p])
+                for p in peak_indices
+                if p < len(beat_frame_times)
+            ]
+
+        except Exception:
+            # Fallback to agglomerative if novelty detection fails
+            n_segments = max(4, min(10, int(duration / 25)))
+            bounds = librosa.segment.agglomerative(chroma, k=n_segments)
+            bound_times = librosa.frames_to_time(bounds, sr=sr).tolist()
+            sim_matrix = None
+
+        # --- Build segments with energy ---
         segments = []
-        section_labels = _generate_section_labels(len(bound_times) + 1)
-
-        # Add the start
         prev_time = 0.0
+        seg_chromas = []  # store mean chroma per segment for repeat detection
+
         for i, bt in enumerate(bound_times):
             if bt - prev_time < 2.0:
-                # Skip very short segments
-                continue
+                continue  # skip very short segments
+            if bt >= duration:
+                break
 
-            # Compute average energy for this segment
             start_frame = librosa.time_to_frames(prev_time, sr=sr)
-            end_frame = librosa.time_to_frames(bt, sr=sr)
-            end_frame = min(end_frame, len(rms) - 1)
+            end_frame = min(librosa.time_to_frames(bt, sr=sr), len(rms) - 1)
             seg_rms = (
                 float(np.mean(rms[start_frame : end_frame + 1]))
                 if end_frame > start_frame
                 else 0.0
             )
+            # Store mean chroma vector for this segment
+            chroma_start = librosa.time_to_frames(prev_time, sr=sr)
+            chroma_end = min(librosa.time_to_frames(bt, sr=sr), chroma.shape[1] - 1)
+            if chroma_end > chroma_start:
+                seg_chroma = np.mean(chroma[:, chroma_start : chroma_end + 1], axis=1)
+            else:
+                seg_chroma = np.zeros(chroma.shape[0])
+            seg_chromas.append(seg_chroma)
 
-            label = section_labels[min(i, len(section_labels) - 1)]
             segments.append(
                 {
                     "time": round(prev_time, 3),
-                    "label": label,
+                    "label": "",  # will be assigned below
                     "energy": round(seg_rms, 6),
                 }
             )
             prev_time = bt
 
-        # Add the final segment
+        # Final segment
         if prev_time < duration - 2.0:
+            start_frame = librosa.time_to_frames(prev_time, sr=sr)
+            end_frame = len(rms) - 1
+            seg_rms = (
+                float(np.mean(rms[start_frame : end_frame + 1]))
+                if end_frame > start_frame
+                else 0.0
+            )
+            chroma_start = librosa.time_to_frames(prev_time, sr=sr)
+            chroma_end = chroma.shape[1] - 1
+            if chroma_end > chroma_start:
+                seg_chroma = np.mean(chroma[:, chroma_start : chroma_end + 1], axis=1)
+            else:
+                seg_chroma = np.zeros(chroma.shape[0])
+            seg_chromas.append(seg_chroma)
             segments.append(
                 {
                     "time": round(prev_time, 3),
-                    "label": "Outro",
+                    "label": "",
                     "energy": 0.0,
                 }
             )
@@ -274,11 +386,128 @@ def _detect_segments(
         if len(segments) < 3:
             raise ValueError("Too few segments detected, falling back")
 
+        # --- Repeat-aware labeling ---
+        # Compare chroma similarity between segments to find repeats.
+        # Similar segments get the same structural label (Verse 1/2, Chorus 1/2).
+        labels = _label_segments_by_similarity(segments, seg_chromas)
+        for seg, label in zip(segments, labels):
+            seg["label"] = label
+
         return segments
 
     except Exception:
         # Fallback: evenly-spaced generic sections
         return _fallback_segments(duration)
+
+
+def _label_segments_by_similarity(
+    segments: List[Dict[str, Any]],
+    seg_chromas: List[np.ndarray],
+    similarity_threshold: float = 0.85,
+) -> List[str]:
+    """
+    Label segments using energy, position, and chroma similarity to
+    detect repeating sections (verse/chorus).
+
+    Segments that are harmonically similar (high chroma cosine similarity)
+    receive the same structural label with incrementing numbers
+    (e.g., "Verse 1", "Verse 2").
+
+    Labeling heuristics:
+    - First segment → "Intro"
+    - Last segment → "Outro"
+    - High energy + unique → "Solo" or "Bridge"
+    - High energy + repeated → "Chorus"
+    - Moderate energy + repeated → "Verse"
+    - Unique moderate energy → "Bridge"
+    """
+    n = len(segments)
+    if n == 0:
+        return []
+
+    # Compute pairwise cosine similarity between segment chromas
+    from numpy.linalg import norm as np_norm
+
+    sim_groups: List[int] = [-1] * n  # group ID for each segment
+    group_id = 0
+
+    for i in range(n):
+        if sim_groups[i] >= 0:
+            continue
+        sim_groups[i] = group_id
+        norm_i = float(np_norm(seg_chromas[i]))
+        if norm_i == 0:
+            group_id += 1
+            continue
+        for j in range(i + 1, n):
+            if sim_groups[j] >= 0:
+                continue
+            norm_j = float(np_norm(seg_chromas[j]))
+            if norm_j == 0:
+                continue
+            cosine_sim = float(
+                np.dot(seg_chromas[i], seg_chromas[j]) / (norm_i * norm_j)
+            )
+            if cosine_sim >= similarity_threshold:
+                sim_groups[j] = group_id
+        group_id += 1
+
+    # Count how many segments belong to each group (repeated = group size > 1)
+    from collections import Counter
+
+    group_counts = Counter(sim_groups)
+    repeated_groups = {g for g, c in group_counts.items() if c > 1}
+
+    # Compute energy statistics for labeling
+    energies = [s["energy"] for s in segments]
+    max_energy = max(energies) if energies else 1.0
+    avg_energy = sum(energies) / len(energies) if energies else 0.5
+    if max_energy <= 0:
+        max_energy = 1.0
+
+    # Assign structural roles
+    labels: List[str] = [""] * n
+    group_label_map: Dict[int, str] = {}  # group_id → base label
+    label_counters: Dict[str, int] = {}  # base label → occurrence count
+
+    for i in range(n):
+        if i == 0:
+            labels[i] = "Intro"
+            continue
+        if i == n - 1:
+            labels[i] = "Outro"
+            continue
+
+        gid = sim_groups[i]
+        is_repeated = gid in repeated_groups
+        rel_energy = energies[i] / max_energy
+
+        if gid in group_label_map:
+            # This segment's group already has a label assigned
+            base = group_label_map[gid]
+            label_counters[base] = label_counters.get(base, 1) + 1
+            labels[i] = f"{base} {label_counters[base]}"
+        else:
+            # Assign a new label based on energy and uniqueness
+            if is_repeated and rel_energy > 0.65:
+                base = "Chorus"
+            elif is_repeated and rel_energy <= 0.65:
+                base = "Verse"
+            elif not is_repeated and rel_energy > 0.75:
+                base = "Solo"
+            elif not is_repeated and rel_energy > 0.5:
+                base = "Bridge"
+            else:
+                base = "Pre-Chorus"
+
+            group_label_map[gid] = base
+            label_counters[base] = label_counters.get(base, 0) + 1
+            if label_counters[base] > 1 or is_repeated:
+                labels[i] = f"{base} {label_counters[base]}"
+            else:
+                labels[i] = base
+
+    return labels
 
 
 def _generate_section_labels(count: int) -> List[str]:
@@ -405,46 +634,69 @@ RESOLUTION = 192  # Standard ticks per quarter note
 # Difficulty settings: controls note density, max lane, chord probability, etc.
 # allow_open: whether open notes (lane 7 / purple bar) are enabled for this
 #             difficulty.  Open notes are essential for metal charting.
+#
+# HOPO detection uses energy-based legato analysis instead of random chance:
+#   hopo_energy_threshold — maximum inter-onset energy ratio for a note to
+#       qualify as a hammer-on/pull-off.  Lower values require quieter gaps
+#       between notes (stricter legato detection).  Set to 0.0 to disable.
+#
+# Tap detection identifies two-hand tapping patterns:
+#   tap_enabled — whether taps (N 6 0) are emitted for this difficulty.
+#   tap_min_speed_ticks — maximum gap between consecutive notes for a
+#       sequence to qualify as a tap run.
+#   tap_min_run — minimum consecutive qualifying notes to trigger taps.
+#   tap_high_lane_bias — prefer marking taps when notes are on higher
+#       lanes (Orange/Blue), mirroring real guitar tapping on high frets.
 DIFFICULTY_PROFILES = {
     "easy": {
         "section_name": "EasySingle",
         "note_skip": 4,  # use every Nth onset
         "max_lane": 2,  # only green/red/yellow
         "chord_chance": 0.0,  # no chords
-        "hopo_chance": 0.0,  # no HOPOs
+        "hopo_energy_threshold": 0.0,  # no HOPOs on easy
         "sustain_chance": 0.05,
         "min_note_gap_ticks": 192,  # at least 1 beat apart
         "allow_open": False,  # no open notes on easy
+        "tap_enabled": False,
     },
     "medium": {
         "section_name": "MediumSingle",
         "note_skip": 3,
         "max_lane": 3,  # up to blue
         "chord_chance": 0.05,
-        "hopo_chance": 0.05,
+        "hopo_energy_threshold": 0.0,  # no HOPOs on medium
         "sustain_chance": 0.10,
         "min_note_gap_ticks": 96,  # half beat
         "allow_open": False,  # no open notes on medium
+        "tap_enabled": False,
     },
     "hard": {
         "section_name": "HardSingle",
         "note_skip": 2,
         "max_lane": 4,  # all 5 fretted lanes
         "chord_chance": 0.10,
-        "hopo_chance": 0.15,
+        "hopo_energy_threshold": 0.45,  # moderate legato detection
         "sustain_chance": 0.15,
         "min_note_gap_ticks": 48,  # quarter beat
         "allow_open": True,  # open notes on hard+
+        "tap_enabled": True,
+        "tap_min_speed_ticks": 48,  # 1/4 beat max gap
+        "tap_min_run": 5,  # need 5+ fast notes
+        "tap_high_lane_bias": True,
     },
     "expert": {
         "section_name": "ExpertSingle",
         "note_skip": 1,  # use every onset
         "max_lane": 4,  # all 5 fretted lanes
         "chord_chance": 0.15,
-        "hopo_chance": 0.25,
+        "hopo_energy_threshold": 0.55,  # more permissive legato detection
         "sustain_chance": 0.20,
         "min_note_gap_ticks": 24,  # eighth beat
         "allow_open": True,  # open notes on hard+
+        "tap_enabled": True,
+        "tap_min_speed_ticks": 48,  # 1/4 beat max gap
+        "tap_min_run": 4,  # need 4+ fast notes
+        "tap_high_lane_bias": True,
     },
 }
 
@@ -802,17 +1054,50 @@ def _should_hopo(
     lanes: List[int],
     profile: Dict[str, Any],
     rng: random.Random,
+    current_strength: float = 0.5,
+    prev_strength: float = 0.5,
 ) -> bool:
     """
     Decide whether a note should be a HOPO (hammer-on / pull-off).
 
-    HOPOs fire when the note is close to the previous one and on a different
-    lane. In .chart format this is indicated by ``N 5 0`` alongside the note.
+    Uses **energy-based legato detection** instead of random chance.
+    A note qualifies as a HOPO when:
+      1. It is on a different lane from the previous note (lane change).
+      2. It is close in time to the previous note (within half a beat).
+      3. It has low onset energy relative to the previous note, indicating
+         the player did not pluck/strum again (legato articulation).
+
+    The energy ratio ``current_strength / prev_strength`` measures how
+    much attack energy the current note has compared to the previous one.
+    A low ratio (< ``hopo_energy_threshold``) suggests a hammer-on or
+    pull-off rather than a new pick stroke.
+
+    In .chart format HOPOs are indicated by ``N 5 0`` alongside the note.
 
     Open notes (lane 7) can be HOPOs — this mirrors real guitar hammer-ons
     from open string (e.g. 0h-1h-0 patterns in metal tabs).
+
+    Parameters
+    ----------
+    tick : int
+        Current note's tick position.
+    prev_tick : int
+        Previous note's tick position.
+    prev_lanes : list of int
+        Lane(s) of the previous note.
+    lanes : list of int
+        Lane(s) of the current note.
+    profile : dict
+        Difficulty profile containing ``hopo_energy_threshold``.
+    rng : random.Random
+        RNG instance (used for borderline cases).
+    current_strength : float
+        Normalised onset strength of the current note (0.0–1.0).
+    prev_strength : float
+        Normalised onset strength of the previous note (0.0–1.0).
     """
-    if profile["hopo_chance"] <= 0:
+    threshold = profile.get("hopo_energy_threshold", 0.0)
+    if threshold <= 0:
         return False
     if len(lanes) > 1:
         return False  # no HOPO on chords
@@ -822,7 +1107,105 @@ def _should_hopo(
     gap = tick - prev_tick
     if gap > RESOLUTION // 2:
         return False  # too far apart
-    return rng.random() < profile["hopo_chance"]
+
+    # --- Energy-based legato detection ---
+    # Compute the energy ratio: how strong is the current onset relative
+    # to the previous one.  A low ratio indicates legato (no new pluck).
+    safe_prev = max(prev_strength, 0.05)  # avoid division by zero
+    energy_ratio = current_strength / safe_prev
+
+    if energy_ratio < threshold:
+        # Clear legato — always HOPO
+        return True
+
+    # Borderline zone: if the energy ratio is only slightly above
+    # threshold and the gap is very tight, still allow HOPO with
+    # reduced probability (captures fast hammer-on flurries where
+    # onset detection picks up some energy on each note).
+    if energy_ratio < threshold * 1.3 and gap <= RESOLUTION // 4:
+        return rng.random() < 0.4
+    return False
+
+
+def _detect_tap_runs(
+    note_events: List[Tuple[int, float]],
+    pitch_lanes: Optional[List[int]],
+    profile: Dict[str, Any],
+) -> List[bool]:
+    """
+    Identify notes that should receive the force-tap modifier (``N 6 0``).
+
+    Tapping in Clone Hero is used for rapid two-hand patterns, typically
+    on higher frets.  This function scans for runs of fast, single-note
+    events that match tapping characteristics:
+
+    1. **Speed**: consecutive notes must be within ``tap_min_speed_ticks``
+       of each other (very fast sequences).
+    2. **Run length**: at least ``tap_min_run`` consecutive qualifying
+       notes to form a tap run.
+    3. **High-lane bias** (optional): when ``tap_high_lane_bias`` is True,
+       tap runs are more likely when notes land on Blue (3) or Orange (4),
+       mirroring real guitar two-hand tapping on high frets.
+
+    Tap runs are mutually exclusive with HOPOs — tapped notes get ``N 6``
+    instead of ``N 5``.
+
+    Parameters
+    ----------
+    note_events : list of (tick, strength)
+        All note events for this difficulty section.
+    pitch_lanes : list of int or None
+        Per-note lane assignments (if available from pitch analysis).
+        Used for the high-lane bias check.
+    profile : dict
+        Difficulty profile with tap settings.
+
+    Returns
+    -------
+    list of bool
+        Per-note flag: True if the note should be force-tapped.
+    """
+    n = len(note_events)
+    is_tap = [False] * n
+
+    if not profile.get("tap_enabled", False):
+        return is_tap
+
+    min_speed = profile.get("tap_min_speed_ticks", 48)
+    min_run = profile.get("tap_min_run", 4)
+    high_bias = profile.get("tap_high_lane_bias", True)
+
+    # Scan for contiguous runs of fast notes
+    run_start = 0
+    while run_start < n:
+        # Extend the run as long as consecutive notes are fast enough
+        run_end = run_start + 1
+        while run_end < n:
+            gap = note_events[run_end][0] - note_events[run_end - 1][0]
+            if gap > min_speed or gap <= 0:
+                break
+            run_end += 1
+
+        run_length = run_end - run_start
+
+        if run_length >= min_run:
+            # Check high-lane bias: at least 40% of notes on Blue/Orange
+            qualifies = True
+            if high_bias and pitch_lanes is not None:
+                high_count = 0
+                for j in range(run_start, run_end):
+                    if j < len(pitch_lanes) and pitch_lanes[j] >= 3:
+                        high_count += 1
+                if high_count / run_length < 0.4:
+                    qualifies = False
+
+            if qualifies:
+                for j in range(run_start, run_end):
+                    is_tap[j] = True
+
+        run_start = run_end
+
+    return is_tap
 
 
 def _compute_sustain(
@@ -1270,6 +1653,13 @@ def _generate_difficulty_section(
                     is_open_note=is_open,
                 )
 
+    # --- Pre-compute tap runs ---
+    tap_flags: List[bool] = []
+    if instrument != "drums":
+        tap_flags = _detect_tap_runs(note_events, pitch_lanes, profile)
+    else:
+        tap_flags = [False] * len(note_events)
+
     for i, (tick, strength) in enumerate(note_events):
         t_seconds = tick / (RESOLUTION * tempo / 60.0) if tempo > 0 else 0
         section_idx = _section_for_time(t_seconds)
@@ -1293,14 +1683,29 @@ def _generate_difficulty_section(
                 pitch_lane=p_lane,
             )
 
-        # HOPO marker (not used for drums)
-        is_hopo = False
-        if instrument != "drums":
-            is_hopo = _should_hopo(tick, prev_tick, prev_lanes, lanes, profile, rng)
+        # Previous note's onset strength for energy-based HOPO detection
+        prev_strength = note_events[i - 1][1] if i > 0 else 0.5
 
-        # Sustain (drums never sustain)
+        # HOPO marker (not used for drums, mutually exclusive with taps)
+        is_hopo = False
+        is_tap = tap_flags[i] if i < len(tap_flags) else False
+        if instrument != "drums" and not is_tap:
+            is_hopo = _should_hopo(
+                tick,
+                prev_tick,
+                prev_lanes,
+                lanes,
+                profile,
+                rng,
+                current_strength=strength,
+                prev_strength=prev_strength,
+            )
+
+        # Sustain (drums never sustain, tapped notes rarely sustain)
         if instrument == "drums":
             sustain = 0
+        elif is_tap:
+            sustain = 0  # taps are always short
         else:
             next_tick = note_events[i + 1][0] if i + 1 < len(note_events) else None
             sustain = _compute_sustain(tick, next_tick, strength, profile, rng)
@@ -1309,8 +1714,11 @@ def _generate_difficulty_section(
         for lane in lanes:
             lines.append(f"  {tick} = N {lane} {sustain}")
 
-        # HOPO / forced strum marker
-        if is_hopo:
+        # Tap marker (force-tap: N 6 0) — mutually exclusive with HOPO
+        if is_tap:
+            lines.append(f"  {tick} = N 6 0")
+        # HOPO / forced strum marker (N 5 0)
+        elif is_hopo:
             lines.append(f"  {tick} = N 5 0")
 
         # Star power marker (only at the start of an SP section)

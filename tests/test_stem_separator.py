@@ -425,9 +425,10 @@ class TestDifficultyProfile:
             "note_skip",
             "max_lane",
             "chord_chance",
-            "hopo_chance",
+            "hopo_energy_threshold",
             "sustain_chance",
             "min_note_gap_ticks",
+            "tap_enabled",
         }
         assert required.issubset(profile.keys())
 
@@ -438,8 +439,9 @@ class TestDifficultyProfile:
     def test_drums_no_hopo(self):
         for diff in ("easy", "medium", "hard", "expert"):
             profile = get_difficulty_profile_for_instrument("drums", diff)
-            assert profile["hopo_chance"] == 0.0
+            assert profile["hopo_energy_threshold"] == 0.0
             assert profile["sustain_chance"] == 0.0
+            assert profile["tap_enabled"] is False
 
     def test_drums_expert_section_name(self):
         profile = get_difficulty_profile_for_instrument("drums", "expert")

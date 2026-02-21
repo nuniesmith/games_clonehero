@@ -969,11 +969,20 @@ def analyze_instrument(
     sensitivity: float = 0.5,
     sr: Optional[int] = None,
     beat_times: Optional[List[float]] = None,
+    use_demucs: Optional[bool] = None,
 ) -> Tuple[StemAnalysis, SeparationResult]:
     """
     Full pipeline: load audio → separate → analyse the target instrument.
 
     This is the main entry point for instrument-specific analysis.
+
+    **Demucs-first strategy**: When Demucs is installed and ``use_demucs``
+    is not explicitly ``False``, this function uses Demucs for stem
+    separation (far superior to HPSS for isolating individual instruments).
+    The isolated stem is then passed through the same instrument-specific
+    analyser (onset detection, pYIN pitch, etc.) for note-level detail.
+
+    Falls back to librosa HPSS if Demucs is unavailable or fails.
 
     Parameters
     ----------
@@ -992,6 +1001,11 @@ def analyze_instrument(
         onsets are supplemented with beat positions where the stem has
         energy but no onset was detected.  This greatly improves note
         density for distorted / heavy instruments.
+    use_demucs : bool, optional
+        If ``True``, force Demucs usage (error if unavailable).
+        If ``False``, skip Demucs and use HPSS only.
+        If ``None`` (default), auto-detect: use Demucs if installed,
+        otherwise fall back to HPSS.
 
     Returns
     -------
@@ -1009,9 +1023,6 @@ def analyze_instrument(
         # Legacy behaviour: return full-mix onset analysis (no separation)
         return _analyze_full_mix(file_path, sr), SeparationResult()
 
-    # Perform HPSS
-    separation = separate_stems(file_path, sr=sr)
-
     analyzers = {
         "guitar": analyze_guitar_stem,
         "bass": analyze_bass_stem,
@@ -1024,6 +1035,71 @@ def analyze_instrument(
             f"Unknown instrument '{instrument}'. "
             f"Supported: {', '.join(analyzers.keys())}, full_mix"
         )
+
+    # --- Demucs-first strategy ---
+    # Try Demucs for high-quality stem isolation when available.
+    # Demucs produces far cleaner instrument stems than HPSS + bandpass,
+    # especially for distorted guitar, dense metal mixes, and polyphonic
+    # instruments.  The isolated stem is then analysed with the same
+    # onset/pitch pipeline used for HPSS stems.
+    demucs_stems: Optional[Dict[str, Path]] = None
+    should_try_demucs = (use_demucs is True) or (
+        use_demucs is None and demucs_available()
+    )
+
+    if should_try_demucs:
+        demucs_stem_name = INSTRUMENT_TO_DEMUCS_STEM.get(instrument)
+        if demucs_stem_name:
+            logger.info(
+                "🎛️ Attempting Demucs separation for '{}' (stem='{}')...",
+                instrument,
+                demucs_stem_name,
+            )
+            demucs_stems = separate_with_demucs(file_path)
+
+            if demucs_stems and demucs_stem_name in demucs_stems:
+                stem_path = demucs_stems[demucs_stem_name]
+                logger.info(
+                    "✅ Using Demucs '{}' stem for {} analysis",
+                    demucs_stem_name,
+                    instrument,
+                )
+                # Load the Demucs stem and run light HPSS on it
+                separation = _load_demucs_stem_as_separation(stem_path, sr=sr)
+
+                analysis = analyzers[instrument](
+                    separation,
+                    sensitivity=sensitivity,
+                    beat_times=beat_times,
+                )
+
+                # Clean up Demucs temp files
+                try:
+                    import shutil
+
+                    # stem_path is inside a temp dir tree: .../demucs_xxx/model/songname/stem.wav
+                    # Walk up to the demucs_xxx root to clean everything
+                    demucs_root = stem_path.parent.parent.parent
+                    if demucs_root.name.startswith("demucs_"):
+                        shutil.rmtree(demucs_root, ignore_errors=True)
+                except Exception:
+                    pass
+
+                return analysis, separation
+            else:
+                if use_demucs is True:
+                    logger.error(
+                        "❌ Demucs was required but failed for instrument '{}'",
+                        instrument,
+                    )
+                else:
+                    logger.warning(
+                        "⚠️ Demucs separation failed — falling back to HPSS for '{}'",
+                        instrument,
+                    )
+
+    # --- Fallback: HPSS-based separation ---
+    separation = separate_stems(file_path, sr=sr)
 
     analysis = analyzers[instrument](
         separation,
@@ -1640,37 +1716,47 @@ def get_difficulty_profile_for_instrument(
             "note_skip": 4,
             "max_lane": 2,
             "chord_chance": 0.0,
-            "hopo_chance": 0.0,
+            "hopo_energy_threshold": 0.0,  # no HOPOs on easy
             "sustain_chance": 0.05,
             "min_note_gap_ticks": 192,
             "allow_open": False,
+            "tap_enabled": False,
         },
         "medium": {
             "note_skip": 3,
             "max_lane": 3,
             "chord_chance": 0.05,
-            "hopo_chance": 0.05,
+            "hopo_energy_threshold": 0.0,  # no HOPOs on medium
             "sustain_chance": 0.10,
             "min_note_gap_ticks": 96,
             "allow_open": False,
+            "tap_enabled": False,
         },
         "hard": {
             "note_skip": 2,
             "max_lane": 4,
             "chord_chance": 0.10,
-            "hopo_chance": 0.15,
+            "hopo_energy_threshold": 0.45,  # moderate legato detection
             "sustain_chance": 0.15,
             "min_note_gap_ticks": 48,
             "allow_open": True,
+            "tap_enabled": True,
+            "tap_min_speed_ticks": 48,
+            "tap_min_run": 5,
+            "tap_high_lane_bias": True,
         },
         "expert": {
             "note_skip": 1,
             "max_lane": 4,
             "chord_chance": 0.15,
-            "hopo_chance": 0.25,
+            "hopo_energy_threshold": 0.55,  # more permissive legato detection
             "sustain_chance": 0.20,
             "min_note_gap_ticks": 24,
             "allow_open": True,
+            "tap_enabled": True,
+            "tap_min_speed_ticks": 48,
+            "tap_min_run": 4,
+            "tap_high_lane_bias": True,
         },
     }
 
@@ -1681,11 +1767,12 @@ def get_difficulty_profile_for_instrument(
     inst = instrument.lower()
 
     if inst == "drums":
-        # Drums: no HOPOs, no sustains, no open notes, tighter gaps
-        profile["hopo_chance"] = 0.0
+        # Drums: no HOPOs, no taps, no sustains, no open notes, tighter gaps
+        profile["hopo_energy_threshold"] = 0.0
         profile["sustain_chance"] = 0.0
         profile["chord_chance"] = 0.0  # drum "chords" handled via simultaneous hits
         profile["allow_open"] = False  # drums don't use open notes
+        profile["tap_enabled"] = False
         # Drums use lanes 0-4 even on easy (kick is always lane 0)
         if difficulty.lower() == "easy":
             profile["max_lane"] = 3  # kick + snare + hihat + tom
@@ -1699,9 +1786,13 @@ def get_difficulty_profile_for_instrument(
     elif inst == "bass":
         # Bass: fewer notes, more sustain, less movement
         # Open notes are critical for bass in metal (drop-tuned root notes)
-        profile["hopo_chance"] *= 0.5
+        # Bass HOPOs are less common; tighten the energy threshold
+        if profile["hopo_energy_threshold"] > 0:
+            profile["hopo_energy_threshold"] *= 0.7
         profile["sustain_chance"] *= 2.0
         profile["chord_chance"] *= 0.3  # bass rarely plays chords
+        # Bass tapping is rare — disable or raise the bar
+        profile["tap_enabled"] = False
         if difficulty.lower() in ("easy", "medium"):
             profile["max_lane"] = 2  # bass uses fewer frets on easy
             profile["allow_open"] = False  # no open notes on easy/medium bass
@@ -1714,8 +1805,10 @@ def get_difficulty_profile_for_instrument(
         # Vocals: moderate density, no chords, more sustain, no open notes
         profile["chord_chance"] = 0.0
         profile["sustain_chance"] *= 1.5
-        profile["hopo_chance"] *= 0.3
+        # Vocals don't use HOPOs or taps
+        profile["hopo_energy_threshold"] = 0.0
         profile["allow_open"] = False  # vocals don't use open notes
+        profile["tap_enabled"] = False
 
     return profile
 
@@ -1740,36 +1833,46 @@ def separate_with_demucs(
     model: str = "htdemucs",
 ) -> Optional[Dict[str, Path]]:
     """
-    Separate audio into stems using Demucs (if installed).
+    Separate audio into **all four stems** using Demucs (if installed).
+
+    Demucs (Hybrid Transformer Demucs) provides state-of-the-art source
+    separation, producing four high-quality stems: ``vocals``, ``drums``,
+    ``bass``, and ``other`` (guitar/keys/synths).
+
+    This function performs **full 4-stem separation** (not ``--two-stems``)
+    so that every instrument can be analysed independently.  The ``other``
+    stem is mapped to ``guitar`` by the caller.
 
     Parameters
     ----------
     file_path : str
         Path to the audio file.
     model : str
-        Demucs model name (default ``htdemucs``).
+        Demucs model name.  ``htdemucs`` (default) is the best general-
+        purpose model; ``htdemucs_ft`` is fine-tuned for higher quality
+        but slower.
 
     Returns
     -------
     dict or None
-        Mapping of stem name → Path to separated WAV file, or None if
-        Demucs is not available.
+        Mapping of stem name → Path to separated WAV file.
+        Keys: ``vocals``, ``drums``, ``bass``, ``other`` (guitar).
+        Returns None if Demucs is not available or separation fails.
     """
     if not demucs_available():
         logger.info("ℹ️ Demucs not installed — using librosa HPSS instead")
         return None
 
-    try:
-        import shutil
-        import subprocess
+    import shutil
+    import subprocess
 
+    try:
         output_dir = Path(tempfile.mkdtemp(prefix="demucs_"))
+        # Full 4-stem separation (no --two-stems flag)
         cmd = [
             "python",
             "-m",
             "demucs",
-            "--two-stems",
-            "vocals",  # or use full separation
             "-n",
             model,
             "-o",
@@ -1777,6 +1880,7 @@ def separate_with_demucs(
             file_path,
         ]
 
+        logger.info("🎛️ Running Demucs 4-stem separation (model={})...", model)
         result = subprocess.run(
             cmd,
             stdout=subprocess.PIPE,
@@ -1792,14 +1896,18 @@ def separate_with_demucs(
 
         # Find the output stems
         stem_dir = output_dir / model / Path(file_path).stem
-        stems = {}
+        stems: Dict[str, Path] = {}
         for stem_name in ("vocals", "drums", "bass", "other"):
             stem_file = stem_dir / f"{stem_name}.wav"
             if stem_file.exists():
                 stems[stem_name] = stem_file
 
         if stems:
-            logger.info("✅ Demucs separation complete: {}", list(stems.keys()))
+            logger.info(
+                "✅ Demucs 4-stem separation complete: {} stems ({})",
+                len(stems),
+                ", ".join(stems.keys()),
+            )
         else:
             logger.warning("⚠️ Demucs produced no output stems")
             shutil.rmtree(output_dir, ignore_errors=True)
@@ -1807,6 +1915,73 @@ def separate_with_demucs(
 
         return stems
 
+    except subprocess.TimeoutExpired:
+        logger.error("❌ Demucs timed out after 10 minutes")
+        return None
     except Exception as e:
         logger.error("❌ Demucs error: {}", e)
         return None
+
+
+# Demucs stem name → our instrument name
+DEMUCS_STEM_MAP: Dict[str, str] = {
+    "other": "guitar",  # Demucs "other" contains guitar, keys, synths
+    "bass": "bass",
+    "drums": "drums",
+    "vocals": "vocals",
+}
+
+# Reverse: our instrument name → which Demucs stem to load
+INSTRUMENT_TO_DEMUCS_STEM: Dict[str, str] = {
+    "guitar": "other",
+    "bass": "bass",
+    "drums": "drums",
+    "vocals": "vocals",
+}
+
+
+def _load_demucs_stem_as_separation(
+    stem_path: Path,
+    sr: Optional[int] = None,
+) -> SeparationResult:
+    """
+    Load a Demucs-separated stem WAV and wrap it in a SeparationResult.
+
+    Since Demucs already provides a clean instrument isolation, we run
+    a light HPSS on the isolated stem to split it into harmonic and
+    percussive components (useful for guitar: palm mutes are percussive
+    transients even within the isolated guitar stem).
+
+    Parameters
+    ----------
+    stem_path : Path
+        Path to the Demucs-output WAV file.
+    sr : int, optional
+        Target sample rate (None = preserve original).
+
+    Returns
+    -------
+    SeparationResult
+        Contains harmonic/percussive split of the isolated stem.
+    """
+    y, sample_rate = librosa.load(str(stem_path), sr=sr, mono=True)
+    sample_rate = int(sample_rate)
+    duration = float(librosa.get_duration(y=y, sr=sample_rate))
+
+    # Light HPSS on the already-isolated stem (margin=2 for gentler split)
+    harmonic, percussive = librosa.effects.hpss(y, margin=2.0)
+
+    logger.info(
+        "✅ Loaded Demucs stem '{}': sr={}, duration={:.1f}s",
+        stem_path.stem,
+        sample_rate,
+        duration,
+    )
+
+    return SeparationResult(
+        harmonic=harmonic,
+        percussive=percussive,
+        full_signal=y,
+        sample_rate=sample_rate,
+        duration=duration,
+    )

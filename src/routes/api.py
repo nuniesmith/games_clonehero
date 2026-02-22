@@ -25,17 +25,18 @@ import tempfile
 import time
 import uuid
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 import aiofiles
 from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from loguru import logger
 from pydantic import BaseModel
 
 from src.auth import get_charter_name
 from src.config import (
     ALLOWED_AUDIO_EXTENSIONS,
+    ALLOWED_MIDI_EXTENSIONS,
     ALLOWED_UPLOAD_EXTENSIONS,
     APP_VERSION,
     DB_PATH,
@@ -70,6 +71,7 @@ from src.services.chart_parser import (
 )
 from src.services.content_manager import (
     delete_song_from_nextcloud,
+    get_failure_report,
     get_sync_state,
     process_upload,
     sync_library_from_nextcloud,
@@ -98,6 +100,7 @@ _START_TIME = time.time()
 # Track last DB upload time (updated by main.py after each upload)
 _last_db_upload: float | None = None
 
+
 # ---------------------------------------------------------------------------
 # Pydantic models
 # ---------------------------------------------------------------------------
@@ -108,6 +111,7 @@ class SongUpdate(BaseModel):
     metadata: dict[str, Any] | None = None
     tags: list[str] | None = None
 
+
 class TagUpdateRequest(BaseModel):
     """Set, add, or remove tags on a song."""
 
@@ -115,18 +119,22 @@ class TagUpdateRequest(BaseModel):
     add: list[str] | None = None  # add these tags
     remove: list[str] | None = None  # remove these tags
 
+
 class ArtistMergeRequest(BaseModel):
     """Merge multiple artist name variants into a single canonical name."""
 
     canonical: str
     variants: list[str]
 
+
 class WebDAVDownloadRequest(BaseModel):
     remote_path: str
     content_type: str = "songs"
 
+
 class WebDAVUploadRequest(BaseModel):
     remote_path: str
+
 
 class GenerateSongRequest(BaseModel):
     song_name: str | None = None
@@ -135,18 +143,22 @@ class GenerateSongRequest(BaseModel):
     enable_lyrics: bool = True
     enable_album_art: bool = True
 
+
 class FilenameParseRequest(BaseModel):
     filename: str
+
 
 class MetadataLookupRequest(BaseModel):
     title: str
     artist: str = ""
+
 
 class ChartViewRequest(BaseModel):
     difficulty: str | None = None
     start_time: float | None = None
     end_time: float | None = None
     max_notes: int = 5000
+
 
 # ---------------------------------------------------------------------------
 # Health
@@ -167,6 +179,7 @@ async def health_check():
         "uptime_seconds": uptime,
         "version": APP_VERSION,
     }
+
 
 # ---------------------------------------------------------------------------
 # System Status (background activity reporting)
@@ -207,6 +220,7 @@ async def api_system_status():
 
     return result
 
+
 @router.get("/system/sync-state")
 async def api_sync_state():
     """
@@ -216,6 +230,7 @@ async def api_sync_state():
     without the overhead of the full system status.
     """
     return get_sync_state()
+
 
 # ---------------------------------------------------------------------------
 # Songs CRUD (metadata cached locally, files on Nextcloud)
@@ -248,6 +263,7 @@ async def api_list_songs(
         "songs": songs,
     }
 
+
 # ---------------------------------------------------------------------------
 # Artists (grouped view)
 # ---------------------------------------------------------------------------
@@ -258,6 +274,7 @@ async def api_list_artists(
     """List all artists with song counts, optionally filtered by search."""
     artists = await get_artists(search=search.strip() if search else None)
     return {"total": len(artists), "artists": artists}
+
 
 @router.get("/artists/{artist_name}/songs")
 async def api_artist_songs(
@@ -280,6 +297,7 @@ async def api_artist_songs(
 
     return {"artist": artist_name, "total": len(songs), "songs": songs}
 
+
 @router.get("/artists/duplicates")
 async def api_artist_duplicates():
     """
@@ -290,6 +308,7 @@ async def api_artist_duplicates():
     """
     groups = await get_artist_variants()
     return {"total": len(groups), "groups": groups}
+
 
 @router.post("/artists/merge")
 async def api_merge_artists(body: ArtistMergeRequest):
@@ -353,6 +372,7 @@ async def api_merge_artists(body: ArtistMergeRequest):
 
     return result
 
+
 # ---------------------------------------------------------------------------
 # Tags
 # ---------------------------------------------------------------------------
@@ -362,6 +382,7 @@ async def api_list_tags():
     tags = await get_all_tags()
     return {"total": len(tags), "tags": tags}
 
+
 @router.get("/songs/{song_id}/tags")
 async def api_get_song_tags(song_id: int):
     """Get tags for a single song."""
@@ -370,6 +391,7 @@ async def api_get_song_tags(song_id: int):
         raise HTTPException(status_code=404, detail="Song not found")
     tags = await get_song_tags(song_id)
     return {"song_id": song_id, "tags": tags}
+
 
 @router.put("/songs/{song_id}/tags")
 async def api_update_song_tags(song_id: int, body: TagUpdateRequest):
@@ -404,6 +426,7 @@ async def api_update_song_tags(song_id: int, body: TagUpdateRequest):
 
     return {"song_id": song_id, "tags": new_tags}
 
+
 @router.get("/songs/by-tag/{tag}")
 async def api_songs_by_tag(
     tag: str,
@@ -426,6 +449,7 @@ async def api_songs_by_tag(
 
     return {"tag": tag, "total": total, "songs": songs}
 
+
 @router.get("/songs/{song_id}")
 async def api_get_song(song_id: int):
     """Get a single song by ID."""
@@ -443,6 +467,7 @@ async def api_get_song(song_id: int):
     song["tags"] = parse_tags(song.get("tags"))
 
     return song
+
 
 @router.put("/songs/{song_id}")
 async def api_update_song(song_id: int, body: SongUpdate):
@@ -501,6 +526,7 @@ async def api_update_song(song_id: int, body: SongUpdate):
 
     return {"message": f"Song {song_id} updated successfully"}
 
+
 @router.delete("/songs/{song_id}")
 async def api_delete_song(song_id: int):
     """Delete a song from the database AND from Nextcloud."""
@@ -528,12 +554,14 @@ async def api_delete_song(song_id: int):
 
     return {"message": f"Song {song_id} deleted successfully"}
 
+
 # ---------------------------------------------------------------------------
 # Content Upload (songs go to Nextcloud)
 # ---------------------------------------------------------------------------
 def _get_temp_path(filename: str) -> str:
     """Generate a secure temporary file path."""
     return os.path.join(tempfile.gettempdir(), f"ch_{uuid.uuid4().hex}_{filename}")
+
 
 def _validate_extension(filename: str, allowed: set[str]) -> str:
     """Validate and return the file extension, raising HTTPException if invalid."""
@@ -544,6 +572,7 @@ def _validate_extension(filename: str, allowed: set[str]) -> str:
             detail=f"Invalid file extension: {ext}. Allowed: {', '.join(sorted(allowed))}",
         )
     return ext
+
 
 @router.post("/upload")
 async def api_upload_content(
@@ -622,6 +651,7 @@ async def api_upload_content(
         except FileNotFoundError:
             pass
 
+
 # ---------------------------------------------------------------------------
 # Song Generator (output uploaded to Nextcloud)
 # ---------------------------------------------------------------------------
@@ -629,6 +659,7 @@ async def api_upload_content(
 async def api_generate_song(
     request: Request,
     file: UploadFile = File(...),
+    midi_file: Optional[UploadFile] = File(None),
     song_name: str | None = Form(None),
     artist: str | None = Form(None),
     difficulty: str = Form("expert"),
@@ -640,6 +671,13 @@ async def api_generate_song(
     """
     Upload an audio file and generate a Clone Hero chart from it.
 
+    Optionally accepts a MIDI file (.mid / .midi) alongside the audio.
+    When a MIDI file is provided, note placement uses precise MIDI data
+    (pitches, velocities, sustain durations) instead of audio-derived
+    onset heuristics, producing significantly more accurate charts.
+    The audio file is still required for the playable song and is used
+    to verify tempo and provide energy/dynamics information.
+
     The generated chart and song.ini are uploaded to Nextcloud and
     registered in the local metadata cache.
 
@@ -647,7 +685,8 @@ async def api_generate_song(
     for canonical metadata (album, year, genre) and downloads album art from
     the Cover Art Archive if available.
 
-    Supports MP3, OGG, WAV, FLAC, and OPUS formats.
+    Supports MP3, OGG, WAV, FLAC, and OPUS formats for audio.
+    Supports MID and MIDI formats for the optional MIDI file.
     """
     if not is_configured():
         raise HTTPException(
@@ -669,12 +708,29 @@ async def api_generate_song(
     charter = get_charter_name(request)
 
     temp_path = _get_temp_path(f"gen_{uuid.uuid4().hex}{ext}")
+    midi_temp_path: str | None = None
     cover_art_path: str | None = None
 
     try:
         async with aiofiles.open(temp_path, "wb") as f:
             while chunk := await file.read(65536):
                 await f.write(chunk)
+
+        # Save MIDI file if provided
+        if midi_file and midi_file.filename:
+            midi_filename = midi_file.filename
+            midi_ext = Path(midi_filename).suffix.lower()
+            if midi_ext not in ALLOWED_MIDI_EXTENSIONS:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid MIDI file extension: {midi_ext}. "
+                    f"Allowed: {', '.join(sorted(ALLOWED_MIDI_EXTENSIONS))}",
+                )
+            midi_temp_path = _get_temp_path(f"midi_{uuid.uuid4().hex}{midi_ext}")
+            async with aiofiles.open(midi_temp_path, "wb") as mf:
+                while chunk := await midi_file.read(65536):
+                    await mf.write(chunk)
+            logger.info(f"🎹 MIDI file received: {midi_filename}")
 
         # Validate instrument parameter
         valid_instruments = {"guitar", "bass", "drums", "vocals", "full_mix"}
@@ -687,7 +743,8 @@ async def api_generate_song(
 
         logger.info(
             f"🎵 Generate request: {filename} "
-            f"(instrument={instrument}, difficulty={difficulty})"
+            f"(instrument={instrument}, difficulty={difficulty}"
+            f"{', midi=' + midi_file.filename if midi_file and midi_file.filename else ''})"
         )
 
         # --- Parse filename for artist/title when not provided ---
@@ -749,6 +806,7 @@ async def api_generate_song(
             genre=genre,
             cover_art_path=cover_art_path,
             instrument=instrument,
+            midi_file_path=midi_temp_path,
         )
 
         if "error" in result:
@@ -807,12 +865,66 @@ async def api_generate_song(
         logger.exception(f"❌ Song generation error: {e}")
         raise HTTPException(status_code=500, detail=f"Song generation failed: {str(e)}")
     finally:
-        for p in [temp_path, cover_art_path]:
+        for p in [temp_path, cover_art_path, midi_temp_path]:
             if p:
                 try:
                     os.remove(p)
                 except FileNotFoundError:
                     pass
+
+
+# ---------------------------------------------------------------------------
+# MIDI Summary (preview MIDI file info in the generator UI)
+# ---------------------------------------------------------------------------
+@router.post("/midi/summary")
+async def api_midi_summary(
+    file: UploadFile = File(...),
+):
+    """
+    Parse a MIDI file and return a summary of its contents.
+
+    Used by the generator UI to show MIDI track info, tempo, sections,
+    and available instruments before the user clicks Generate.
+    """
+    from src.services.midi_parser import get_midi_summary
+    from src.services.midi_parser import is_available as midi_is_available
+
+    if not midi_is_available():
+        raise HTTPException(
+            status_code=501,
+            detail="MIDI parsing is not available. Install mido: pip install mido",
+        )
+
+    filename = file.filename
+    if not filename:
+        raise HTTPException(status_code=400, detail="File must have a filename.")
+
+    ext = Path(filename).suffix.lower()
+    if ext not in ALLOWED_MIDI_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid MIDI file extension: {ext}. Allowed: {', '.join(sorted(ALLOWED_MIDI_EXTENSIONS))}",
+        )
+
+    temp_path = _get_temp_path(f"midi_preview_{uuid.uuid4().hex}{ext}")
+
+    try:
+        async with aiofiles.open(temp_path, "wb") as f:
+            while chunk := await file.read(65536):
+                await f.write(chunk)
+
+        summary = get_midi_summary(temp_path)
+        return summary
+
+    except Exception as e:
+        logger.warning(f"MIDI summary error: {e}")
+        return {"valid": False, "error": str(e)}
+    finally:
+        try:
+            os.remove(temp_path)
+        except FileNotFoundError:
+            pass
+
 
 # ---------------------------------------------------------------------------
 # Filename Parsing & Metadata Lookup
@@ -828,6 +940,7 @@ async def api_parse_filename(req: FilenameParseRequest):
     """
     result = parse_filename(req.filename)
     return result
+
 
 @router.post("/lookup-metadata")
 async def api_lookup_metadata(req: MetadataLookupRequest):
@@ -902,6 +1015,7 @@ async def api_lookup_metadata(req: MetadataLookupRequest):
         logger.warning("Metadata lookup error: {}", e)
         return {"found": False, "error": str(e)}
 
+
 # ---------------------------------------------------------------------------
 # Library Sync (scan Nextcloud → refresh local DB cache)
 # ---------------------------------------------------------------------------
@@ -927,6 +1041,7 @@ async def api_sync_library():
         raise HTTPException(status_code=502, detail=result["error"])
 
     return result
+
 
 @router.get("/library/sync/stream")
 async def api_sync_library_stream():
@@ -1016,6 +1131,53 @@ async def api_sync_library_stream():
         },
     )
 
+
+@router.get("/library/sync/failures")
+async def api_sync_failures(
+    download: bool = Query(False, description="Return as downloadable text file"),
+):
+    """
+    Return a detailed failure report from the last library sync.
+
+    Each entry includes the Nextcloud folder path, a short display name,
+    and the reason the sync failed (download error, parse error, missing
+    fields, etc.).
+
+    Pass ``?download=true`` to get a plain-text file suitable for saving.
+    """
+    report = get_failure_report()
+
+    if download:
+        lines = [
+            "Clone Hero Library Sync — Failure Report",
+            f"Sync time : {report.get('last_sync_time', 'unknown')}",
+            f"Total     : {report.get('total_folders', 0)} folders",
+            f"Synced    : {report.get('synced', 0)}",
+            f"Failed    : {report.get('failed', 0)}",
+            f"Purged    : {report.get('purged', 0)}",
+            "",
+            "=" * 72,
+            "",
+        ]
+        for i, f in enumerate(report.get("failures", []), 1):
+            lines.append(f"{i:>4}. {f.get('display', '?')}")
+            lines.append(f"      Path   : {f.get('folder', '?')}")
+            lines.append(f"      Reason : {f.get('reason', '?')}")
+            lines.append("")
+
+        if not report.get("failures"):
+            lines.append("  No failures recorded.")
+
+        content = "\n".join(lines)
+        return Response(
+            content=content,
+            media_type="text/plain; charset=utf-8",
+            headers={"Content-Disposition": "attachment; filename=sync_failures.txt"},
+        )
+
+    return report
+
+
 @router.get("/library/status")
 async def api_library_status():
     """Return library statistics and Nextcloud connection info."""
@@ -1036,6 +1198,7 @@ async def api_library_status():
             result["webdav_error"] = status["error"]
 
     return result
+
 
 # ---------------------------------------------------------------------------
 # WebDAV / Nextcloud endpoints (general file browser)
@@ -1058,6 +1221,7 @@ async def api_webdav_status():
         "error": status.get("error"),
     }
 
+
 @router.get("/webdav/browse")
 async def api_webdav_browse(path: str = Query("/", alias="path")):
     """List files and directories at a given Nextcloud path."""
@@ -1072,6 +1236,7 @@ async def api_webdav_browse(path: str = Query("/", alias="path")):
         "total": len(items),
         "items": [item.to_dict() for item in items],
     }
+
 
 @router.post("/webdav/import")
 async def api_webdav_import_song(remote_path: str = Form(...)):
@@ -1111,6 +1276,7 @@ async def api_webdav_import_song(remote_path: str = Form(...)):
         "song_id": song_id,
         "remote_path": remote_path,
     }
+
 
 @router.post("/webdav/upload")
 async def api_webdav_upload(
@@ -1157,6 +1323,7 @@ async def api_webdav_upload(
         logger.exception(f"❌ WebDAV upload error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+
 @router.post("/webdav/mkdir")
 async def api_webdav_mkdir(remote_path: str = Form(...)):
     """Create a directory on Nextcloud."""
@@ -1173,6 +1340,7 @@ async def api_webdav_mkdir(remote_path: str = Form(...)):
         )
 
     return {"message": f"Directory created: {remote_path}"}
+
 
 @router.delete("/webdav/delete")
 async def api_webdav_delete(path: str = Query(...)):
@@ -1191,9 +1359,11 @@ async def api_webdav_delete(path: str = Query(...)):
 
     return {"message": f"Deleted: {path}"}
 
+
 # ---------------------------------------------------------------------------
 # Chart Viewer / Editor
 # ---------------------------------------------------------------------------
+
 
 @router.get("/songs/{song_id}/chart")
 async def api_get_song_chart(
@@ -1284,6 +1454,7 @@ async def api_get_song_chart(
         except (FileNotFoundError, OSError):
             pass
 
+
 @router.get("/songs/{song_id}/chart/summary")
 async def api_get_chart_summary(song_id: int):
     """
@@ -1347,6 +1518,7 @@ async def api_get_chart_summary(song_id: int):
         except (FileNotFoundError, OSError):
             pass
 
+
 @router.post("/chart/parse")
 async def api_parse_uploaded_chart(
     file: UploadFile = File(...),
@@ -1404,9 +1576,11 @@ async def api_parse_uploaded_chart(
         except (FileNotFoundError, OSError):
             pass
 
+
 # ---------------------------------------------------------------------------
 # Chart Validation
 # ---------------------------------------------------------------------------
+
 
 @router.post("/validate/{song_id}")
 async def api_validate_song(song_id: int, fix: bool = Query(False)):
@@ -1423,6 +1597,7 @@ async def api_validate_song(song_id: int, fix: bool = Query(False)):
 
     result = await validate_song_on_nextcloud(song_id, fix=fix)
     return result.to_dict()
+
 
 @router.post("/validate/upload")
 async def api_validate_uploaded_chart(
@@ -1471,6 +1646,7 @@ async def api_validate_uploaded_chart(
 
     return response
 
+
 @router.post("/validate/batch")
 async def api_validate_batch(
     song_ids: str | None = Query(None, description="Comma-separated song IDs"),
@@ -1512,9 +1688,11 @@ async def api_validate_batch(
         },
     )
 
+
 # ---------------------------------------------------------------------------
 # Song Promotion (Generator → Songs)
 # ---------------------------------------------------------------------------
+
 
 @router.post("/songs/{song_id}/promote")
 async def api_promote_song(song_id: int, dry_run: bool = Query(False)):
@@ -1539,9 +1717,11 @@ async def api_promote_song(song_id: int, dry_run: bool = Query(False)):
         raise HTTPException(status_code=500, detail=result["error"])
     return result
 
+
 # ---------------------------------------------------------------------------
 # Song Library Organization
 # ---------------------------------------------------------------------------
+
 
 @router.get("/organize/scan")
 async def api_scan_library_issues():
@@ -1563,6 +1743,7 @@ async def api_scan_library_issues():
         raise HTTPException(status_code=500, detail=result["error"])
     return result
 
+
 @router.post("/organize/song/{song_id}")
 async def api_organize_song(song_id: int, dry_run: bool = Query(False)):
     """
@@ -1581,6 +1762,7 @@ async def api_organize_song(song_id: int, dry_run: bool = Query(False)):
     if "error" in result:
         raise HTTPException(status_code=500, detail=result["error"])
     return result
+
 
 @router.post("/organize/library")
 async def api_organize_library(
@@ -1625,6 +1807,7 @@ async def api_organize_library(
         },
     )
 
+
 @router.get("/duplicates")
 async def api_find_duplicates():
     """
@@ -1646,6 +1829,7 @@ async def api_find_duplicates():
         raise HTTPException(status_code=500, detail=result["error"])
     return result
 
+
 @router.post("/duplicates/clean")
 async def api_clean_duplicates(dry_run: bool = Query(False)):
     """
@@ -1664,6 +1848,7 @@ async def api_clean_duplicates(dry_run: bool = Query(False)):
     if "error" in result:
         raise HTTPException(status_code=500, detail=result["error"])
     return result
+
 
 @router.post("/songs/{song_id}/fetch-art")
 async def api_fetch_album_art(song_id: int):

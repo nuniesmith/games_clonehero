@@ -13,12 +13,16 @@ directory walking and remote song.ini parsing that the rest of the
 application relies on.
 """
 
+from __future__ import annotations
+
+import asyncio
 import configparser
 import io
 import xml.etree.ElementTree as ET
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import PurePosixPath
-from typing import Any
+from typing import Any, AsyncIterator
 from urllib.parse import quote, unquote, urlparse
 
 import httpx
@@ -98,6 +102,36 @@ def _build_url(remote_path: str = "/") -> str:
 
 def _auth() -> httpx.BasicAuth:
     return httpx.BasicAuth(NEXTCLOUD_USERNAME, NEXTCLOUD_PASSWORD)
+
+
+# ---------------------------------------------------------------------------
+# Shared client for batch operations (connection pooling)
+# ---------------------------------------------------------------------------
+@asynccontextmanager
+async def shared_client(
+    timeout: float = 120.0,
+    max_connections: int = 20,
+    max_keepalive_connections: int = 10,
+) -> AsyncIterator[httpx.AsyncClient]:
+    """
+    Context manager providing a **shared** :class:`httpx.AsyncClient` with
+    connection pooling.  Use this for batch operations (e.g. library sync)
+    instead of creating a fresh client per request.
+
+    The connection pool dramatically reduces TLS handshake overhead and
+    avoids exhausting Nextcloud's connection limits when downloading
+    thousands of files.
+    """
+    limits = httpx.Limits(
+        max_connections=max_connections,
+        max_keepalive_connections=max_keepalive_connections,
+    )
+    async with httpx.AsyncClient(
+        auth=_auth(),
+        timeout=timeout,
+        limits=limits,
+    ) as client:
+        yield client
 
 
 def _parse_propfind_response(xml_text: str, _base_path: str = "/") -> list[WebDAVItem]:
@@ -282,32 +316,77 @@ async def list_directory(remote_path: str = "/") -> list[WebDAVItem]:
         return []
 
 
-async def download_file(remote_path: str) -> bytes | None:
+async def download_file(
+    remote_path: str,
+    *,
+    client: httpx.AsyncClient | None = None,
+    retries: int = 0,
+) -> bytes | None:
     """
     Download a file from Nextcloud and return its content as bytes.
     Returns None on failure.
+
+    If *client* is provided (e.g. from :func:`shared_client`), it will be
+    reused instead of creating a throwaway connection.  *retries* controls
+    how many additional attempts are made on transient errors.
     """
     if not _is_configured():
         logger.warning("⚠️ Nextcloud WebDAV not configured")
         return None
 
     url = _build_url(remote_path)
-    try:
-        async with httpx.AsyncClient(auth=_auth(), timeout=120.0) as client:
-            response = await client.get(url)
-            if response.status_code == 200:
-                logger.info(
-                    f"⬇️ Downloaded {remote_path} ({len(response.content)} bytes)"
+    attempts = 1 + max(0, retries)
+
+    async def _do_download(c: httpx.AsyncClient) -> bytes | None:
+        for attempt in range(1, attempts + 1):
+            try:
+                response = await c.get(url)
+                if response.status_code == 200:
+                    logger.debug(
+                        "⬇️ Downloaded {} ({} bytes)",
+                        remote_path,
+                        len(response.content),
+                    )
+                    return response.content
+                else:
+                    logger.warning(
+                        "⚠️ Download attempt {}/{} failed ({}) for {}",
+                        attempt,
+                        attempts,
+                        response.status_code,
+                        remote_path,
+                    )
+            except httpx.HTTPError as e:
+                logger.warning(
+                    "⚠️ Download attempt {}/{} error for {}: {}",
+                    attempt,
+                    attempts,
+                    remote_path,
+                    e,
                 )
-                return response.content
-            else:
-                logger.error(
-                    f"❌ Download failed ({response.status_code}): {remote_path}"
+            except Exception as e:
+                logger.warning(
+                    "⚠️ Download attempt {}/{} unexpected error for {}: {}",
+                    attempt,
+                    attempts,
+                    remote_path,
+                    e,
                 )
-                return None
-    except httpx.HTTPError as e:
-        logger.error(f"❌ Download error for {remote_path}: {e}")
+
+            # Back off before retrying
+            if attempt < attempts:
+                await asyncio.sleep(0.5 * attempt)
+
+        logger.error("❌ Download failed after {} attempts: {}", attempts, remote_path)
         return None
+
+    if client is not None:
+        return await _do_download(client)
+
+    # Fallback: create a one-off client (backwards compatible)
+    try:
+        async with httpx.AsyncClient(auth=_auth(), timeout=120.0) as c:
+            return await _do_download(c)
     except Exception as e:
         logger.error(f"❌ Unexpected download error for {remote_path}: {e}")
         return None
@@ -573,13 +652,21 @@ def is_configured() -> bool:
 # ---------------------------------------------------------------------------
 
 
-async def walk_directory(remote_path: str = "/") -> list[WebDAVItem]:
+async def walk_directory(
+    remote_path: str = "/",
+    *,
+    concurrency: int = 5,
+) -> list[WebDAVItem]:
     """
     Recursively list *all* files and directories under *remote_path*.
 
     Returns a flat list of :class:`WebDAVItem` objects.  Directories
     themselves are included in the results so callers can distinguish
     them if needed.
+
+    Uses bounded concurrency (*concurrency* parallel PROPFIND requests)
+    to speed up large directory trees while avoiding overwhelming the
+    server.
     """
     if not _is_configured():
         logger.warning("⚠️ Nextcloud WebDAV not configured, returning empty walk")
@@ -587,14 +674,25 @@ async def walk_directory(remote_path: str = "/") -> list[WebDAVItem]:
 
     all_items: list[WebDAVItem] = []
     dirs_to_visit: list[str] = [remote_path]
+    sem = asyncio.Semaphore(concurrency)
+
+    async def _list_one(path: str) -> list[WebDAVItem]:
+        async with sem:
+            return await list_directory(path)
 
     while dirs_to_visit:
-        current = dirs_to_visit.pop()
-        items = await list_directory(current)
-        for item in items:
-            all_items.append(item)
-            if item.is_directory:
-                dirs_to_visit.append(item.path)
+        # Fan out listing for all pending directories
+        tasks = [_list_one(d) for d in dirs_to_visit]
+        dirs_to_visit = []
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for res in results:
+            if isinstance(res, BaseException):
+                logger.warning("⚠️ walk_directory listing error: {}", res)
+                continue
+            for item in res:
+                all_items.append(item)
+                if item.is_directory:
+                    dirs_to_visit.append(item.path)
 
     return all_items
 
@@ -631,13 +729,53 @@ async def find_song_folders(root: str | None = None) -> list[str]:
     return folders
 
 
-async def parse_remote_song_ini(remote_path: str) -> dict[str, Any] | None:
+def _decode_ini_bytes(raw: bytes) -> str:
+    """
+    Decode raw bytes from a song.ini using multiple encoding fallbacks.
+
+    Tries (in order): UTF-8-sig, UTF-8, Latin-1 (which never fails).
+    """
+    for encoding in ("utf-8-sig", "utf-8"):
+        try:
+            return raw.decode(encoding)
+        except (UnicodeDecodeError, ValueError):
+            continue
+    # latin-1 accepts every byte value — guaranteed to succeed
+    return raw.decode("latin-1")
+
+
+def _find_song_section(config: configparser.ConfigParser) -> str | None:
+    """
+    Find the ``[song]`` section in a case-insensitive manner.
+
+    Clone Hero song.ini files almost always use ``[song]``, but community
+    charts occasionally have ``[Song]``, ``[SONG]``, or other variants.
+    ConfigParser section names are case-sensitive by default.
+
+    Returns the actual section name found, or ``None``.
+    """
+    for section in config.sections():
+        if section.lower() == "song":
+            return section
+    return None
+
+
+async def parse_remote_song_ini(
+    remote_path: str,
+    *,
+    client: httpx.AsyncClient | None = None,
+    retries: int = 2,
+) -> dict[str, Any] | None:
     """
     Download and parse a ``song.ini`` file from Nextcloud.
 
     *remote_path* should point to the **folder** containing the
     ``song.ini`` (the ``/song.ini`` suffix is appended automatically if
     the path doesn't already end with it).
+
+    If *client* is supplied the download reuses that connection instead
+    of creating a fresh one (important for batch sync).  *retries*
+    controls how many extra download attempts are made on failure.
 
     Returns a dict with ``title``, ``artist``, ``album``, ``metadata``
     keys on success, or ``None`` if the file cannot be downloaded /
@@ -647,36 +785,69 @@ async def parse_remote_song_ini(remote_path: str) -> dict[str, Any] | None:
     if not ini_remote.lower().endswith("/song.ini"):
         ini_remote = f"{ini_remote}/song.ini"
 
-    content = await download_file(ini_remote)
+    content = await download_file(ini_remote, client=client, retries=retries)
     if content is None:
         logger.warning("⚠️ Could not download song.ini from {}", ini_remote)
         return None
 
+    # --- Decode with encoding fallbacks ---
+    try:
+        text = _decode_ini_bytes(content)
+    except Exception as e:
+        logger.error("❌ Failed to decode song.ini from {}: {}", ini_remote, e)
+        return None
+
+    # --- Parse ini ---
     config = configparser.ConfigParser(strict=False)
     try:
-        config.read_string(content.decode("utf-8-sig"))
+        config.read_string(text)
     except Exception as e:
         logger.error("❌ Failed to parse song.ini from {}: {}", ini_remote, e)
         return None
 
-    if not config.has_section("song"):
+    # --- Case-insensitive section lookup ---
+    section = _find_song_section(config)
+    if section is None:
         logger.warning("⚠️ Missing [song] section in {}", ini_remote)
         return None
 
-    name = config.get("song", "name", fallback=None)
-    artist = config.get("song", "artist", fallback=None)
-    album = config.get("song", "album", fallback=None)
+    # --- Field extraction with fallbacks ---
+    # Some charts use "title" instead of "name"
+    name = config.get(section, "name", fallback=None) or config.get(
+        section, "title", fallback=None
+    )
+    artist = config.get(section, "artist", fallback=None)
+    album = config.get(section, "album", fallback=None)
 
-    if not name or not artist:
-        logger.warning("⚠️ Missing required fields (name/artist) in {}", ini_remote)
+    # Try to salvage a title from the folder name if missing
+    if not name:
+        folder_name = remote_path.rstrip("/").rsplit("/", 1)[-1]
+        if folder_name:
+            # Strip trailing hash suffixes like "_abc123"
+            name = folder_name.rsplit("_", 1)[0].replace("_", " ").strip()
+
+    if not name:
+        logger.warning("⚠️ Missing song name in {}", ini_remote)
         return None
+
+    # If artist is missing, use "Unknown Artist" so the song isn't lost
+    if not artist:
+        artist = "Unknown Artist"
+        logger.debug("ℹ️ No artist field in {}, defaulting to '{}'", ini_remote, artist)
 
     metadata: dict[str, Any] = {}
     for field_name in OPTIONAL_SONG_FIELDS:
-        if config.has_option("song", field_name):
-            value = config.get("song", field_name, fallback=None)
+        if config.has_option(section, field_name):
+            value = config.get(section, field_name, fallback=None)
             if value is not None:
                 metadata[field_name] = value.strip()
+
+    # Also grab "frets" / "charter" which are used interchangeably
+    for charter_key in ("charter", "frets"):
+        if config.has_option(section, charter_key):
+            val = config.get(section, charter_key, fallback=None)
+            if val and "charter" not in metadata:
+                metadata["charter"] = val.strip()
 
     return {
         "title": name.strip(),

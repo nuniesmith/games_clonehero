@@ -3,8 +3,9 @@ endblock %} {% block content %}
 <div class="container">
     <h1>🎸 Song Generator</h1>
     <p class="subtitle">
-        Drop an audio file to generate a Clone Hero chart. Metadata is
-        automatically detected from the filename and looked up online.
+        Drop an audio file to generate a Clone Hero chart. Optionally add a MIDI
+        file for precise note placement. Metadata is automatically detected from
+        the filename and looked up online.
     </p>
 
     {% if not webdav_configured %}
@@ -70,6 +71,82 @@ endblock %} {% block content %}
                         >
                             ✕
                         </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- MIDI Drop Zone (optional) -->
+            <div class="midi-zone" id="midiZone">
+                <div class="midi-zone-content" id="midiZoneContent">
+                    <div class="midi-zone-icon">
+                        <svg
+                            width="32"
+                            height="32"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                        >
+                            <rect x="2" y="6" width="20" height="12" rx="2" />
+                            <path d="M6 6v12" />
+                            <path d="M10 6v12" />
+                            <path d="M14 6v12" />
+                            <path d="M18 6v12" />
+                            <path d="M6 10h4" />
+                            <path d="M14 10h4" />
+                        </svg>
+                    </div>
+                    <div class="midi-zone-text-group">
+                        <span class="midi-zone-label"
+                            >🎹 Optional: Add MIDI file for better charts</span
+                        >
+                        <span class="midi-zone-hint"
+                            >MID &bull; MIDI — Provides precise note data</span
+                        >
+                    </div>
+                    <input
+                        type="file"
+                        id="midiFileInput"
+                        name="midi_file"
+                        class="midi-zone-input"
+                        accept=".mid,.midi"
+                    />
+                </div>
+                <div
+                    class="midi-zone-preview"
+                    id="midiPreview"
+                    style="display: none"
+                >
+                    <div class="midi-preview-card">
+                        <div class="midi-preview-icon">🎹</div>
+                        <div class="midi-preview-details">
+                            <span
+                                class="midi-preview-name"
+                                id="midiPreviewName"
+                            ></span>
+                            <span
+                                class="midi-preview-size"
+                                id="midiPreviewSize"
+                            ></span>
+                        </div>
+                        <button
+                            type="button"
+                            class="preview-clear"
+                            id="clearMidiBtn"
+                            title="Remove MIDI file"
+                        >
+                            ✕
+                        </button>
+                    </div>
+                    <!-- MIDI Info Panel (populated after parsing) -->
+                    <div
+                        class="midi-info-panel"
+                        id="midiInfoPanel"
+                        style="display: none"
+                    >
+                        <div class="midi-info-grid" id="midiInfoGrid"></div>
                     </div>
                 </div>
             </div>
@@ -165,7 +242,10 @@ endblock %} {% block content %}
                     style="display: none"
                 >
                     <span class="suggested-tags-label">🏷️ Suggested tags</span>
-                    <div class="suggested-tags-list" id="suggestedTagsList"></div>
+                    <div
+                        class="suggested-tags-list"
+                        id="suggestedTagsList"
+                    ></div>
                 </div>
 
                 <!-- Options Row -->
@@ -289,6 +369,185 @@ endblock %} {% block content %}
         border-radius: 12px;
         padding: 28px;
         border: 1px solid #e9ecef;
+    }
+
+    /* ── MIDI Zone ── */
+    .midi-zone {
+        margin-top: 14px;
+        border: 2px dashed #d5d8dc;
+        border-radius: 10px;
+        padding: 14px 20px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        background: white;
+        position: relative;
+    }
+
+    .midi-zone:hover {
+        border-color: #9b59b6;
+        background: #faf5ff;
+    }
+
+    .midi-zone.drag-over {
+        border-color: #9b59b6;
+        background: #f3e8ff;
+        box-shadow: 0 0 0 4px rgba(155, 89, 182, 0.15);
+    }
+
+    .midi-zone.has-file {
+        border-style: solid;
+        border-color: #9b59b6;
+        background: #faf5ff;
+        padding: 12px 20px;
+    }
+
+    .midi-zone-content {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+    }
+
+    .midi-zone-icon {
+        color: #bdc3c7;
+        flex-shrink: 0;
+        transition: color 0.3s;
+    }
+
+    .midi-zone:hover .midi-zone-icon {
+        color: #9b59b6;
+    }
+
+    .midi-zone-text-group {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        text-align: left;
+    }
+
+    .midi-zone-label {
+        font-size: 0.95em;
+        color: #495057;
+        font-weight: 600;
+    }
+
+    .midi-zone-hint {
+        font-size: 0.8em;
+        color: #95a5a6;
+        letter-spacing: 0.5px;
+    }
+
+    .midi-zone-input {
+        position: absolute;
+        inset: 0;
+        opacity: 0;
+        cursor: pointer;
+    }
+
+    .midi-zone.has-file .midi-zone-input {
+        display: none;
+    }
+
+    .midi-preview-card {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+    }
+
+    .midi-preview-icon {
+        font-size: 1.6em;
+        flex-shrink: 0;
+    }
+
+    .midi-preview-details {
+        flex: 1;
+        text-align: left;
+        min-width: 0;
+    }
+
+    .midi-preview-name {
+        display: block;
+        font-weight: 700;
+        color: #6c3483;
+        font-size: 0.95em;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .midi-preview-size {
+        display: block;
+        color: #7f8c8d;
+        font-size: 0.82em;
+        margin-top: 2px;
+    }
+
+    .midi-info-panel {
+        margin-top: 10px;
+        padding-top: 10px;
+        border-top: 1px solid rgba(155, 89, 182, 0.2);
+    }
+
+    .midi-info-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
+        gap: 8px;
+    }
+
+    .midi-info-item {
+        text-align: center;
+        padding: 6px 4px;
+        background: rgba(155, 89, 182, 0.06);
+        border-radius: 6px;
+    }
+
+    .midi-info-val {
+        display: block;
+        font-size: 1.1em;
+        font-weight: 700;
+        color: #8e44ad;
+    }
+
+    .midi-info-lbl {
+        display: block;
+        font-size: 0.7em;
+        color: #95a5a6;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        margin-top: 1px;
+    }
+
+    .midi-instruments-list {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px;
+        margin-top: 6px;
+    }
+
+    .midi-inst-badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-size: 0.75em;
+        font-weight: 600;
+        background: rgba(155, 89, 182, 0.12);
+        color: #8e44ad;
+        border: 1px solid rgba(155, 89, 182, 0.25);
+    }
+
+    .midi-inst-badge.active {
+        background: #9b59b6;
+        color: white;
+        border-color: #9b59b6;
+    }
+
+    .midi-sections-row {
+        margin-top: 6px;
+        font-size: 0.78em;
+        color: #7f8c8d;
+    }
+
+    .midi-sections-row strong {
+        color: #6c3483;
     }
 
     /* ── Drop Zone ── */
@@ -1009,6 +1268,13 @@ endblock %} {% block content %}
     const filePreview = document.getElementById("filePreview");
     const dropZoneContent = document.getElementById("dropZoneContent");
     const clearFileBtn = document.getElementById("clearFileBtn");
+    const midiZone = document.getElementById("midiZone");
+    const midiFileInput = document.getElementById("midiFileInput");
+    const midiPreview = document.getElementById("midiPreview");
+    const midiZoneContent = document.getElementById("midiZoneContent");
+    const clearMidiBtn = document.getElementById("clearMidiBtn");
+    const midiInfoPanel = document.getElementById("midiInfoPanel");
+    const midiInfoGrid = document.getElementById("midiInfoGrid");
     const metaSection = document.getElementById("metaSection");
     const generatorForm = document.getElementById("generatorForm");
     const generateBtn = document.getElementById("generateBtn");
@@ -1195,6 +1461,199 @@ endblock %} {% block content %}
             .join(" ");
     }
 
+    // ── MIDI File Handling ──
+    function onMidiSelected(file) {
+        document.getElementById("midiPreviewName").textContent = file.name;
+        document.getElementById("midiPreviewSize").textContent = formatFileSize(
+            file.size,
+        );
+        midiZoneContent.style.display = "none";
+        midiPreview.style.display = "block";
+        midiZone.classList.add("has-file");
+
+        // Reset info panel
+        midiInfoPanel.style.display = "none";
+        midiInfoGrid.innerHTML = "";
+
+        // Parse MIDI on the server for preview info
+        parseMidiFile(file);
+    }
+
+    async function parseMidiFile(file) {
+        const formData = new FormData();
+        formData.append("file", file);
+
+        try {
+            const resp = await fetch("/api/midi/summary", {
+                method: "POST",
+                body: formData,
+            });
+
+            if (!resp.ok) {
+                console.debug(
+                    "MIDI summary unavailable (endpoint may not exist yet)",
+                );
+                // Show basic info even without server parsing
+                midiInfoGrid.innerHTML = `
+                    <div class="midi-info-item">
+                        <span class="midi-info-val">🎹</span>
+                        <span class="midi-info-lbl">MIDI Ready</span>
+                    </div>
+                    <div class="midi-info-item">
+                        <span class="midi-info-val">${formatFileSize(file.size)}</span>
+                        <span class="midi-info-lbl">File Size</span>
+                    </div>
+                `;
+                midiInfoPanel.style.display = "block";
+                return;
+            }
+
+            const data = await resp.json();
+
+            if (data.valid) {
+                let html = "";
+                html += `<div class="midi-info-item"><span class="midi-info-val">${Math.round(data.initial_tempo)}</span><span class="midi-info-lbl">BPM</span></div>`;
+                html += `<div class="midi-info-item"><span class="midi-info-val">${data.total_notes || 0}</span><span class="midi-info-lbl">Notes</span></div>`;
+                html += `<div class="midi-info-item"><span class="midi-info-val">${data.duration ? formatDuration(data.duration) : "?"}</span><span class="midi-info-lbl">Duration</span></div>`;
+                html += `<div class="midi-info-item"><span class="midi-info-val">${data.sections || 0}</span><span class="midi-info-lbl">Sections</span></div>`;
+                if (data.tempo_changes > 1) {
+                    html += `<div class="midi-info-item"><span class="midi-info-val">${data.tempo_changes}</span><span class="midi-info-lbl">Tempo Changes</span></div>`;
+                }
+                if (data.time_signatures && data.time_signatures.length > 0) {
+                    html += `<div class="midi-info-item"><span class="midi-info-val">${data.time_signatures[0]}</span><span class="midi-info-lbl">Time Sig</span></div>`;
+                }
+                midiInfoGrid.innerHTML = html;
+
+                // Show detected instruments
+                if (data.instruments && data.instruments.length > 0) {
+                    const currentInst =
+                        document.getElementById("instrument").value;
+                    const instIcons = {
+                        guitar: "🎸",
+                        bass: "🎸",
+                        drums: "🥁",
+                        vocals: "🎤",
+                        unknown: "🎵",
+                    };
+                    let instHtml = '<div class="midi-instruments-list">';
+                    data.instruments.forEach(function (inst) {
+                        const icon = instIcons[inst] || "🎵";
+                        const isActive = inst === currentInst;
+                        instHtml += `<span class="midi-inst-badge${isActive ? " active" : ""}">${icon} ${inst}</span>`;
+                    });
+                    instHtml += "</div>";
+                    midiInfoGrid.insertAdjacentHTML("afterend", instHtml);
+                }
+
+                // Show section labels if available
+                if (data.section_labels && data.section_labels.length > 0) {
+                    const labels = data.section_labels.slice(0, 8).join(", ");
+                    const more =
+                        data.section_labels.length > 8
+                            ? ` +${data.section_labels.length - 8} more`
+                            : "";
+                    midiInfoGrid.insertAdjacentHTML(
+                        "afterend",
+                        `<div class="midi-sections-row"><strong>Sections:</strong> ${labels}${more}</div>`,
+                    );
+                }
+
+                // Show RB format badge
+                if (data.is_rb_format) {
+                    midiInfoGrid.insertAdjacentHTML(
+                        "afterend",
+                        '<div class="midi-sections-row"><span class="midi-inst-badge" style="background:#e74c3c;color:white;border-color:#e74c3c;">Rock Band Format</span></div>',
+                    );
+                }
+
+                midiInfoPanel.style.display = "block";
+            } else {
+                midiInfoGrid.innerHTML = `
+                    <div class="midi-info-item" style="grid-column: 1 / -1; color: #e67e22;">
+                        <span class="midi-info-val">⚠️</span>
+                        <span class="midi-info-lbl">${data.error || "Could not parse MIDI"}</span>
+                    </div>
+                `;
+                midiInfoPanel.style.display = "block";
+            }
+        } catch (e) {
+            console.debug("MIDI parse error:", e);
+            // Still show the file is attached
+            midiInfoGrid.innerHTML = `
+                <div class="midi-info-item">
+                    <span class="midi-info-val">🎹</span>
+                    <span class="midi-info-lbl">MIDI Attached</span>
+                </div>
+            `;
+            midiInfoPanel.style.display = "block";
+        }
+    }
+
+    function clearMidi() {
+        midiFileInput.value = "";
+        midiZoneContent.style.display = "flex";
+        midiPreview.style.display = "none";
+        midiZone.classList.remove("has-file");
+        midiInfoPanel.style.display = "none";
+        midiInfoGrid.innerHTML = "";
+    }
+
+    // MIDI drag and drop
+    ["dragenter", "dragover"].forEach(function (evt) {
+        midiZone.addEventListener(evt, function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            midiZone.classList.add("drag-over");
+        });
+    });
+
+    ["dragleave", "drop"].forEach(function (evt) {
+        midiZone.addEventListener(evt, function (e) {
+            e.preventDefault();
+            e.stopPropagation();
+            midiZone.classList.remove("drag-over");
+        });
+    });
+
+    midiZone.addEventListener("drop", function (e) {
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+            const f = files[0];
+            const ext = f.name.toLowerCase().split(".").pop();
+            if (ext === "mid" || ext === "midi") {
+                midiFileInput.files = files;
+                onMidiSelected(f);
+            } else {
+                alert("Please drop a MIDI file (.mid / .midi)");
+            }
+        }
+    });
+
+    midiFileInput.addEventListener("change", function () {
+        if (this.files.length > 0) {
+            onMidiSelected(this.files[0]);
+        }
+    });
+
+    clearMidiBtn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        clearMidi();
+    });
+
+    // Update MIDI instrument badges when instrument selector changes
+    document
+        .getElementById("instrument")
+        .addEventListener("change", function () {
+            const badges = document.querySelectorAll(".midi-inst-badge");
+            const val = this.value;
+            badges.forEach(function (badge) {
+                const text = badge.textContent.toLowerCase().trim();
+                // Strip emoji and trim
+                const instName = text.replace(/[^\w\s]/g, "").trim();
+                badge.classList.toggle("active", instName === val);
+            });
+        });
+
     // ── Debounce ──
     let lookupTimeout = null;
 
@@ -1318,7 +1777,11 @@ endblock %} {% block content %}
                 }
 
                 // Show that cover art will be available
-                if (data.cover_art_url || data.release_mbid || data.release_group_mbid) {
+                if (
+                    data.cover_art_url ||
+                    data.release_mbid ||
+                    data.release_group_mbid
+                ) {
                     document.getElementById("coverArtRow").style.display =
                         "flex";
                     document.getElementById("coverArtDetail").textContent =
@@ -1334,11 +1797,13 @@ endblock %} {% block content %}
                         img.style.height = "100%";
                         img.style.objectFit = "cover";
                         img.style.borderRadius = "8px";
-                        img.onerror = function() {
+                        img.onerror = function () {
                             // Fall back to placeholder if image fails to load
                             thumbEl.innerHTML =
                                 '<div style="width:100%;height:100%;background:#95a5a6;display:flex;align-items:center;justify-content:center;color:white;font-size:1.5em;border-radius:8px;">🎨</div>';
-                            document.getElementById("coverArtDetail").textContent += " (art not available)";
+                            document.getElementById(
+                                "coverArtDetail",
+                            ).textContent += " (art not available)";
                         };
                         thumbEl.innerHTML = "";
                         thumbEl.appendChild(img);
@@ -1376,7 +1841,7 @@ endblock %} {% block content %}
             return;
         }
         list.innerHTML = "";
-        tags.forEach(function(tag) {
+        tags.forEach(function (tag) {
             const span = document.createElement("span");
             span.className = "suggested-tag";
             span.textContent = tag;
@@ -1386,18 +1851,59 @@ endblock %} {% block content %}
                 span.classList.add("art-tag");
             } else if (/^\d{4}s$/.test(tag)) {
                 span.classList.add("decade-tag");
-            } else if (["rock", "metal", "pop", "punk", "alternative", "indie",
-                         "electronic", "hip hop", "hip-hop", "jazz", "blues",
-                         "classical", "country", "folk", "r&b", "soul", "funk",
-                         "reggae", "ska", "grunge", "emo", "hardcore", "post-hardcore",
-                         "metalcore", "deathcore", "progressive rock", "progressive metal",
-                         "death metal", "black metal", "thrash metal", "power metal",
-                         "nu metal", "djent", "math rock", "post-rock", "shoegaze",
-                         "ambient", "synthwave", "dream pop", "noise rock",
-                         "psychedelic rock", "stoner rock", "doom metal",
-                         "symphonic metal", "melodic death metal",
-                         "post-punk", "new wave", "gothic rock", "industrial"
-                        ].indexOf(tag) !== -1) {
+            } else if (
+                [
+                    "rock",
+                    "metal",
+                    "pop",
+                    "punk",
+                    "alternative",
+                    "indie",
+                    "electronic",
+                    "hip hop",
+                    "hip-hop",
+                    "jazz",
+                    "blues",
+                    "classical",
+                    "country",
+                    "folk",
+                    "r&b",
+                    "soul",
+                    "funk",
+                    "reggae",
+                    "ska",
+                    "grunge",
+                    "emo",
+                    "hardcore",
+                    "post-hardcore",
+                    "metalcore",
+                    "deathcore",
+                    "progressive rock",
+                    "progressive metal",
+                    "death metal",
+                    "black metal",
+                    "thrash metal",
+                    "power metal",
+                    "nu metal",
+                    "djent",
+                    "math rock",
+                    "post-rock",
+                    "shoegaze",
+                    "ambient",
+                    "synthwave",
+                    "dream pop",
+                    "noise rock",
+                    "psychedelic rock",
+                    "stoner rock",
+                    "doom metal",
+                    "symphonic metal",
+                    "melodic death metal",
+                    "post-punk",
+                    "new wave",
+                    "gothic rock",
+                    "industrial",
+                ].indexOf(tag) !== -1
+            ) {
                 span.classList.add("genre-tag");
             } else {
                 // Treat any other tag from MusicBrainz as a genre tag too
@@ -1415,6 +1921,9 @@ endblock %} {% block content %}
         dropZone.classList.remove("has-file");
         metaSection.style.display = "none";
         lookupBadge.style.display = "none";
+
+        // Also clear MIDI
+        clearMidi();
 
         // Clear fields
         document.getElementById("songName").value = "";
@@ -1555,21 +2064,36 @@ endblock %} {% block content %}
         formData.append("enable_album_art", enableAlbumArt ? "true" : "false");
         formData.append("auto_lookup", "true");
 
+        // Attach MIDI file if provided
+        if (midiFileInput.files && midiFileInput.files.length > 0) {
+            formData.append("midi_file", midiFileInput.files[0]);
+        }
+
         try {
             // Update progress
             const instIcon = instrumentIcons[instrument] || "🎸";
             const instName = instrumentNames[instrument] || "Guitar";
 
+            const hasMidi =
+                midiFileInput.files && midiFileInput.files.length > 0;
+
             setTimeout(() => {
                 if (generateBtn.disabled) {
-                    progressTitle.textContent = `Generating ${instName} chart…`;
-                    progressDetail.textContent =
-                        instrument === "drums"
-                            ? "Detecting kick, snare, hi-hat & tom patterns"
-                            : instrument === "bass"
-                              ? "Isolating bass frequencies and building note patterns"
-                              : "Building note patterns, HOPO markers, and star power sections";
-                    ringIcon.textContent = instIcon;
+                    if (hasMidi) {
+                        progressTitle.textContent = `Parsing MIDI & generating ${instName} chart…`;
+                        progressDetail.textContent =
+                            "Using MIDI note data for precise lane placement and sustains";
+                        ringIcon.textContent = "🎹";
+                    } else {
+                        progressTitle.textContent = `Generating ${instName} chart…`;
+                        progressDetail.textContent =
+                            instrument === "drums"
+                                ? "Detecting kick, snare, hi-hat & tom patterns"
+                                : instrument === "bass"
+                                  ? "Isolating bass frequencies and building note patterns"
+                                  : "Building note patterns, HOPO markers, and star power sections";
+                        ringIcon.textContent = instIcon;
+                    }
                 }
             }, 5000);
 
@@ -1644,6 +2168,7 @@ endblock %} {% block content %}
         resultTitle.textContent = `${instIcon} ${instLabel} Chart Generated!`;
 
         const features = [];
+        if (result.has_midi) features.push("🎹 MIDI");
         if (result.has_lyrics) features.push("🎤 Lyrics");
         if (result.has_album_art) features.push("🎨 Art");
         if (result.lookup_source) features.push("🔍 Metadata");
@@ -1756,6 +2281,7 @@ endblock %} {% block content %}
     function resetGenerator() {
         generatorForm.reset();
         clearFile();
+        clearMidi();
         progressSection.style.display = "none";
         resultSection.style.display = "none";
         window.scrollTo({ top: 0, behavior: "smooth" });

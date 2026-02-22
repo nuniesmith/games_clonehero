@@ -19,10 +19,25 @@ endblock %} {% block content %}
     <!-- Toolbar -->
     <div class="library-toolbar">
         <!-- Search Form -->
-        <form method="get" action="/songs" class="search-form" id="songs-search-form">
-            <input type="hidden" name="view" value="{{ view_mode }}" id="view-mode-input" />
+        <form
+            method="get"
+            action="/songs"
+            class="search-form"
+            id="songs-search-form"
+        >
+            <input
+                type="hidden"
+                name="view"
+                value="{{ view_mode }}"
+                id="view-mode-input"
+            />
             {% if active_tag %}
-            <input type="hidden" name="tag" value="{{ active_tag }}" id="tag-filter-input" />
+            <input
+                type="hidden"
+                name="tag"
+                value="{{ active_tag }}"
+                id="tag-filter-input"
+            />
             {% endif %}
             <input
                 type="text"
@@ -33,7 +48,11 @@ endblock %} {% block content %}
             />
             <button type="submit" class="btn btn-primary">Search</button>
             {% if search_query %}
-            <a href="/songs?view={{ view_mode }}{% if active_tag %}&tag={{ active_tag }}{% endif %}" class="btn btn-secondary">Clear</a>
+            <a
+                href="/songs?view={{ view_mode }}{% if active_tag %}&tag={{ active_tag }}{% endif %}"
+                class="btn btn-secondary"
+                >Clear</a
+            >
             {% endif %}
         </form>
 
@@ -43,27 +62,36 @@ endblock %} {% block content %}
                 href="/songs?view=list{% if search_query %}&search={{ search_query }}{% endif %}{% if active_tag %}&tag={{ active_tag }}{% endif %}"
                 class="btn btn-sm {% if view_mode == 'list' %}btn-primary{% else %}btn-secondary{% endif %}"
                 title="Flat list view"
-            >📋 List</a>
+                >📋 List</a
+            >
             <a
                 href="/songs?view=artists{% if search_query %}&search={{ search_query }}{% endif %}{% if active_tag %}&tag={{ active_tag }}{% endif %}"
                 class="btn btn-sm {% if view_mode == 'artists' %}btn-primary{% else %}btn-secondary{% endif %}"
                 title="Group by artist"
-            >🎤 Artists</a>
+                >🎤 Artists</a
+            >
         </div>
 
         <!-- Tag Filter -->
         {% if all_tags %}
         <div class="tag-filter">
-            <select id="tagFilterSelect" onchange="applyTagFilter(this.value)" class="tag-filter-select">
+            <select
+                id="tagFilterSelect"
+                onchange="applyTagFilter(this.value)"
+                class="tag-filter-select"
+            >
                 <option value="">🏷️ All Tags</option>
                 {% for t in all_tags %}
-                <option value="{{ t.tag }}" {% if active_tag == t.tag %}selected{% endif %}>
-                    {{ t.tag }} ({{ t.count }})
-                </option>
+                <option value="{{ t.tag }}" {% if active_tag == t.tag %}selected{% endif %}>{{ t.tag }} ({{ t.count }})</option>
                 {% endfor %}
             </select>
             {% if active_tag %}
-            <a href="/songs?view={{ view_mode }}{% if search_query %}&search={{ search_query }}{% endif %}" class="btn btn-sm btn-secondary tag-clear-btn" title="Clear tag filter">✕</a>
+            <a
+                href="/songs?view={{ view_mode }}{% if search_query %}&search={{ search_query }}{% endif %}"
+                class="btn btn-sm btn-secondary tag-clear-btn"
+                title="Clear tag filter"
+                >✕</a
+            >
             {% endif %}
         </div>
         {% endif %}
@@ -84,27 +112,25 @@ endblock %} {% block content %}
     <div class="search-results-bar">
         {% if view_mode == 'artists' %}
         <p class="search-results">
-            {% if search_query %}
-            Found {{ total_songs }} song{{ 's' if total_songs != 1 else '' }}
-            across {{ total_artists }} artist{{ 's' if total_artists != 1 else '' }}
-            for "{{ search_query }}"
-            {% else %}
-            {{ total_songs }} song{{ 's' if total_songs != 1 else '' }}
-            across {{ total_artists }} artist{{ 's' if total_artists != 1 else '' }}
-            {% endif %}
-            {% if active_tag %} tagged <span class="active-tag-badge">{{ active_tag }}</span>{% endif %}
+            {% if search_query %} Found {{ total_songs }} song{{ 's' if
+            total_songs != 1 else '' }} across {{ total_artists }} artist{{ 's'
+            if total_artists != 1 else '' }} for "{{ search_query }}" {% else %}
+            {{ total_songs }} song{{ 's' if total_songs != 1 else '' }} across
+            {{ total_artists }} artist{{ 's' if total_artists != 1 else '' }} {%
+            endif %} {% if active_tag %} tagged
+            <span class="active-tag-badge">{{ active_tag }}</span>{% endif %}
         </p>
         {% elif search_query %}
         <p class="search-results">
             Found {{ pagination.total }} result{{ 's' if pagination.total != 1
-            else '' }} for "{{ search_query }}"
-            {% if active_tag %} tagged <span class="active-tag-badge">{{ active_tag }}</span>{% endif %}
+            else '' }} for "{{ search_query }}" {% if active_tag %} tagged
+            <span class="active-tag-badge">{{ active_tag }}</span>{% endif %}
         </p>
         {% else %}
         <p class="search-results">
             {{ pagination.total }} song{{ 's' if pagination.total != 1 else ''
-            }} in library
-            {% if active_tag %} tagged <span class="active-tag-badge">{{ active_tag }}</span>{% endif %}
+            }} in library {% if active_tag %} tagged
+            <span class="active-tag-badge">{{ active_tag }}</span>{% endif %}
         </p>
         {% endif %}
     </div>
@@ -153,12 +179,59 @@ endblock %} {% block content %}
     </div>
 
     <!-- ═══════════════════════════════════════════════════════ -->
+    <!-- Failure Report Panel (loads on demand or via #hash)    -->
+    <!-- ═══════════════════════════════════════════════════════ -->
+    <div id="sync-failures" class="failure-report-panel" style="display: none">
+        <div class="failure-report-header">
+            <div class="failure-report-title">
+                <span>📋</span>
+                <strong id="failure-report-heading">Sync Failure Report</strong>
+            </div>
+            <div class="failure-report-actions">
+                <button
+                    class="btn btn-secondary btn-sm"
+                    id="failure-download-btn"
+                    onclick="downloadFailureReport()"
+                    title="Download as text file"
+                >
+                    ⬇️ Download
+                </button>
+                <button
+                    class="btn btn-secondary btn-sm"
+                    onclick="closeFailureReport()"
+                >
+                    ✕ Close
+                </button>
+            </div>
+        </div>
+        <div class="failure-report-summary" id="failure-report-summary"></div>
+        <div class="failure-report-list-wrapper">
+            <table class="failure-report-table" id="failure-report-table">
+                <thead>
+                    <tr>
+                        <th class="fr-col-num">#</th>
+                        <th class="fr-col-folder">Folder</th>
+                        <th class="fr-col-reason">Reason</th>
+                    </tr>
+                </thead>
+                <tbody id="failure-report-tbody"></tbody>
+            </table>
+        </div>
+        <div
+            class="failure-report-empty"
+            id="failure-report-empty"
+            style="display: none"
+        >
+            ✅ No failures recorded from the last sync.
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════ -->
     <!-- Artist-grouped view                                    -->
     <!-- ═══════════════════════════════════════════════════════ -->
     {% if view_mode == 'artists' %}
     <div class="artists-list">
-        {% if artists %}
-        {% for artist in artists %}
+        {% if artists %} {% for artist in artists %}
         <div class="artist-accordion" id="artist-{{ loop.index }}">
             <button
                 class="artist-accordion-header"
@@ -166,17 +239,26 @@ endblock %} {% block content %}
                 aria-expanded="false"
             >
                 <span class="artist-accordion-arrow">▶</span>
-                <span class="artist-accordion-name">🎤 {{ artist.name or 'Unknown Artist' }}</span>
-                <span class="artist-accordion-count">{{ artist.song_count }} song{{ 's' if artist.song_count != 1 else '' }}</span>
+                <span class="artist-accordion-name"
+                    >🎤 {{ artist.name or 'Unknown Artist' }}</span
+                >
+                <span class="artist-accordion-count"
+                    >{{ artist.song_count }} song{{ 's' if artist.song_count !=
+                    1 else '' }}</span
+                >
             </button>
-            <div class="artist-accordion-body" style="display: none;">
+            <div class="artist-accordion-body" style="display: none">
                 {% for song in artist.songs %}
-                <div class="song-card song-card-compact" id="song-{{ song.id }}">
+                <div
+                    class="song-card song-card-compact"
+                    id="song-{{ song.id }}"
+                >
                     <div class="song-header">
                         <h3>
                             🎵 {{ song.title }}{% if song.remote_path and
                             song.remote_path.startswith(generator_path) %}
-                            <span class="badge badge-staged">📋 Staged</span>{% endif %}
+                            <span class="badge badge-staged">📋 Staged</span>{%
+                            endif %}
                         </h3>
                         <div class="song-actions">
                             {% if song.remote_path and
@@ -207,30 +289,43 @@ endblock %} {% block content %}
                         </div>
                     </div>
                     <div class="song-details">
-                        <p><strong>Album:</strong> {{ song.album or 'Unknown' }}</p>
+                        <p>
+                            <strong>Album:</strong> {{ song.album or 'Unknown'
+                            }}
+                        </p>
                         {% if song.remote_path %}
                         <p>
                             <strong>Nextcloud:</strong>
-                            <code class="remote-path">{{ song.remote_path }}</code>
+                            <code class="remote-path"
+                                >{{ song.remote_path }}</code
+                            >
                         </p>
-                        {% endif %}
-                        {% if song.tags and song.tags | length > 0 %}
+                        {% endif %} {% if song.tags and song.tags | length > 0
+                        %}
                         <div class="song-tags">
                             {% for tag in song.tags %}
-                            <a href="/songs?view={{ view_mode }}&tag={{ tag }}{% if search_query %}&search={{ search_query }}{% endif %}" class="song-tag-chip" title="Filter by {{ tag }}">{{ tag }}</a>
+                            <a
+                                href="/songs?view={{ view_mode }}&tag={{ tag }}{% if search_query %}&search={{ search_query }}{% endif %}"
+                                class="song-tag-chip"
+                                title="Filter by {{ tag }}"
+                                >{{ tag }}</a
+                            >
                             {% endfor %}
                         </div>
-                        {% endif %}
-                        {% if song.metadata and song.metadata | length > 0 %}
+                        {% endif %} {% if song.metadata and song.metadata |
+                        length > 0 %}
                         <details class="metadata-details">
                             <summary>
-                                🔍 Show Metadata ({{ song.metadata | length }} fields)
+                                🔍 Show Metadata ({{ song.metadata | length }}
+                                fields)
                             </summary>
                             <div class="metadata-grid">
                                 {% for key, value in song.metadata.items() %}
                                 <div class="metadata-item">
                                     <span class="metadata-key">{{ key }}:</span>
-                                    <span class="metadata-value">{{ value }}</span>
+                                    <span class="metadata-value"
+                                        >{{ value }}</span
+                                    >
                                 </div>
                                 {% endfor %}
                             </div>
@@ -241,16 +336,13 @@ endblock %} {% block content %}
                 {% endfor %}
             </div>
         </div>
-        {% endfor %}
-        {% else %}
+        {% endfor %} {% else %}
         <div class="alert alert-warning">
-            {% if search_query %}
-            ⚠️ No artists found matching "{{ search_query }}".
-            {% elif webdav_configured %}
-            ⚠️ No songs in the library yet. Click
-            <strong>🔄 Refresh Library</strong> to scan Nextcloud.
-            {% else %}
-            ⚠️ No songs in the library. Configure Nextcloud WebDAV to get started.
+            {% if search_query %} ⚠️ No artists found matching "{{ search_query
+            }}". {% elif webdav_configured %} ⚠️ No songs in the library yet.
+            Click
+            <strong>🔄 Refresh Library</strong> to scan Nextcloud. {% else %} ⚠️
+            No songs in the library. Configure Nextcloud WebDAV to get started.
             {% endif %}
         </div>
         {% endif %}
@@ -310,15 +402,18 @@ endblock %} {% block content %}
                 <p><strong>Last synced:</strong> {{ song.synced_at }}</p>
                 {% elif song.created_at %}
                 <p><strong>Added:</strong> {{ song.created_at }}</p>
-                {% endif %}
-                {% if song.tags and song.tags | length > 0 %}
+                {% endif %} {% if song.tags and song.tags | length > 0 %}
                 <div class="song-tags">
                     {% for tag in song.tags %}
-                    <a href="/songs?view={{ view_mode }}&tag={{ tag }}{% if search_query %}&search={{ search_query }}{% endif %}" class="song-tag-chip" title="Filter by {{ tag }}">{{ tag }}</a>
+                    <a
+                        href="/songs?view={{ view_mode }}&tag={{ tag }}{% if search_query %}&search={{ search_query }}{% endif %}"
+                        class="song-tag-chip"
+                        title="Filter by {{ tag }}"
+                        >{{ tag }}</a
+                    >
                     {% endfor %}
                 </div>
-                {% endif %}
-                {% if song.metadata and song.metadata | length > 0
+                {% endif %} {% if song.metadata and song.metadata | length > 0
                 %}
                 <details class="metadata-details">
                     <summary>
@@ -861,6 +956,108 @@ endblock %} {% block content %}
         margin-top: 12px;
     }
 
+    /* ── Failure Report Panel ── */
+    .failure-report-panel {
+        background: #fff8f0;
+        border: 2px solid #f39c12;
+        border-radius: 8px;
+        padding: 20px;
+        margin-bottom: 24px;
+        animation: slideDown 0.3s ease-out;
+    }
+    .failure-report-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 14px;
+        flex-wrap: wrap;
+        gap: 8px;
+    }
+    .failure-report-title {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 1.1em;
+    }
+    .failure-report-actions {
+        display: flex;
+        gap: 6px;
+    }
+    .failure-report-summary {
+        font-size: 0.9em;
+        color: #6c5a00;
+        margin-bottom: 12px;
+        padding: 8px 12px;
+        background: rgba(243, 156, 18, 0.1);
+        border-radius: 5px;
+    }
+    .failure-report-list-wrapper {
+        max-height: 400px;
+        overflow-y: auto;
+        border: 1px solid #e8dcc8;
+        border-radius: 5px;
+        background: #fff;
+        scrollbar-width: thin;
+    }
+    .failure-report-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.85em;
+        font-family: "Consolas", "Fira Code", "Monaco", monospace;
+    }
+    .failure-report-table thead {
+        position: sticky;
+        top: 0;
+        z-index: 1;
+    }
+    .failure-report-table th {
+        background: #f1ece0;
+        color: #5a4e1a;
+        padding: 8px 10px;
+        text-align: left;
+        font-weight: 600;
+        border-bottom: 2px solid #e0d6be;
+    }
+    .failure-report-table td {
+        padding: 6px 10px;
+        border-bottom: 1px solid #f0ece2;
+        vertical-align: top;
+        color: #333;
+    }
+    .failure-report-table tr:hover td {
+        background: #fef9f0;
+    }
+    .fr-col-num {
+        width: 40px;
+        text-align: center;
+        color: #999;
+    }
+    .fr-col-folder {
+        width: 35%;
+        word-break: break-all;
+    }
+    .fr-col-reason {
+        color: #c0392b;
+    }
+    .failure-report-empty {
+        padding: 20px;
+        text-align: center;
+        color: #27ae60;
+        font-size: 1em;
+    }
+    @media (max-width: 768px) {
+        .failure-report-header {
+            flex-direction: column;
+            align-items: flex-start;
+        }
+        .failure-report-list-wrapper {
+            max-height: 300px;
+        }
+        .fr-col-folder {
+            width: auto;
+        }
+    }
+
     @media (max-width: 768px) {
         .library-toolbar {
             flex-direction: column;
@@ -933,36 +1130,36 @@ endblock %} {% block content %}
     function applyTagFilter(tag) {
         const params = new URLSearchParams(window.location.search);
         if (tag) {
-            params.set('tag', tag);
+            params.set("tag", tag);
         } else {
-            params.delete('tag');
+            params.delete("tag");
         }
-        params.delete('page'); // reset to page 1 on filter change
-        window.location.href = '/songs?' + params.toString();
+        params.delete("page"); // reset to page 1 on filter change
+        window.location.href = "/songs?" + params.toString();
     }
 
     /* ── Artist Accordion Toggle ── */
     function toggleArtist(btn) {
-        const expanded = btn.getAttribute('aria-expanded') === 'true';
+        const expanded = btn.getAttribute("aria-expanded") === "true";
         const body = btn.nextElementSibling;
         if (expanded) {
-            btn.setAttribute('aria-expanded', 'false');
-            body.style.display = 'none';
+            btn.setAttribute("aria-expanded", "false");
+            body.style.display = "none";
         } else {
-            btn.setAttribute('aria-expanded', 'true');
-            body.style.display = 'block';
+            btn.setAttribute("aria-expanded", "true");
+            body.style.display = "block";
         }
     }
 
     /* ── Expand / Collapse All Artists ── */
-    document.addEventListener('DOMContentLoaded', function() {
+    document.addEventListener("DOMContentLoaded", function () {
         // Add expand/collapse all buttons if in artist view
-        const artistsList = document.querySelector('.artists-list');
+        const artistsList = document.querySelector(".artists-list");
         if (artistsList && artistsList.children.length > 0) {
-            const bar = document.querySelector('.search-results-bar');
+            const bar = document.querySelector(".search-results-bar");
             if (bar) {
-                const controls = document.createElement('div');
-                controls.className = 'artist-expand-controls';
+                const controls = document.createElement("div");
+                controls.className = "artist-expand-controls";
                 controls.innerHTML =
                     '<button class="btn btn-sm btn-secondary" onclick="expandAllArtists()">▼ Expand All</button> ' +
                     '<button class="btn btn-sm btn-secondary" onclick="collapseAllArtists()">▲ Collapse All</button>';
@@ -972,17 +1169,21 @@ endblock %} {% block content %}
     });
 
     function expandAllArtists() {
-        document.querySelectorAll('.artist-accordion-header').forEach(function(btn) {
-            btn.setAttribute('aria-expanded', 'true');
-            btn.nextElementSibling.style.display = 'block';
-        });
+        document
+            .querySelectorAll(".artist-accordion-header")
+            .forEach(function (btn) {
+                btn.setAttribute("aria-expanded", "true");
+                btn.nextElementSibling.style.display = "block";
+            });
     }
 
     function collapseAllArtists() {
-        document.querySelectorAll('.artist-accordion-header').forEach(function(btn) {
-            btn.setAttribute('aria-expanded', 'false');
-            btn.nextElementSibling.style.display = 'none';
-        });
+        document
+            .querySelectorAll(".artist-accordion-header")
+            .forEach(function (btn) {
+                btn.setAttribute("aria-expanded", "false");
+                btn.nextElementSibling.style.display = "none";
+            });
     }
 
     let syncEventSource = null;
@@ -1094,6 +1295,13 @@ endblock %} {% block content %}
             // Trigger sidebar activity refresh
             if (window._refreshActivityIndicator) {
                 window._refreshActivityIndicator();
+            }
+
+            // Auto-load failure report if there were failures
+            if (failed > 0 && !isError) {
+                setTimeout(function () {
+                    loadFailureReport();
+                }, 600);
             }
         }
 
@@ -1218,7 +1426,14 @@ endblock %} {% block content %}
                         data.total_on_nextcloud + " total on Nextcloud",
                     );
 
-                    summary.textContent = "✅ " + summaryParts.join(" · ");
+                    let summaryHtml = "✅ " + summaryParts.join(" · ");
+                    if (failed > 0) {
+                        summaryHtml +=
+                            ' · <a href="#sync-failures" onclick="loadFailureReport(); return false;" ' +
+                            'style="color: inherit; font-weight: bold; text-decoration: underline; cursor: pointer;">' +
+                            "📋 View Failure Report</a>";
+                    }
+                    summary.innerHTML = summaryHtml;
                     summary.className =
                         "sync-summary" + (failed > 0 ? " has-errors" : "");
                     summary.style.display = "block";
@@ -1328,6 +1543,115 @@ endblock %} {% block content %}
         const panel = document.getElementById("sync-panel");
         panel.style.display = "none";
     }
+
+    // ── Failure Report ──
+    async function loadFailureReport() {
+        const panel = document.getElementById("sync-failures");
+        const tbody = document.getElementById("failure-report-tbody");
+        const summaryEl = document.getElementById("failure-report-summary");
+        const emptyEl = document.getElementById("failure-report-empty");
+        const tableWrapper = panel.querySelector(
+            ".failure-report-list-wrapper",
+        );
+        const heading = document.getElementById("failure-report-heading");
+
+        try {
+            const resp = await fetch("/api/library/sync/failures");
+            if (!resp.ok) {
+                summaryEl.textContent = "❌ Could not load failure report.";
+                panel.style.display = "block";
+                return;
+            }
+            const data = await resp.json();
+            const failures = data.failures || [];
+
+            // Summary line
+            const ts = data.last_sync_time
+                ? new Date(data.last_sync_time).toLocaleString()
+                : "unknown";
+            summaryEl.innerHTML =
+                "Last sync: <strong>" +
+                ts +
+                "</strong> · " +
+                data.total_folders +
+                " total · " +
+                '<span style="color:#27ae60">' +
+                data.synced +
+                " synced</span> · " +
+                '<span style="color:#e74c3c">' +
+                data.failed +
+                " failed</span> · " +
+                data.purged +
+                " purged";
+
+            heading.textContent =
+                "Sync Failure Report (" + failures.length + ")";
+
+            if (failures.length === 0) {
+                emptyEl.style.display = "block";
+                tableWrapper.style.display = "none";
+            } else {
+                emptyEl.style.display = "none";
+                tableWrapper.style.display = "block";
+                tbody.innerHTML = "";
+                failures.forEach(function (f, idx) {
+                    const tr = document.createElement("tr");
+                    const tdNum = document.createElement("td");
+                    tdNum.className = "fr-col-num";
+                    tdNum.textContent = idx + 1;
+
+                    const tdFolder = document.createElement("td");
+                    tdFolder.className = "fr-col-folder";
+                    tdFolder.textContent = f.display || f.folder || "?";
+                    tdFolder.title = f.folder || "";
+
+                    const tdReason = document.createElement("td");
+                    tdReason.className = "fr-col-reason";
+                    tdReason.textContent = f.reason || "Unknown";
+
+                    tr.appendChild(tdNum);
+                    tr.appendChild(tdFolder);
+                    tr.appendChild(tdReason);
+                    tbody.appendChild(tr);
+                });
+            }
+
+            panel.style.display = "block";
+            panel.scrollIntoView({ behavior: "smooth", block: "start" });
+        } catch (e) {
+            summaryEl.textContent =
+                "❌ Error loading failure report: " + e.message;
+            panel.style.display = "block";
+        }
+    }
+
+    function downloadFailureReport() {
+        window.location.href = "/api/library/sync/failures?download=true";
+    }
+
+    function closeFailureReport() {
+        const panel = document.getElementById("sync-failures");
+        panel.style.display = "none";
+        // Remove hash so it doesn't re-trigger on refresh
+        if (window.location.hash === "#sync-failures") {
+            history.replaceState(
+                null,
+                "",
+                window.location.pathname + window.location.search,
+            );
+        }
+    }
+
+    // Auto-open failure report when navigated via #sync-failures hash
+    (function () {
+        function checkHash() {
+            if (window.location.hash === "#sync-failures") {
+                loadFailureReport();
+            }
+        }
+        checkHash();
+        window.addEventListener("hashchange", checkHash);
+    })();
 
     // Delete song (from Nextcloud + DB)
     document.querySelectorAll(".delete-song").forEach((button) => {

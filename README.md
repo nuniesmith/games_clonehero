@@ -128,11 +128,15 @@ Upload `.zip` or `.rar` archives containing Clone Hero songs. The system automat
 Edit song metadata (title, artist, album, genre, difficulty ratings, etc.) through a rich form interface. Changes are saved to both the local database cache and the `song.ini` file on Nextcloud, keeping them in sync.
 
 ### 🎵 Song Generator
-Upload audio files (MP3, WAV, OGG, FLAC, OPUS) and automatically generate Clone Hero charts:
-- Tempo detection via beat tracking
-- Note placement from onset detection
-- Section markers (Intro, Verse, Chorus, etc.)
+Upload audio files (MP3, WAV, OGG, FLAC, OPUS) and automatically generate Clone Hero charts. Optionally provide a MIDI file (.mid / .midi) alongside the audio for significantly more accurate note placement:
+- Tempo detection via beat tracking (or exact tempo from MIDI)
+- Note placement from onset detection or precise MIDI note data
+- MIDI-driven lane assignment from actual pitches and velocities
+- MIDI sustain durations mapped to chart hold notes
+- Section markers from MIDI markers or audio analysis (Intro, Verse, Chorus, etc.)
 - Multiple difficulty levels (Easy, Medium, Hard, Expert)
+- Automatic MIDI format detection (Rock Band, Guitar Pro, DAW exports)
+- Audio + MIDI fusion: MIDI provides note accuracy, audio provides energy/dynamics
 - Generates `notes.chart` + `song.ini` + copies audio
 - Output is uploaded directly to Nextcloud
 
@@ -159,8 +163,16 @@ games_clonehero/
 │   │   ├── pages.py            # HTML page routes (Jinja2)
 │   │   └── api.py              # REST API endpoints
 │   ├── services/
-│   │   ├── content_manager.py  # Song parsing, extraction, Nextcloud upload
-│   │   └── song_generator.py   # Audio analysis, chart generation, upload
+│   │   ├── album_art_generator.py  # Procedural album art (Pillow)
+│   │   ├── chart_parser.py         # .chart file parser (round-trip)
+│   │   ├── chart_validator.py      # Chart validation & auto-fix
+│   │   ├── content_manager.py      # Song parsing, extraction, Nextcloud upload
+│   │   ├── lyrics_generator.py     # Procedural lyrics for [Events]
+│   │   ├── metadata_lookup.py      # MusicBrainz / Cover Art Archive lookup
+│   │   ├── midi_parser.py          # MIDI file parser for precise note data
+│   │   ├── song_generator.py       # Audio/MIDI analysis, chart generation, upload
+│   │   ├── song_organizer.py       # Library path cleanup & dedup
+│   │   └── stem_separator.py       # Instrument stem isolation (HPSS)
 │   ├── templates/              # Jinja2 HTML templates
 │   │   ├── base.html           # Base layout with sidebar
 │   │   ├── home.html           # Dashboard
@@ -250,7 +262,8 @@ When running in development mode, interactive API documentation is available at:
 | `PUT` | `/api/songs/{id}` | Update song metadata (DB + song.ini on Nextcloud) |
 | `DELETE` | `/api/songs/{id}` | Delete song (Nextcloud + DB) |
 | `POST` | `/api/upload` | Upload content archive (songs → Nextcloud) |
-| `POST` | `/api/generate` | Generate chart from audio (output → Nextcloud) |
+| `POST` | `/api/generate` | Generate chart from audio + optional MIDI (output → Nextcloud) |
+| `POST` | `/api/midi/summary` | Parse a MIDI file and return track/tempo/section summary |
 | `POST` | `/api/library/sync` | Refresh library: scan Nextcloud → update DB cache |
 | `GET` | `/api/library/status` | Library stats + Nextcloud connection info |
 | `GET` | `/api/webdav/status` | Check Nextcloud connection |

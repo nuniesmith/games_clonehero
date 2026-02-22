@@ -15,6 +15,7 @@ transient staging area for extraction and processing before upload.
 
 from __future__ import annotations
 
+import asyncio
 import configparser
 import json
 import shutil
@@ -34,6 +35,7 @@ from src.config import (
     TEMP_DIR,
 )
 
+
 # ---------------------------------------------------------------------------
 # Directory helpers
 # ---------------------------------------------------------------------------
@@ -41,6 +43,7 @@ def get_temp_staging_dir(prefix: str = "ch_stage_") -> Path:
     """Create and return a temporary staging directory."""
     TEMP_DIR.mkdir(parents=True, exist_ok=True)
     return Path(tempfile.mkdtemp(prefix=prefix, dir=str(TEMP_DIR)))
+
 
 # ---------------------------------------------------------------------------
 # Song.ini parsing
@@ -87,6 +90,7 @@ def parse_song_ini(ini_path: Path) -> dict[str, Any] | None:
         "metadata": metadata,
     }
 
+
 def write_song_ini(ini_path: Path, song_data: dict[str, Any]) -> bool:
     """
     Write or update a song.ini file with the provided data.
@@ -121,6 +125,7 @@ def write_song_ini(ini_path: Path, song_data: dict[str, Any]) -> bool:
     except Exception as e:
         logger.error(f"❌ Failed to write song.ini at {ini_path}: {e}")
         return False
+
 
 # ---------------------------------------------------------------------------
 # Archive extraction
@@ -163,6 +168,7 @@ def extract_archive(file_path: str, extract_dir: str) -> dict[str, Any]:
         logger.exception(f"❌ Error extracting {file_path}: {e}")
         return {"error": str(e)}
 
+
 # ---------------------------------------------------------------------------
 # Non-song asset upload to Nextcloud
 # ---------------------------------------------------------------------------
@@ -204,6 +210,7 @@ async def _upload_asset_to_nextcloud(
     except Exception as e:
         logger.error(f"❌ Error uploading asset {local_path.name}: {e}")
         return None
+
 
 # ---------------------------------------------------------------------------
 # Content processing pipeline  (Nextcloud-first)
@@ -276,6 +283,7 @@ async def process_extracted_songs(extract_dir: str) -> list[dict[str, Any]]:
             )
 
     return stored_songs
+
 
 async def process_upload(file_path: str, content_type: str = "songs") -> dict[str, Any]:
     """
@@ -377,6 +385,7 @@ async def process_upload(file_path: str, content_type: str = "songs") -> dict[st
         # Always clean up temp directory
         shutil.rmtree(temp_dir, ignore_errors=True)
 
+
 # ---------------------------------------------------------------------------
 # Nextcloud library sync
 # ---------------------------------------------------------------------------
@@ -393,11 +402,44 @@ _sync_state: dict[str, Any] = {
     "current_folder": "",
     "last_synced_song": "",
     "errors": [],
+    # Structured failure details: list of {"folder", "display", "reason"}
+    "failure_details": [],
+    "last_sync_time": None,  # ISO timestamp of last completed sync
 }
+
+# Cap to avoid unbounded memory on very large libraries
+MAX_TRACKED_FAILURES = 500
+
 
 def get_sync_state() -> dict[str, Any]:
     """Return a snapshot of the current sync state."""
-    return dict(_sync_state)
+    snapshot = dict(_sync_state)
+    # Shallow-copy mutable lists so callers can't mutate internal state.
+    # Use .get() with defaults so we survive hot-reloads where the old
+    # in-memory _sync_state dict doesn't have the newer keys yet.
+    snapshot["errors"] = list(_sync_state.get("errors", []))
+    snapshot["failure_details"] = list(_sync_state.get("failure_details", []))
+    snapshot.setdefault("last_sync_time", None)
+    return snapshot
+
+
+def get_failure_report() -> dict[str, Any]:
+    """
+    Return a detailed failure report from the last library sync.
+
+    Includes per-folder failure reason, total counts, and the timestamp
+    of the sync run.  Designed to be consumed by the UI or downloaded
+    as a text/JSON file.
+    """
+    return {
+        "last_sync_time": _sync_state.get("last_sync_time"),
+        "total_folders": _sync_state.get("total_folders", 0),
+        "synced": _sync_state.get("synced", 0),
+        "failed": _sync_state.get("failed", 0),
+        "purged": _sync_state.get("purged", 0),
+        "failures": list(_sync_state.get("failure_details", [])),
+    }
+
 
 async def sync_library_from_nextcloud_stream():
     """
@@ -416,10 +458,35 @@ async def sync_library_from_nextcloud_stream():
     - ``complete``     — final summary
 
     The UI can consume these via SSE to show real-time progress.
+
+    Uses a **shared httpx connection pool** for all downloads instead of
+    creating a new TCP/TLS connection per song.  Downloads are batched
+    with bounded concurrency (default 10 parallel) to avoid overwhelming
+    Nextcloud while still being dramatically faster than sequential.
     """
     global _sync_state
+    from datetime import datetime, timezone
+
     from src.database import purge_stale_songs, upsert_song
-    from src.webdav import find_song_folders, is_configured, parse_remote_song_ini
+    from src.webdav import (
+        find_song_folders,
+        is_configured,
+        parse_remote_song_ini,
+        shared_client,
+    )
+
+    # Tuning knobs ----------------------------------------------------------
+    BATCH_SIZE = 10  # songs downloaded concurrently per batch
+    MAX_RETRIES = 2  # extra download attempts on transient errors
+    MAX_TRACKED_ERRORS = 200  # cap error list to avoid unbounded memory
+    # -----------------------------------------------------------------------
+
+    def _record_failure(folder: str, display: str, reason: str) -> None:
+        """Append a structured failure record (capped)."""
+        if len(failure_details) < MAX_TRACKED_FAILURES:
+            failure_details.append(
+                {"folder": folder, "display": display, "reason": reason}
+            )
 
     if not is_configured():
         yield {
@@ -468,85 +535,170 @@ async def sync_library_from_nextcloud_stream():
             "message": f"Found {total} song folder{'s' if total != 1 else ''} on Nextcloud",
         }
 
-        # --- Step 2: Parse each song.ini and upsert ---
+        # --- Step 2: Parse each song.ini and upsert (batched + pooled) ---
         synced = 0
         failed = 0
         errors: list[str] = []
+        failure_details: list[dict[str, str]] = []
+        processed = 0
 
-        for i, folder in enumerate(folders, 1):
-            _sync_state["processed"] = i
-            _sync_state["current_folder"] = folder
+        # Use a single shared httpx client with connection pooling for the
+        # entire sync run.  This avoids creating thousands of individual
+        # TCP/TLS connections which was the primary cause of mass failures.
+        async with shared_client(
+            timeout=60.0,
+            max_connections=BATCH_SIZE + 5,
+            max_keepalive_connections=BATCH_SIZE,
+        ) as client:
+            # Process folders in batches of BATCH_SIZE
+            for batch_start in range(0, total, BATCH_SIZE):
+                batch_end = min(batch_start + BATCH_SIZE, total)
+                batch_folders = folders[batch_start:batch_end]
 
-            # Extract a short display name from the folder path
-            folder_display = (
-                folder.rstrip("/").rsplit("/", 1)[-1] if "/" in folder else folder
-            )
+                # Fire off concurrent parse tasks for this batch
+                sem = asyncio.Semaphore(BATCH_SIZE)
 
-            yield {
-                "type": "parsing",
-                "index": i,
-                "total": total,
-                "folder": folder,
-                "folder_display": folder_display,
-                "message": f"Parsing {i}/{total}: {folder_display}",
-            }
+                async def _parse_one(
+                    folder: str,
+                ) -> tuple[str, dict[str, Any] | None, str | None]:
+                    """Download + parse a single song.ini.  Returns (folder, parsed_or_None, error_or_None)."""
+                    async with sem:
+                        try:
+                            parsed = await parse_remote_song_ini(
+                                folder,
+                                client=client,
+                                retries=MAX_RETRIES,
+                            )
+                            if parsed is None:
+                                display = (
+                                    folder.rstrip("/").rsplit("/", 1)[-1]
+                                    if "/" in folder
+                                    else folder
+                                )
+                                return (
+                                    folder,
+                                    None,
+                                    f"Could not parse song.ini in {display}",
+                                )
+                            return (folder, parsed, None)
+                        except Exception as exc:
+                            display = (
+                                folder.rstrip("/").rsplit("/", 1)[-1]
+                                if "/" in folder
+                                else folder
+                            )
+                            return (folder, None, f"Error syncing {display}: {exc}")
 
-            try:
-                parsed = await parse_remote_song_ini(folder)
-                if not parsed:
-                    failed += 1
-                    err = f"Could not parse song.ini in {folder_display}"
-                    errors.append(err)
-                    _sync_state["failed"] = failed
-                    _sync_state["errors"] = errors
-                    yield {
-                        "type": "parse_error",
-                        "index": i,
-                        "total": total,
-                        "folder": folder,
-                        "folder_display": folder_display,
-                        "message": err,
-                    }
-                    continue
+                tasks = [_parse_one(f) for f in batch_folders]
+                results = await asyncio.gather(*tasks, return_exceptions=True)
 
-                metadata_json = json.dumps(parsed.get("metadata", {}))
-                await upsert_song(
-                    title=parsed["title"],
-                    artist=parsed["artist"],
-                    album=parsed["album"],
-                    remote_path=folder,
-                    metadata=metadata_json,
-                )
-                synced += 1
-                _sync_state["synced"] = synced
-                song_label = f"{parsed['artist']} — {parsed['title']}"
-                _sync_state["last_synced_song"] = song_label
+                # Process results from this batch and yield events
+                for idx_in_batch, result in enumerate(results):
+                    processed += 1
+                    i = batch_start + idx_in_batch + 1  # 1-based global index
 
-                yield {
-                    "type": "parsed",
-                    "index": i,
-                    "total": total,
-                    "folder": folder,
-                    "title": parsed["title"],
-                    "artist": parsed["artist"],
-                    "album": parsed.get("album", ""),
-                    "message": f"Synced {i}/{total}: {song_label}",
-                }
-            except Exception as e:
-                failed += 1
-                err = f"Error syncing {folder_display}: {str(e)}"
-                errors.append(err)
-                _sync_state["failed"] = failed
-                _sync_state["errors"] = errors
-                logger.error("❌ Error syncing {}: {}", folder, e)
-                yield {
-                    "type": "parse_error",
-                    "index": i,
-                    "total": total,
-                    "folder": folder,
-                    "folder_display": folder_display,
-                    "message": err,
-                }
+                    _sync_state["processed"] = processed
+
+                    # asyncio.gather may return an exception object
+                    if isinstance(result, BaseException):
+                        folder = batch_folders[idx_in_batch]
+                        folder_display = (
+                            folder.rstrip("/").rsplit("/", 1)[-1]
+                            if "/" in folder
+                            else folder
+                        )
+                        failed += 1
+                        err = f"Unexpected error syncing {folder_display}: {result}"
+                        if len(errors) < MAX_TRACKED_ERRORS:
+                            errors.append(err)
+                        _record_failure(folder, folder_display, str(result))
+                        _sync_state["failed"] = failed
+                        _sync_state["errors"] = errors
+                        _sync_state["failure_details"] = failure_details
+                        logger.error("❌ {}", err)
+                        yield {
+                            "type": "parse_error",
+                            "index": i,
+                            "total": total,
+                            "folder": folder,
+                            "folder_display": folder_display,
+                            "message": err,
+                        }
+                        continue
+
+                    folder, parsed, error_msg = result
+                    folder_display = (
+                        folder.rstrip("/").rsplit("/", 1)[-1]
+                        if "/" in folder
+                        else folder
+                    )
+                    _sync_state["current_folder"] = folder
+
+                    if parsed is None:
+                        failed += 1
+                        reason = (
+                            error_msg or f"Could not parse song.ini in {folder_display}"
+                        )
+                        if len(errors) < MAX_TRACKED_ERRORS:
+                            errors.append(reason)
+                        _record_failure(folder, folder_display, reason)
+                        _sync_state["failed"] = failed
+                        _sync_state["errors"] = errors
+                        _sync_state["failure_details"] = failure_details
+                        yield {
+                            "type": "parse_error",
+                            "index": i,
+                            "total": total,
+                            "folder": folder,
+                            "folder_display": folder_display,
+                            "message": error_msg
+                            or f"Could not parse song.ini in {folder_display}",
+                        }
+                        continue
+
+                    # Upsert into local DB
+                    try:
+                        metadata_json = json.dumps(parsed.get("metadata", {}))
+                        await upsert_song(
+                            title=parsed["title"],
+                            artist=parsed["artist"],
+                            album=parsed["album"],
+                            remote_path=folder,
+                            metadata=metadata_json,
+                        )
+                        synced += 1
+                        _sync_state["synced"] = synced
+                        song_label = f"{parsed['artist']} — {parsed['title']}"
+                        _sync_state["last_synced_song"] = song_label
+
+                        yield {
+                            "type": "parsed",
+                            "index": i,
+                            "total": total,
+                            "folder": folder,
+                            "title": parsed["title"],
+                            "artist": parsed["artist"],
+                            "album": parsed.get("album", ""),
+                            "message": f"Synced {i}/{total}: {song_label}",
+                        }
+                    except Exception as e:
+                        failed += 1
+                        err = f"DB error for {folder_display}: {e}"
+                        if len(errors) < MAX_TRACKED_ERRORS:
+                            errors.append(err)
+                        _record_failure(folder, folder_display, f"DB upsert error: {e}")
+                        _sync_state["failed"] = failed
+                        _sync_state["errors"] = errors
+                        _sync_state["failure_details"] = failure_details
+                        logger.error("❌ {}", err)
+                        yield {
+                            "type": "parse_error",
+                            "index": i,
+                            "total": total,
+                            "folder": folder,
+                            "folder_display": folder_display,
+                            "message": err,
+                        }
 
         # --- Step 3: Purge stale entries ---
         _sync_state["phase"] = "purging"
@@ -564,6 +716,8 @@ async def sync_library_from_nextcloud_stream():
 
         # --- Done ---
         _sync_state["phase"] = "done"
+        _sync_state["failure_details"] = failure_details
+        _sync_state["last_sync_time"] = datetime.now(timezone.utc).isoformat()
 
         summary = {
             "type": "complete",
@@ -574,7 +728,9 @@ async def sync_library_from_nextcloud_stream():
             "message": f"Library sync complete: {synced} synced, {purged} removed, {failed} failed",
         }
         if errors:
-            summary["errors"] = errors
+            summary["errors"] = errors[:MAX_TRACKED_ERRORS]
+        if failure_details:
+            summary["failure_count"] = len(failure_details)
 
         logger.info(
             "🔄 Library sync complete: {} synced, {} purged, {} failed",
@@ -596,6 +752,7 @@ async def sync_library_from_nextcloud_stream():
                 _sync_state["phase"],
             )
             _sync_state["phase"] = "idle"
+
 
 async def sync_library_from_nextcloud() -> dict[str, Any]:
     """
@@ -630,6 +787,7 @@ async def sync_library_from_nextcloud() -> dict[str, Any]:
         "errors": last_event.get("errors", []),
     }
 
+
 async def delete_song_from_nextcloud(remote_path: str) -> bool:
     """
     Delete a song's folder from Nextcloud.
@@ -659,6 +817,7 @@ async def delete_song_from_nextcloud(remote_path: str) -> bool:
     else:
         logger.error("❌ Failed to delete from Nextcloud: {}", remote_path)
     return ok
+
 
 # ---------------------------------------------------------------------------
 # Utility

@@ -90,6 +90,19 @@
                 color: #3498db;
                 font-weight: bold;
             }
+            .activity-value .fail-link {
+                color: #e74c3c;
+                cursor: pointer;
+                text-decoration: underline;
+                text-decoration-style: dotted;
+            }
+            .activity-value .fail-link:hover {
+                color: #ff6b6b;
+                text-decoration-style: solid;
+            }
+            .activity-value .success-text {
+                color: #2ecc71;
+            }
             .activity-progress-bar {
                 width: 100%;
                 height: 4px;
@@ -285,6 +298,12 @@
                             >—</span
                         >
                     </div>
+                    <div class="activity-row">
+                        <span class="activity-label">Library Sync:</span>
+                        <span class="activity-value" id="activity-library-sync"
+                            >—</span
+                        >
+                    </div>
                     <!-- Shown only during library sync -->
                     <div id="activity-sync-section" style="display: none">
                         <div class="activity-progress-bar">
@@ -302,7 +321,7 @@
                 <p style="margin-top: 10px">
                     🛠️ <strong>Clone Hero Manager</strong>
                 </p>
-                <p>v{{ version | default('2.0.0') }}</p>
+                <p>v{{ version | default('1.0.0') }}</p>
             </div>
         </div>
 
@@ -333,6 +352,9 @@
                 const songsEl = document.getElementById("activity-songs");
                 const dbEl = document.getElementById("activity-db");
                 const webdavEl = document.getElementById("activity-webdav");
+                const libSyncEl = document.getElementById(
+                    "activity-library-sync",
+                );
                 const container = document.getElementById("sidebar-activity");
                 const syncSection = document.getElementById(
                     "activity-sync-section",
@@ -384,6 +406,37 @@
                         // Library sync state
                         const sync = data.library_sync || {};
                         const isRunning = sync.running === true;
+
+                        // Update Library Sync row
+                        if (isRunning) {
+                            const p = sync.processed || 0;
+                            const t = sync.total_folders || 0;
+                            libSyncEl.innerHTML =
+                                '<span class="syncing">⏳ ' +
+                                p +
+                                "/" +
+                                t +
+                                "</span>";
+                        } else if (sync.synced > 0 || sync.failed > 0) {
+                            let parts = [];
+                            if (sync.synced > 0) {
+                                parts.push(
+                                    '<span class="success-text">' +
+                                        sync.synced +
+                                        " synced</span>",
+                                );
+                            }
+                            if (sync.failed > 0) {
+                                parts.push(
+                                    '<span class="fail-link" onclick="window.location.href=\'/songs#sync-failures\'" title="View failure report">' +
+                                        sync.failed +
+                                        " failed</span>",
+                                );
+                            }
+                            libSyncEl.innerHTML = parts.join(", ");
+                        } else {
+                            libSyncEl.textContent = "Idle";
+                        }
 
                         if (isRunning) {
                             container.classList.add("has-activity");

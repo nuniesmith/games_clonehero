@@ -31,6 +31,15 @@ from src.services.album_art_generator import generate_album_art
 from src.services.album_art_generator import is_available as album_art_available
 from src.services.content_manager import write_song_ini
 from src.services.lyrics_generator import generate_lyrics_for_chart
+from src.services.midi_parser import (
+    MidiSongData,
+    merge_midi_and_audio_analysis,
+    midi_to_chart_events,
+    parse_midi_file,
+)
+from src.services.midi_parser import (
+    is_available as midi_available,
+)
 from src.services.stem_separator import (
     StemAnalysis,
     analyze_instrument,
@@ -1296,6 +1305,7 @@ def generate_notes_chart(
     charter: str = "nuniesmith",
     instrument: str = "guitar",
     stem_analysis: StemAnalysis | None = None,
+    midi_data: MidiSongData | None = None,
 ) -> bool:
     """
     Generate a Clone Hero compatible notes.chart file.
@@ -1316,6 +1326,11 @@ def generate_notes_chart(
         Pre-computed instrument-specific analysis from the stem separator.
         When provided, onset data and pitch contour come from the isolated
         stem rather than the full mix.
+    midi_data : MidiSongData, optional
+        Pre-parsed MIDI data from :func:`parse_midi_file`.  When provided,
+        note placement uses MIDI-accurate pitches, velocities, and sustain
+        durations instead of audio-derived onset heuristics.  This produces
+        significantly more accurate charts.
 
     Returns True on success, False on failure.
     """
@@ -1324,6 +1339,61 @@ def generate_notes_chart(
             difficulties = ["easy", "medium", "hard", "expert"]
 
         rng = random.Random(seed or hash(song_name + artist))
+
+        # --- MIDI-driven data overrides ---
+        # When MIDI data is available, its note information is more precise
+        # than audio-derived onsets.  We merge the two sources so that MIDI
+        # provides note timing/lanes/sustains while audio contributes energy
+        # and verified timing information.
+        midi_chart_data: dict[str, Any] | None = None
+        if midi_data is not None:
+            try:
+                midi_chart_data = midi_to_chart_events(
+                    midi_data,
+                    instrument=instrument,
+                    difficulty="expert",  # get all notes; per-diff filtering below
+                    chart_resolution=RESOLUTION,
+                )
+                logger.info(
+                    "🎹 MIDI data loaded: {} onsets, {} lanes, {} sustains",
+                    len(midi_chart_data.get("onset_times", [])),
+                    len(midi_chart_data.get("midi_lanes", [])),
+                    sum(1 for s in midi_chart_data.get("midi_sustains", []) if s > 0),
+                )
+
+                # If MIDI has onset data, use it as the primary source
+                midi_onsets = midi_chart_data.get("onset_times", [])
+                if midi_onsets:
+                    # Merge audio analysis with MIDI for best results
+                    audio_analysis = {
+                        "tempo": tempo,
+                        "beat_times": beat_times,
+                        "onset_times": onset_times,
+                        "onset_strengths": onset_strengths,
+                        "duration": duration,
+                        "segments": segments or [],
+                        "rms_values": [],
+                        "rms_times": [],
+                    }
+                    merged = merge_midi_and_audio_analysis(
+                        midi_chart_data, audio_analysis
+                    )
+                    onset_times = merged.get("onset_times", onset_times)
+                    onset_strengths = merged.get("onset_strengths", onset_strengths)
+                    duration = merged.get("duration", duration)
+                    if merged.get("segments"):
+                        segments = merged["segments"]
+                    if merged.get("beat_times"):
+                        beat_times = merged["beat_times"]
+                    # Use MIDI tempo map if available (more accurate)
+                    if merged.get("tempo_map"):
+                        tempo = merged.get("tempo", tempo)
+
+            except Exception as e:
+                logger.warning(
+                    "⚠️ MIDI data processing failed (falling back to audio): {}", e
+                )
+                midi_chart_data = None
 
         # Pad onset_strengths if shorter than onset_times
         while len(onset_strengths) < len(onset_times):
@@ -1355,11 +1425,35 @@ def generate_notes_chart(
         lines.append("[SyncTrack]")
         lines.append("{")
 
-        tempo_map = _compute_stable_tempo_map(tempo, beat_times, RESOLUTION)
+        # Use MIDI tempo map when available (exact), otherwise compute from audio
+        if midi_chart_data and midi_chart_data.get("tempo_map"):
+            tempo_map = midi_chart_data["tempo_map"]
+            midi_time_sigs = midi_chart_data.get("time_signatures", [(0, 4, 4)])
+        else:
+            tempo_map = _compute_stable_tempo_map(tempo, beat_times, RESOLUTION)
+            midi_time_sigs = [(0, 4, 4)]
+
+        # Write time signature and tempo events
+        ts_idx = 0
         for tick, milli_bpm in tempo_map:
-            if tick == 0:
+            # Emit any time signature events at or before this tick
+            while ts_idx < len(midi_time_sigs):
+                ts_tick, ts_num, _ts_denom = midi_time_sigs[ts_idx]
+                if ts_tick <= tick:
+                    lines.append(f"  {ts_tick} = TS {ts_num}")
+                    ts_idx += 1
+                else:
+                    break
+            if tick == 0 and ts_idx == 0:
+                # No MIDI time sig at tick 0 — emit default 4/4
                 lines.append("  0 = TS 4")
+                ts_idx = max(ts_idx, 1)  # skip first if it was (0, 4, _)
             lines.append(f"  {tick} = B {milli_bpm}")
+        # Emit any remaining time signature events
+        while ts_idx < len(midi_time_sigs):
+            ts_tick, ts_num, _ts_denom = midi_time_sigs[ts_idx]
+            lines.append(f"  {ts_tick} = TS {ts_num}")
+            ts_idx += 1
 
         lines.append("}")
         lines.append("")
@@ -1476,6 +1570,8 @@ def generate_notes_chart(
                 drum_lanes=effective_drum_lanes,
                 tempo_map=tempo_map,
                 stem_analysis=stem_analysis,
+                midi_data=midi_data,
+                midi_chart_data=midi_chart_data,
             )
 
         # Write the file
@@ -1517,6 +1613,8 @@ def _generate_difficulty_section(
     drum_lanes: list[int] | None = None,
     tempo_map: list[tuple[int, int]] | None = None,
     stem_analysis: StemAnalysis | None = None,
+    midi_data: MidiSongData | None = None,
+    midi_chart_data: dict[str, Any] | None = None,
 ) -> None:
     """Generate a single difficulty section and append it to *lines*.
 
@@ -1534,6 +1632,10 @@ def _generate_difficulty_section(
     stem_analysis : StemAnalysis, optional
         Full stem analysis data including fundamental_freqs and
         is_open_note for semitone-based lane mapping.
+    midi_data : MidiSongData, optional
+        Parsed MIDI data for MIDI-driven note placement.
+    midi_chart_data : dict, optional
+        Pre-computed MIDI chart events (from ``midi_to_chart_events``).
     """
     section_name = profile["section_name"]
     note_skip = profile["note_skip"]
@@ -1541,6 +1643,47 @@ def _generate_difficulty_section(
 
     lines.append(f"[{section_name}]")
     lines.append("{")
+
+    # ── MIDI-driven path: use MIDI notes directly per difficulty ──
+    # When MIDI data is available, we get per-difficulty filtered notes
+    # with pre-computed lanes and sustains — much more accurate than
+    # audio onset heuristics.
+    midi_diff_lanes: list[int] | None = None
+    midi_diff_sustains: list[int] | None = None
+
+    if midi_data is not None:
+        try:
+            diff_events = midi_to_chart_events(
+                midi_data,
+                instrument=instrument,
+                difficulty=difficulty,
+                chart_resolution=RESOLUTION,
+            )
+            diff_onsets = diff_events.get("onset_times", [])
+            if diff_onsets:
+                # Override onset data with per-difficulty MIDI notes
+                onset_times = diff_onsets
+                onset_strengths = diff_events.get("onset_strengths", onset_strengths)
+                midi_diff_lanes = diff_events.get("midi_lanes")
+                midi_diff_sustains = diff_events.get("midi_sustains")
+                # For MIDI-driven generation, use every onset (no skip)
+                # since filtering was already done in midi_to_chart_events
+                note_skip = 1
+                logger.debug(
+                    "🎹 {} {}: {} MIDI notes (lanes={}, sustains={})",
+                    instrument,
+                    difficulty,
+                    len(diff_onsets),
+                    len(midi_diff_lanes) if midi_diff_lanes else 0,
+                    sum(1 for s in (midi_diff_sustains or []) if s > 0),
+                )
+        except Exception as e:
+            logger.warning(
+                "⚠️ MIDI per-difficulty extraction failed for {}/{}: {}",
+                instrument,
+                difficulty,
+                e,
+            )
 
     # Select which onsets to use based on difficulty
     if note_skip > 1:
@@ -1555,6 +1698,7 @@ def _generate_difficulty_section(
 
     # Convert to ticks and enforce minimum gap
     note_events: list[tuple[int, float]] = []  # (tick, strength)
+    midi_event_indices: list[int] = []  # map note_events index → onset index
     prev_tick = -min_gap - 1
     for idx in selected_indices:
         t = onset_times[idx]
@@ -1562,6 +1706,7 @@ def _generate_difficulty_section(
         tick = _seconds_to_ticks(t, tempo, tempo_map=tempo_map)
         if tick - prev_tick >= min_gap:
             note_events.append((tick, strength))
+            midi_event_indices.append(idx)
             prev_tick = tick
 
     if not note_events:
@@ -1593,9 +1738,34 @@ def _generate_difficulty_section(
     prev_tick = -999
     prev_lanes: list[int] = []
 
-    # Pre-compute pitch-derived lane assignments if available
+    # ── MIDI lane overrides ──
+    # When MIDI data provided lanes, map them to our filtered note_events
     pitch_lanes: list[int] | None = None
-    if instrument == "drums" and drum_lanes is not None:
+    midi_sustain_map: dict[int, int] = {}  # note_event_index → sustain ticks
+
+    if midi_diff_lanes is not None and len(midi_diff_lanes) > 0:
+        # Map MIDI lanes to our selected note events
+        pitch_lanes = []
+        for i, ev_idx in enumerate(midi_event_indices):
+            if ev_idx < len(midi_diff_lanes):
+                pitch_lanes.append(midi_diff_lanes[ev_idx])
+            else:
+                pitch_lanes.append(0)
+
+        # Map MIDI sustains to note events
+        if midi_diff_sustains:
+            for i, ev_idx in enumerate(midi_event_indices):
+                if ev_idx < len(midi_diff_sustains) and midi_diff_sustains[ev_idx] > 0:
+                    midi_sustain_map[i] = midi_diff_sustains[ev_idx]
+
+        logger.debug(
+            "🎹 Mapped {} MIDI lanes + {} sustains to {} note events",
+            len(pitch_lanes),
+            len(midi_sustain_map),
+            len(note_events),
+        )
+
+    elif instrument == "drums" and drum_lanes is not None:
         # For drums, map the pre-analysed drum lane assignments to our
         # selected subset of onsets
         pitch_lanes = _map_drum_lanes_to_selected(
@@ -1704,8 +1874,10 @@ def _generate_difficulty_section(
                 prev_strength=prev_strength,
             )
 
-        # Sustain (drums never sustain, tapped notes rarely sustain)
-        if instrument == "drums":
+        # Sustain: prefer MIDI sustain data when available
+        if i in midi_sustain_map:
+            sustain = midi_sustain_map[i]
+        elif instrument == "drums":
             sustain = 0
         elif is_tap:
             sustain = 0  # taps are always short
@@ -1814,18 +1986,20 @@ def process_song_file(
     cover_art_path: str | None = None,
     instrument: str = "guitar",
     auto_validate: bool = True,
+    midi_file_path: str | None = None,
 ) -> dict[str, Any]:
     """
     Full pipeline: analyse audio -> generate chart -> stage locally.
 
     1. Analyses the audio file for tempo, beats, and onsets
-    2. Optionally separates stems for instrument-specific charting
-    3. Generates a notes.chart file in a temp staging directory
+    2. Optionally parses an accompanying MIDI file for precise note data
+    3. Optionally separates stems for instrument-specific charting
+    4. Generates a notes.chart file in a temp staging directory
        (all four difficulty levels are always generated)
-    4. Creates a song.ini file
-    5. Copies the source audio into the staging folder
-    6. Optionally generates procedural lyrics (timed to beats)
-    7. Optionally generates procedural album art (album.png)
+    5. Creates a song.ini file
+    6. Copies the source audio into the staging folder
+    7. Optionally generates procedural lyrics (timed to beats)
+    8. Optionally generates procedural album art (album.png)
        If ``cover_art_path`` is provided, that image is used instead
        of generating one procedurally.
 
@@ -1861,6 +2035,12 @@ def process_song_file(
     instrument : str
         Target instrument for note charting: ``guitar``, ``bass``,
         ``drums``, ``vocals``, or ``full_mix`` (default ``guitar``).
+    midi_file_path : str, optional
+        Path to a MIDI file (.mid / .midi) to use for precise note
+        placement.  When provided, MIDI note data takes priority over
+        audio-derived onsets for lane assignment and sustain durations.
+        Audio analysis is still performed for tempo verification, energy
+        dynamics, and fallback data.
 
     Returns a result dict with staging paths and metadata,
     or an error dict on failure.
@@ -1889,7 +2069,41 @@ def process_song_file(
         duration = analysis["duration"]
         segments = analysis.get("segments", [])
 
-        # Step 1b: Instrument-specific stem analysis
+        # Step 1b: Parse MIDI file if provided
+        midi_data: MidiSongData | None = None
+        if midi_file_path and midi_available():
+            try:
+                midi_path = Path(midi_file_path)
+                if midi_path.exists():
+                    logger.info("🎹 Parsing MIDI file: {}", midi_path.name)
+                    midi_data = parse_midi_file(
+                        midi_file_path,
+                        target_instrument=instrument
+                        if instrument != "full_mix"
+                        else None,
+                    )
+                    logger.info(
+                        "✅ MIDI parsed: {} instruments, {} notes, {:.1f} BPM, "
+                        "{} sections, {} tempo changes",
+                        len(midi_data.available_instruments),
+                        sum(len(n) for n in midi_data.tracks.values()),
+                        midi_data.initial_tempo,
+                        len(midi_data.sections),
+                        len(midi_data.tempo_events),
+                    )
+                else:
+                    logger.warning("⚠️ MIDI file not found: {}", midi_file_path)
+            except Exception as e:
+                logger.warning(
+                    "⚠️ MIDI parsing failed (continuing with audio only): {}", e
+                )
+        elif midi_file_path and not midi_available():
+            logger.warning(
+                "⚠️ MIDI file provided but mido not installed. "
+                "Install with: pip install mido"
+            )
+
+        # Step 1c: Instrument-specific stem analysis
         stem_analysis: StemAnalysis | None = None
         if instrument and instrument != "full_mix":
             try:
@@ -1977,6 +2191,7 @@ def process_song_file(
             enable_lyrics=enable_lyrics,
             instrument=instrument,
             stem_analysis=stem_analysis,
+            midi_data=midi_data,
         )
 
         if not chart_ok:
@@ -2115,6 +2330,8 @@ def process_song_file(
             "staging_dir": str(staging_dir),
             "unique_id": unique_id,
             "instrument": instrument,
+            "has_midi": midi_data is not None,
+            "midi_instruments": midi_data.available_instruments if midi_data else [],
         }
 
         # Include validation results if available
@@ -2161,6 +2378,7 @@ async def process_and_upload_song(
     genre: str = "Generated",
     cover_art_path: str | None = None,
     instrument: str = "guitar",
+    midi_file_path: str | None = None,
 ) -> dict[str, Any]:
     """
     High-level async pipeline: generate chart -> upload to Nextcloud -> register in DB.
@@ -2198,6 +2416,8 @@ async def process_and_upload_song(
         Path to an existing cover art image to use instead of generating one.
     instrument : str
         Target instrument for charting (default ``guitar``).
+    midi_file_path : str, optional
+        Path to a MIDI file for precise note placement.
     """
     import asyncio
 
@@ -2228,6 +2448,7 @@ async def process_and_upload_song(
         cover_art_path=cover_art_path,
         instrument=instrument,
         auto_validate=True,
+        midi_file_path=midi_file_path,
     )
 
     if "error" in result:

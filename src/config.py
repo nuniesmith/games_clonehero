@@ -129,8 +129,12 @@ MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_GB * 1024 * 1024 * 1024
 ALLOWED_ARCHIVE_EXTENSIONS = {".zip", ".rar"}
 ALLOWED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp"}
 ALLOWED_AUDIO_EXTENSIONS = {".mp3", ".ogg", ".wav", ".flac", ".opus"}
+ALLOWED_MIDI_EXTENSIONS = {".mid", ".midi"}
 ALLOWED_UPLOAD_EXTENSIONS = (
-    ALLOWED_ARCHIVE_EXTENSIONS | ALLOWED_IMAGE_EXTENSIONS | ALLOWED_AUDIO_EXTENSIONS
+    ALLOWED_ARCHIVE_EXTENSIONS
+    | ALLOWED_IMAGE_EXTENSIONS
+    | ALLOWED_AUDIO_EXTENSIONS
+    | ALLOWED_MIDI_EXTENSIONS
 )
 
 # ---------------------------------------------------------------------------
